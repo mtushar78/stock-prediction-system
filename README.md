@@ -584,6 +584,3 @@ The system gives you edge. You decide if you profit.
 - Start small, prove it works
 - Markets change - adapt
 - No system works 100% of the time
-#   s t o c k - p r e d i c t i o n - s y s t e m 
- 
- 
