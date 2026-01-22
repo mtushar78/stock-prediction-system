@@ -1,586 +1,505 @@
-# Stock Prediction System - The Complete Blueprint
+# 📈 DSE Sniper
 
-There is NO "perfect" prediction system. If there were, that person would be a trillionaire and markets would cease to function. BUT - you can build a highly profitable, consistently performing system. Here's how:
+**The Complete Algorithmic Trading Blueprint for the Dhaka Stock Exchange (DSE)**
 
----
-
-## 📊 THE COMPLETE BLUEPRINT
-
-### PART 1: DATA INFRASTRUCTURE (Foundation)
-
-#### Data Collection Strategy
-
-##### Historical Data (10+ years)
-
-- ✅ You have this - GOOD
-- Store: OHLCV (Open, High, Low, Close, Volume) + date
-- Clean it: Remove duplicates, handle splits/dividends, fix outliers
-
-##### Daily Data Updates
-
-- Once per day AFTER market close (2:30 PM BST)
-- Get: Full day's OHLCV data
-- DON'T need every minute for swing/position trading
-- Cost-benefit: Minute data = 100x more storage, minimal gain for most strategies
-
-##### Intraday/Minute Data - ONLY IF
-
-- You're day-trading (not recommended for beginners)
-- You have strong infrastructure (expensive)
-- You're doing high-frequency arbitrage
-- For 95% of retail investors: Daily data is ENOUGH
-
-##### My Recommendation
-
-- Start with daily data only
-- Add intraday later if needed
-- DSE is not liquid enough for minute-level strategies to matter much
+> **Objective:** Build a statistically profitable, volume-anomaly detection system for the Dhaka Stock Exchange.
 
 ---
 
-### PART 2: THE PREDICTION ENGINE (Brain)
+## 🧠 1. Executive Summary & Philosophy
 
-#### Multi-Layer Analysis System
+Building a trading system for the **Dhaka Stock Exchange (DSE)** requires a fundamental departure from Western market assumptions like the **Efficient Market Hypothesis (EMH)**.
 
-##### Layer 1: Technical Analysis (40% weight)
+### ❌ The Flaw of Standard Models
 
-###### Price Action Indicators
+- Popular indicators such as **RSI**, **MACD**, and momentum oscillators frequently fail in Bangladesh.
+- **Floor prices** and **circuit breakers** create artificial price stability.
+- These constraints generate false buy/sell signals and break traditional price-based strategies.
 
-**Moving Averages:**
+### ✅ The Core Insight
 
-- SMA 20, 50, 200 (trend identification)
-- EMA 12, 26 (faster response)
-- Golden Cross (SMA50 > SMA200) = Bullish
-- Death Cross (SMA50 < SMA200) = Bearish
+> **Price can be manipulated. Volume cannot.**
 
-**Momentum Indicators:**
+Syndicates can suppress or inflate prices, but they **cannot hide the massive volume required to accumulate shares**.
 
-- RSI (14-period): < 30 = oversold (buy), > 70 = overbought (sell)
-- MACD: Crossovers signal trend changes
-- Stochastic Oscillator: Confirm overbought/oversold
+### 🎯 The Solution
 
-**Volatility:**
+This system:
+- Ignores price prediction
+- Focuses on **Volume Anomaly Detection**
+- Detects **quiet accumulation** before explosive moves
 
-- Bollinger Bands: Price touching lower band + low RSI = potential reversal
-- ATR (Average True Range): Measure volatility for stop-loss placement
+**Guiding Principle:**
 
-**Volume Analysis:**
-
-- Volume > 2x average + price up = strong buying
-- Price up + volume down = weak rally (be cautious)
-- Volume precedes price (smart money accumulating)
-
-**Support/Resistance:**
-
-- Identify key price levels
-- Breakouts with volume = strong signals
-- Failed breakouts = reversal opportunities
-
-**Chart Patterns:**
-
-- Head & Shoulders, Double Top/Bottom
-- Triangles, Flags, Pennants
-- Candlestick patterns (Doji, Hammer, Engulfing)
-
-##### Layer 2: Fundamental Analysis (30% weight)
-
-###### Financial Health Metrics
-
-**Valuation:**
-
-- P/E Ratio: < Industry average = potentially undervalued
-- P/B Ratio: < 1 = trading below book value
-- PEG Ratio: < 1 = growth at reasonable price
-
-**Profitability:**
-
-- ROE > 15% = good
-- ROA > 5% = efficient asset use
-- Net Profit Margin: Higher = better
-
-**Growth:**
-
-- Revenue growth YoY > 10%
-- EPS growth YoY > 15%
-- Consistent growth > 3 years
-
-**Financial Stability:**
-
-- Debt-to-Equity < 1 (especially for Shariah)
-- Current Ratio > 1.5 = good liquidity
-- Interest Coverage > 3 = can service debt
-
-**Dividends:**
-
-- Dividend yield > 3%
-- Consistent dividend history
-- Payout ratio 30-60% (sustainable)
-
-###### Where to Get This Data
-
-- Company annual reports (dsebd.org)
-- Financial statements (quarterly/annual)
-- DSE company profiles
-- Manual entry initially, scrape quarterly
-
-##### Layer 3: Market Context (15% weight)
-
-###### Macro Analysis
-
-**DSE Index Trend:**
-
-- Is overall market bullish/bearish?
-- Don't fight the market trend
-
-**Sector Rotation:**
-
-- Which sectors are hot? (Pharma, Telecom, Textiles, etc.)
-- Money flows between sectors
-
-**Market Sentiment:**
-
-- News sentiment (positive/negative)
-- Insider trading (directors buying = bullish)
-- Institutional activity (block trades)
-
-**Economic Indicators:**
-
-- GDP growth
-- Interest rates (falling = bullish for stocks)
-- Inflation
-- Currency stability
-
-##### Layer 4: Quantitative Models (15% weight)
-
-###### Machine Learning Models
-
-**Model 1: Classification (Buy/Sell/Hold)**
-
-- Random Forest Classifier
-  - Input features: 50+ technical indicators, fundamentals, market data
-  - Output: Buy/Sell/Hold
-  - Accuracy target: > 60% (anything above 55% is profitable with good risk management)
-
-**Model 2: Price Direction**
-
-- XGBoost or LightGBM
-  - Predict: Will price go up/down in next 5/10/30 days?
-  - More accurate than regression for direction
-
-**Model 3: Time Series (Optional)**
-
-- LSTM Neural Network
-  - Captures sequential patterns
-  - Good for trend prediction
-  - Requires more data and tuning
-
-###### Feature Engineering (CRITICAL)
-
-Create smart features from raw data:
-
-- Price momentum (5-day, 10-day, 20-day returns)
-- Volume ratios (current vs 20-day average)
-- Volatility measures
-- Distance from moving averages
-- RSI changes
-- Sector performance
-- Market breadth indicators
-
-###### Training Strategy
-
-**Data Split:**
-
-- Training: 70% (oldest data)
-- Validation: 15% (middle data)
-- Test: 15% (most recent data)
-
-**Walk-Forward Analysis:**
-
-- Train on Year 1-7
-- Validate on Year 8
-- Test on Year 9
-- Retrain monthly with new data
+> Do not predict where the price will go. Detect where the money is hiding.
 
 ---
 
-### PART 3: SIGNAL GENERATION (Decision Making)
+## 🏗️ 2. System Architecture
 
-#### The Scoring System
+Designed as a **single-engineer, monolithic-but-modular system**. The priority is **speed, correctness, and maintainability**—not over-engineering.
 
-Each stock gets a composite score (0-100):
+### 📂 2.1 Repository Structure
 
-```
-TOTAL SCORE = 
-  (Technical Score × 0.40) +
-  (Fundamental Score × 0.30) +
-  (Market Context × 0.15) +
-  (ML Prediction × 0.15)
+```plaintext
+dse-sniper/
+├── data/
+│   ├── raw/                   # Daily CSV dumps from DSE (Immutable)
+│   ├── processed/             # Adjusted for Bonus Shares (The "Truth")
+│   └── external/              # Fundamental data (Paid-up capital, Category)
+├── src/
+│   ├── __init__.py
+│   ├── data_loader.py         # Ingestion & Corporate Action Adjuster
+│   ├── indicators.py          # Custom Syndicate Metrics (RVOL, Float)
+│   ├── filters.py             # Liquidity Trap & "Z" Category Filters
+│   └── strategy.py            # Buy/Sell Logic & Scoring Engine
+├── notebooks/                 # Jupyter notebooks for sandpit & backtesting
+├── outputs/
+│   ├── signals/               # Daily generated reports (CSV/HTML)
+│   └── logs/                  # System health & error logs
+├── config.yaml                # Thresholds (RVOL > 2.5, StopLoss = 7%)
+├── main.py                    # System entry point (Cron job target)
+└── requirements.txt
 ```
 
-**Technical Score (0-100):**
+---
 
-- RSI favorable: +20
-- MACD crossover: +15
-- Above SMA 50 & 200: +20
-- Bollinger breakout: +15
-- Volume surge: +15
-- Strong support level: +15
+## ⚙️ 2.2 Technology Stack
 
-**Fundamental Score (0-100):**
-
-- P/E < industry avg: +20
-- ROE > 15%: +20
-- Revenue growth > 10%: +20
-- Low debt: +20
-- Dividend paying: +20
-
-**Market Context (0-100):**
-
-- DSE index bullish: +30
-- Sector outperforming: +30
-- Positive news sentiment: +20
-- Institutional buying: +20
-
-**ML Prediction (0-100):**
-
-- Model confidence level (0-100)
+- **Language:** Python 3.10+
+- **Data Processing:** Pandas, NumPy
+- **Technical Analysis:** TA-Lib, Pandas-TA
+- **Machine Learning:** Scikit-learn (Random Forest for regime classification)
+- **Database:** SQLite (file-based, zero-config, sufficient for 10+ years of daily data)
 
 ---
 
-### PART 4: RISK MANAGEMENT (MOST IMPORTANT)
+## 🧹 3. The Data Layer (Sanitization & Engineering)
 
-This is what separates winners from losers:
+> **This is the most critical phase of the entire system.**
 
-#### Position Sizing Rules
+Raw DSE data is *dirty*, inconsistent, and misleading unless properly adjusted.
 
-**Never risk more than 2% of capital per trade**
+### 🔄 3.1 Corporate Action Adjuster
 
+#### ❗ The Problem
+
+Stock Dividends (Bonus Shares) are common in DSE.
+
+Without adjustment:
+- A 20% bonus looks like a **20% price crash**
+- Historical charts become meaningless
+- ML models learn incorrect patterns
+
+#### ✅ The Solution
+
+Use **backward price adjustment** for all historical prices.
+
+#### 📐 Formula
+
+```math
+P_adj = P_raw × (1 / (1 + BonusFraction))
 ```
-If portfolio = 1,000,000 BDT
-Max loss per trade = 20,000 BDT
 
-If stop loss is 5% from entry:
-Position size = 20,000 / 0.05 = 400,000 BDT max
-```
+#### 🧪 Example
 
-**Diversification:**
+- ACMELAB trades at **100 BDT**
+- Declares **20% bonus shares**
+- New base price: **83.33 BDT**
 
-- Max 10-15 positions
-- Max 20% in any single stock
-- Spread across 5+ sectors
-
-**Stop Loss (ALWAYS):**
-
-- Technical: Below support level
-- Fixed: 5-8% below entry
-- Trailing: Move up as price rises
-- NEVER remove stop loss
-
-**Take Profit Levels:**
-
-- Target 1: 10% gain (sell 30%)
-- Target 2: 20% gain (sell 40%)
-- Target 3: 30%+ gain (sell rest)
-- Let winners run with trailing stop
-
-**Risk-Reward Ratio:**
-
-- Minimum 1:2 (risk 5% to gain 10%)
-- Preferably 1:3 or better
-- Don't take trades with poor R:R
-
-#### Portfolio Rules
-
-- **Cash Reserve:** Always keep 20% in cash
-- **Rebalancing:** Monthly review and adjust
-- **Maximum Drawdown:** If portfolio drops 15%, reduce positions
-- **Correlation:** Don't buy multiple correlated stocks
+➡️ Multiply all historical prices *before* this date by **0.833**
 
 ---
 
-### PART 5: THE SYSTEM WORKFLOW
+### 🚫 3.2 Liquidity Trap Filters
 
-#### Daily Routine (Automated)
+Before analysis, every stock must pass **survival filters**.
 
-##### Every Evening After Market Close
+#### 👻 Ghost Town Rule
 
-**1. Data Collection (5 min)**
-
-- Scrape today's OHLCV for all stocks
-- Update fundamental data (weekly)
-- Collect news/sentiment
-
-**2. Analysis Pipeline (10 min)**
-
-- Calculate technical indicators for all stocks
-- Update fundamental scores
-- Run ML models
-- Calculate composite scores
-
-**3. Signal Generation (5 min)**
-
-- Identify stocks with score > 70 (potential buys)
-- Check existing positions for exit signals
-- Rank opportunities
-
-**4. Output Report:**
-
-```
-=== DSE Trading Signals - Jan 20, 2026 ===
-
-🟢 TOP BUY CANDIDATES:
-
-1. ACMELAB (Score: 87/100) 🔥
-   Current: 285 BDT
-   Entry Zone: 280-290
-   Target 1: 315 (+10%)
-   Target 2: 342 (+20%)
-   Stop Loss: 256 (-10%)
-   Risk/Reward: 1:3.5
-   
-   Signals:
-   ✓ RSI oversold (28) + bouncing
-   ✓ MACD bullish crossover yesterday
-   ✓ Volume spike 3x average
-   ✓ P/E = 12 (sector avg: 18)
-   ✓ Revenue growth 25% YoY
-   ✓ ML model 82% confidence BUY
-   
-   Caution: Overall market slightly bearish
-
-2. WALTONHIL (Score: 81/100)
-   ...
-
-🔴 SELL SIGNALS (Existing Positions):
-
-1. BEXIMCO (Score: 32/100)
-   Current: 95 BDT
-   Entry: 105 BDT (-9.5%)
-   Reason: Hit stop loss, deteriorating fundamentals
-   Action: SELL IMMEDIATELY
-
-📊 MARKET OVERVIEW:
-- DSE Index: Neutral (slight downtrend)
-- Hot Sectors: Pharma, IT
-- Cold Sectors: Banking, Textiles
+```text
+If Volume == 0 for 3 consecutive days → DROP
 ```
 
-**5. Alerts (Real-time)**
+Reason: Stock is stuck at floor/ceiling with no buyers.
 
-- Email/SMS for strong signals (score > 85)
-- Stop loss breaches
-- Take profit targets hit
+#### 🪙 Penny Trap Rule
+
+```text
+If Paid-Up Capital > 500 Cr AND Daily Movement < 0.5% → DROP
+```
+
+Reason: Stock is too heavy to move (e.g., large banks).
 
 ---
 
-### PART 6: BACKTESTING (CRITICAL)
+## 🧠 4. The Prediction Engine ("Syndicate Logic")
 
-Before risking real money:
+Signals are weighted based on **Bangladesh market realities**.
 
-#### Backtest Strategy
+### ⚖️ 4.1 Signal Weighting
 
-**Walk-Forward Testing:**
-
-```
-Year 1-5: Train models
-Year 6: Test (track every signal)
-Year 7: Test (with updated model)
-Year 8: Test
-Year 9-10: Final validation
-```
-
-**Metrics to Track:**
-
-- **Win Rate:** % of profitable trades (target > 55%)
-- **Average Win vs Loss:** Should be > 1.5:1
-- **Maximum Drawdown:** How much did you lose from peak? (acceptable < 20%)
-- **Sharpe Ratio:** Risk-adjusted returns (target > 1.5)
-- **Total Return:** Absolute profit (target > 20% annually)
-
-**Stress Testing:**
-
-- How did system perform in 2010-2011 DSE crash?
-- Bear markets vs bull markets
-- High volatility periods
-
-**Iteration:**
-
-- If backtest fails → adjust parameters
-- If win rate < 50% → rethink strategy
-- Continuous improvement
+| Component | Weight |
+|---------|--------|
+| Volume / Smart Money Flow | **60%** |
+| Trend & Technicals | **30%** |
+| Fundamentals (Safety Only) | **10%** |
 
 ---
 
-### PART 7: SYSTEM ARCHITECTURE
+### 📊 4.2 Primary Indicator: Relative Volume (RVOL)
 
-#### Technology Stack
+We look for **quiet accumulation**—huge volume without price spikes.
 
-##### Database
+#### 🧮 Algorithm
 
-```
-PostgreSQL with TimescaleDB
-├── stock_prices (time-series optimized)
-├── companies (master data)
-├── fundamentals (quarterly updates)
-├── technical_indicators (calculated daily)
-├── ml_predictions (daily)
-├── signals (buy/sell recommendations)
-├── portfolio (positions tracking)
-└── performance (trade history)
+1. Calculate **20-day average volume**
+2. Compute:
+
+```text
+RVOL = Today Volume / 20-Day Avg Volume
 ```
 
-##### Backend Services
+#### 🚨 Buy Signal
 
-**Service 1: Data Collector**
+```text
+RVOL > 2.5 AND Price Change < 2%
+```
 
-- Runs: Daily 3:00 PM
-- Function: Scrape DSE data
-- Output: Raw OHLCV data
+#### 🧠 Interpretation
 
-**Service 2: Feature Calculator**
-
-- Runs: Daily 3:30 PM
-- Function: Calculate 50+ technical indicators
-- Output: Enriched data
-
-**Service 3: ML Pipeline**
-
-- Runs: Daily 4:00 PM
-- Function: Generate predictions
-- Output: Buy/Sell probabilities
-
-**Service 4: Signal Generator**
-
-- Runs: Daily 4:30 PM
-- Function: Composite scoring, rank stocks
-- Output: Trading signals report
-
-**Service 5: Risk Monitor**
-
-- Runs: Continuously
-- Function: Check stop losses, portfolio metrics
-- Output: Alerts
-
-**Service 6: Backtester**
-
-- Runs: Weekly
-- Function: Validate strategy performance
-- Output: Performance reports
-
-##### Frontend Dashboard
-
-- Real-time portfolio view
-- Signal watchlist
-- Charts and graphs
-- Performance analytics
-- Trade execution interface
+Big players are absorbing all sell pressure.
+A breakout is likely imminent.
 
 ---
 
-### PART 8: THE HARD TRUTHS
+### 🧲 4.3 Secondary Indicator: Low Float Multiplier
 
-#### What Makes or Breaks Success
+Syndicates prefer **low paid-up capital stocks**.
 
-##### ✅ DO
-
-- **Follow the system religiously** - No emotional overrides
-- **Risk management first** - Preserve capital
-- **Continuous learning** - Markets evolve
-- **Paper trade first** - Test for 3-6 months before real money
-- **Start small** - Scale up as confidence grows
-- **Keep records** - Every trade, every reason
-- **Accept losses** - Part of the game
-- **Diversify** - Don't put all eggs in one basket
-
-##### ❌ DON'T
-
-- **Over-optimize** - Curve-fitting kills live performance
-- **Chase performance** - FOMO is deadly
-- **Ignore fundamentals** - Technical alone isn't enough
-- **Revenge trade** - After losses, take a break
-- **Use all capital** - Keep reserves
-- **Skip backtesting** - Would you fly an untested plane?
-- **Believe 100% accuracy** - Impossible
-- **Trade on tips** - Follow your system
+```text
+If Paid-Up Capital < 50 Cr → Final Score +20%
+```
 
 ---
 
-### REALISTIC EXPECTATIONS
+## 🛡️ 5. Risk Management (Survival Rules)
 
-#### Good System Performance
+> Even a 90% accurate system fails without strict risk control.
 
-- **Win rate:** 55-65%
-- **Annual return:** 20-40%
-- **Maximum drawdown:** 10-20%
-- **Sharpe ratio:** 1.5-2.5
+### 💰 5.1 Position Sizing — The 2% Rule
 
-**This beats 90% of retail investors.**
+- Risk **max 2%** of total capital per trade
 
----
+#### 📐 Example
 
-## YOUR ACTION PLAN (12-Week Timeline)
+- Portfolio: **10,00,000 BDT**
+- Max risk: **20,000 BDT**
+- Stop loss: **5%**
 
-### Weeks 1-2: Foundation
-
-- Set up database
-- Collect historical data
-- Clean and validate data
-- Build basic data pipeline
-
-### Weeks 3-4: Technical Analysis
-
-- Implement all indicators
-- Backtest individual indicators
-- Optimize parameters
-
-### Weeks 5-6: Fundamental Integration
-
-- Collect financial data
-- Build fundamental scoring
-- Shariah compliance filter
-
-### Weeks 7-8: Machine Learning
-
-- Feature engineering
-- Train initial models
-- Validate predictions
-
-### Weeks 9-10: Integration
-
-- Build composite scoring
-- Generate signals
-- Backtest complete system
-
-### Weeks 11-12: Paper Trading
-
-- Run system live (no real money)
-- Track performance
-- Refine and adjust
-
-### Month 4-6: Live Trading (Small Capital)
-
-- Start with 10% of capital
-- Build confidence
-- Learn system quirks
-
-### Month 7+: Scale Up
-
-- Increase capital gradually
-- Continuous improvement
-- Automate more
+➡️ Max position size = **4,00,000 BDT**
 
 ---
 
-## FINAL WORD
+### 🧯 5.2 Stop Loss Rules
 
-**Building a "near-perfect" system is 20% code, 80% discipline.**
+- **Fixed Stop Loss:** 7% below entry
+  - Prevents getting stuck in limit-down scenarios
+- **Trailing Stop:**
+  - After +10% gain → Move stop loss to **Break Even**
 
-The system gives you edge. You decide if you profit.
+---
 
-### Most Important
+## 🔄 6. System Workflow
 
-- Backtest everything
-- Risk management is non-negotiable
-- Start small, prove it works
-- Markets change - adapt
-- No system works 100% of the time
+### ⏰ 6.1 Daily Automated Routine (Cron)
+
+| Time | Task |
+|-----|-----|
+| 2:30 PM | Scrape daily OHLCV data from DSE |
+| 2:35 PM | Adjust for dividends & apply filters |
+| 2:40 PM | Calculate RVOL, scores & rankings |
+| 2:45 PM | Generate `signals_today.csv` |
+
+---
+
+### 📄 6.2 Sample Output
+
+| Ticker | Close | RVOL | Paid-Up (Cr) | Score | Action | Logic |
+|------|------|------|-------------|------|--------|-------|
+| PAPERPROC | 142.5 | 3.4 | 25.0 | 92 | BUY | High RVOL + Low Cap + Flat Price |
+| GP | 286.1 | 0.8 | 350.0 | 15 | IGNORE | High Cap, Low Volume |
+| ORION | 45.2 | 1.1 | 85.0 | 45 | WAIT | Normal activity |
+
+---
+
+## 🗺️ 7. Implementation Roadmap (12 Weeks)
+
+| Weeks | Milestone |
+|------|----------|
+| 1–2 | Build `data_loader.py`, ingest 10 years of data |
+| 3–4 | Implement RVOL & paid-up capital logic |
+| 5–6 | Backtesting (2020–2022) |
+| 7–10 | Paper trading & virtual P/L tracking |
+| 11–12 | Go live with 10% capital |
+
+---
+
+## ⚠️ 8. Hard Truths for the Engineer
+
+- **Do not over-optimize.** Volume beats fancy neural nets.
+- **Data quality is everything.** One bug in dividend adjustment invalidates the entire system.
+- **Liquidity is king.** No buyers = no exit, regardless of prediction.
+
+> Spend **80% of your time on data correctness**. Everything else depends on it.
+
+---
+
+## 🧩 Final Note
+
+This system is not designed to be perfect.
+
+It is designed to **survive**, **adapt**, and **exploit structural inefficiencies unique to the Dhaka Stock Exchange**.
+
+📌 *Simple. Ruthless. Volume-driven.*
+
+
+---
+
+# 📘 DSE Sniper System — Master Blueprint (Theory → Code → Execution)
+
+This document is the **authoritative blueprint** for building and running the DSE Sniper system. It covers **market theory, architecture, exact scoring logic, and a weekend-ready implementation plan**.
+
+> **Data Source Note:** We use **`bdshare`**, a Python package purpose-built for scraping Dhaka Stock Exchange data, for daily updates. Your **14-year CSV archive** forms the historical base.
+
+---
+
+## 🧠 1. The Theory (The “Brain”)
+
+### Why This Works in Bangladesh
+
+**The Problem**
+- DSE is illiquid and syndicate-driven
+- Prices are often manipulated or stuck at *floor prices*
+- RSI, MACD, and price-only indicators fail because **price is easy to fake**
+
+**The Solution**
+- Track **Volume**, not prediction
+- Syndicates can move price with 1 share
+- They **cannot accumulate control without massive volume**
+
+**The Signal**
+> *Quiet Accumulation* — Large volume enters while price stays flat
+
+This is the footprint of smart money.
+
+---
+
+## 🏗️ 2. The Architecture (The “Body”)
+
+A **local monolith** optimized for reliability and speed.
+
+- **Language:** Python 3.10+
+- **Data Fetcher:** `bdshare` + `pandas`
+- **Database:** SQLite (single-file, zero-config)
+- **Analysis Engine:** pandas + TA-Lib
+- **Scheduler:** Cron (Linux) / Task Scheduler (Windows)
+
+### 📂 Folder Structure
+
+```plaintext
+DSE_Sniper/
+├── data/
+│   ├── dse_history.db         # SQLite master database
+│   ├── raw_csvs/              # 14 years of historical CSVs
+│   └── paid_up_capital.csv    # Manual fundamentals
+├── src/
+│   ├── db_manager.py          # SQLite insert/update logic
+│   ├── data_fetcher.py        # Daily fetch via bdshare
+│   ├── analyzer.py            # RVOL, scoring & signals
+│   └── notifier.py            # Console / Telegram alerts
+├── main.py                    # Full pipeline entry point
+└── requirements.txt
+```
+
+---
+
+## 🧠 3. The Logic (The “Code”)
+
+### A. Data Ingestion & Cleaning
+
+1. Load today’s data using `bdshare`
+2. Apply survival filters:
+
+```text
+Filter 1: Volume < 50,000 → IGNORE (Dead stock)
+Filter 2: Price unchanged for 5 days + Volume = 0 → IGNORE (Floor/Ceiling trap)
+```
+
+---
+
+### B. The “Syndicate” Algorithm
+
+#### Indicators
+
+**Relative Volume (RVOL)**
+
+```math
+RVOL = Today Volume / Average Volume (Last 20 Days)
+```
+
+**Price Change**
+
+```math
+% Change = (Today Close − Yesterday Close) / Yesterday Close
+```
+
+---
+
+### 🎯 Scoring System (0–100)
+
+| Condition | Points |
+|---------|--------|
+| RVOL > 2.5 | +50 |
+| Price Change < 2% AND RVOL > 2.5 | +20 |
+| Paid-Up Capital < 50 Cr | +20 |
+| Price > 200-Day SMA | +10 |
+| Below 200 SMA | −50 |
+
+---
+
+### C. Decision Rules
+
+```text
+BUY  → Score > 80
+SELL → Price < (Buy Price − 7%)
+```
+
+---
+
+## 🛠️ 4. Step-by-Step Implementation Guide
+
+### Step 1: Environment Setup
+
+```bash
+pip install pandas numpy ta-lib bdshare sqlalchemy
+```
+
+---
+
+### Step 2: Database Initialization (`src/db_manager.py`)
+
+```python
+import sqlite3
+
+def init_db():
+    conn = sqlite3.connect('data/dse_history.db')
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS stock_data (
+            date TEXT,
+            ticker TEXT,
+            open REAL,
+            high REAL,
+            low REAL,
+            close REAL,
+            volume INTEGER
+        )
+    ''')
+    conn.commit()
+    return conn
+```
+
+---
+
+### Step 3: Load 14 Years of History
+
+- One-time script
+- Normalize dates to `YYYY-MM-DD`
+- **Apply bonus/split adjustments BEFORE insert**
+
+> ❗ If this step is wrong, the entire system is wrong.
+
+---
+
+### Step 4: Daily Data Fetcher (`src/data_fetcher.py`)
+
+```python
+from bdshare import get_current_trade_data
+
+def fetch_today():
+    df = get_current_trade_data()
+    df['close'] = df['close'].str.replace(',', '').astype(float)
+    df['volume'] = df['volume'].str.replace(',', '').astype(int)
+    return df
+```
+
+---
+
+### Step 5: Analyzer (`src/analyzer.py`)
+
+```python
+import talib
+
+def analyze_stock(ticker, df):
+    df['SMA_200'] = talib.SMA(df['close'], timeperiod=200)
+    df['AVG_VOL_20'] = talib.SMA(df['volume'], timeperiod=20)
+
+    today = df.iloc[-1]
+    yesterday = df.iloc[-2]
+
+    rvol = today['volume'] / today['AVG_VOL_20']
+    price_change = (today['close'] - yesterday['close']) / yesterday['close']
+
+    score = 0
+    reasons = []
+
+    if rvol > 2.5 and price_change < 0.02:
+        score += 70
+        reasons.append(f"Quiet Accumulation (RVOL {rvol:.1f}x)")
+
+    if today['close'] > today['SMA_200']:
+        score += 10
+    else:
+        score -= 50
+        reasons.append("Below 200 SMA")
+
+    return score, reasons
+```
+
+---
+
+### Step 6: Automation
+
+`main.py` flow:
+
+```text
+Fetch → Save → Analyze → Rank → Report
+```
+
+Schedule to run **2:45 PM** (15 minutes after market close).
+
+---
+
+## 📄 5. Final Output Example
+
+```text
+REPORT: 22 Jan 2026
+
+| Ticker    | Price | RVOL | Score | Decision | Reason |
+|-----------|-------|------|-------|----------|--------|
+| PAPERPROC | 185.2 | 4.1  | 90    | BUY      | Quiet Accumulation, Low Float |
+| GP        | 286.5 | 0.8  | 10    | IGNORE   | Low Volume |
+| SEAPEARL  | 33.0  | 1.2  | -20   | AVOID    | Below 200 SMA |
+```
+
+---
+
+## 🧠 Final Engineering Truth
+
+- **Volume exposes intent**
+- **Liquidity decides survival**
+- **Data correctness > model complexity**
+
+This blueprint is designed to be **built, tested, and run by one disciplined engineer**.
+

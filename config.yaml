@@ -1,0 +1,113 @@
+# DSE Sniper Configuration File
+# Customize thresholds and parameters for the trading system
+
+# Database Configuration
+database:
+  path: "data/dse_history.db"
+
+# Data Sources
+data:
+  adjusted_data_dir: "data/adjusted_data"
+  unadjusted_data_dir: "data/unadjusted_data"
+
+# Output Configuration
+output:
+  signals_dir: "outputs/signals"
+  logs_dir: "outputs/logs"
+
+# Analysis Parameters
+analysis:
+  # Relative Volume threshold for buy signal
+  rvol_threshold: 2.5
+  
+  # Number of days for volume average calculation
+  rvol_period: 20
+  
+  # Simple Moving Average period for trend detection
+  sma_period: 200
+  
+  # Price change threshold for quiet accumulation (%)
+  price_change_threshold: 2.0
+  
+  # Minimum volume threshold (stocks below this are filtered)
+  min_volume: 50000
+
+# Market Cap Thresholds (in Crores)
+market_cap:
+  # Low float threshold - stocks below get bonus points
+  low_cap_threshold: 50
+  
+  # High cap threshold - stocks above with low movement are filtered (Penny Trap)
+  high_cap_threshold: 500
+
+# Scoring Weights
+scoring:
+  # RVOL > threshold
+  high_rvol_points: 50
+  
+  # Quiet Accumulation (RVOL > threshold AND price change < threshold)
+  quiet_accumulation_points: 20
+  
+  # Low paid-up capital
+  low_float_points: 20
+  
+  # Price above 200 SMA
+  above_sma_points: 10
+  
+  # Price below 200 SMA (penalty)
+  below_sma_penalty: -50
+
+# Signal Generation Thresholds
+signals:
+  # Score >= buy_threshold → BUY signal
+  buy_threshold: 80
+  
+  # Score >= wait_threshold → WAIT signal
+  wait_threshold: 45
+  
+  # Score < wait_threshold → IGNORE signal
+
+# Survival Filters
+filters:
+  # Ghost Town Rule: Consecutive days with zero volume
+  ghost_town_days: 3
+  
+  # Price stuck filter: Minimum price std deviation over N days
+  stuck_price_days: 5
+  stuck_price_threshold: 0.01
+
+# Risk Management (for reference)
+risk_management:
+  # Maximum risk per trade (% of portfolio)
+  max_risk_per_trade: 2.0
+  
+  # Stop loss percentage
+  stop_loss_pct: 7.0
+  
+  # Trailing stop activation (after gain %)
+  trailing_stop_activation: 10.0
+
+# Reporting
+reporting:
+  # Number of top signals to show in console
+  console_top_n: 20
+  
+  # Number of wait signals to show
+  wait_signals_n: 10
+  
+  # Generate HTML reports
+  generate_html: true
+  
+  # Generate CSV reports
+  generate_csv: true
+
+# Logging
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Notes:
+# - Adjust rvol_threshold higher (e.g., 3.0) for more selective signals
+# - Adjust buy_threshold lower (e.g., 75) for more opportunities
+# - Increase min_volume for more liquid stocks only
+# - Adjust scoring weights to emphasize different factors
