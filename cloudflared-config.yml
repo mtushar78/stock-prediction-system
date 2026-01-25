@@ -1,0 +1,18 @@
+# Cloudflare Tunnel Configuration for DSE Sniper
+# This file needs to be copied to /etc/cloudflared/config.yml after tunnel creation
+# Replace TUNNEL_ID with your actual tunnel ID from: cloudflared tunnel list
+
+tunnel: TUNNEL_ID
+credentials-file: /home/tushar/.cloudflared/TUNNEL_ID.json
+
+ingress:
+  # Route for frontend
+  - hostname: dse-sniper.maksudul.com
+    service: http://localhost:12002
+
+  # Route for backend API
+  - hostname: dse-sniper-backend.maksudul.com
+    service: http://localhost:12001
+
+  # Catch-all rule (required)
+  - service: http_status:404

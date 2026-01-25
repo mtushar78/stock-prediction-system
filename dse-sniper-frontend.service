@@ -1,0 +1,20 @@
+[Unit]
+Description=DSE Sniper Frontend
+After=network.target
+
+[Service]
+Type=simple
+User=tushar
+WorkingDirectory=/home/tushar/dev/dse-sniper/stock-prediction-system/frontend
+Environment=NODE_ENV=production
+Environment=PORT=12002
+Environment=PATH=/home/tushar/.nvm/versions/node/v24.13.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/home/tushar/.nvm/versions/node/v24.13.0/bin/npm start
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dse-sniper-frontend
+
+[Install]
+WantedBy=multi-user.target

@@ -1,14 +1,16 @@
 """
-Portfolio Manager - The Harvest Module
+Portfolio Manager - The Harvest Module (Level 2)
 Manages portfolio and generates sell signals based on:
 1. Emergency Brake (-7% stop loss)
-2. The Ratchet (-5% trailing stop from highest)
+2. The Ratchet (Dynamic 2x ATR trailing stop - adapts to volatility)
 3. The Climax (Volume anomaly detection)
+4. The Zombie Killer (Time-based exit for dead positions)
 """
 
 import sqlite3
 import pandas as pd
-from datetime import datetime
+import numpy as np
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 import logging
 
@@ -152,6 +154,54 @@ class PortfolioManager:
         conn.close()
         return df
     
+    def calculate_atr(self, df: pd.DataFrame, period: int = 14) -> float:
+        """
+        Calculate Average True Range (ATR) for a stock
+        
+        ATR measures the stock's volatility to set dynamic stop losses.
+        A volatile stock gets a wider stop, a stable stock gets a tighter stop.
+        
+        Args:
+            df: DataFrame with OHLCV data (must have 'high', 'low', 'close')
+            period: Lookback period (default: 14 days)
+            
+        Returns:
+            Current ATR value (float)
+        """
+        if len(df) < 2:
+            return 0.0
+        
+        df = df.copy().sort_values('date')
+        
+        # Calculate the 3 components of True Range
+        high_low = df['high'] - df['low']
+        high_prev_close = np.abs(df['high'] - df['close'].shift(1))
+        low_prev_close = np.abs(df['low'] - df['close'].shift(1))
+        
+        # True Range is the maximum of these three
+        true_range = pd.concat([high_low, high_prev_close, low_prev_close], axis=1).max(axis=1)
+        
+        # Calculate ATR using Exponential Weighted Moving Average
+        atr = true_range.ewm(alpha=1/period, adjust=False).mean()
+        
+        # Return the latest ATR value
+        return atr.iloc[-1] if not atr.empty else 0.0
+    
+    def calculate_days_held(self, purchase_date: str) -> int:
+        """
+        Calculate number of days a position has been held
+        
+        Args:
+            purchase_date: Purchase date string (YYYY-MM-DD)
+            
+        Returns:
+            Number of days held
+        """
+        purchase_dt = datetime.strptime(purchase_date, '%Y-%m-%d')
+        current_dt = datetime.now()
+        days_held = (current_dt - purchase_dt).days
+        return days_held
+    
     def check_sell_signals(self, verbose: bool = True) -> List[Dict]:
         """
         Run daily check for sell signals (The Harvest Module core logic)
@@ -189,12 +239,12 @@ class PortfolioManager:
             highest_seen = position['highest_seen']
             purchase_date = position['purchase_date']
             
-            # Get current market data (last 2 days for RVOL check)
+            # Get current market data (need more data for ATR calculation)
             query = f"""
                 SELECT * FROM stock_data 
                 WHERE ticker='{ticker}' 
                 ORDER BY date DESC 
-                LIMIT 20
+                LIMIT 30
             """
             market_data = pd.read_sql(query, conn)
             
@@ -215,6 +265,12 @@ class PortfolioManager:
             else:
                 rvol = 0
             
+            # Calculate ATR (Level 2: Dynamic Volatility Measure)
+            current_atr = self.calculate_atr(market_data, period=14)
+            
+            # Calculate Days Held (Level 2: Zombie Killer)
+            days_held = self.calculate_days_held(purchase_date)
+            
             # Update highest seen (The Ratchet mechanism)
             new_highest = highest_seen
             if current_price > highest_seen:
@@ -229,8 +285,19 @@ class PortfolioManager:
                     print(f"\n📈 {ticker}: NEW HIGH! Ratchet moved: {highest_seen:.2f} → {new_highest:.2f}")
             
             # Calculate trigger prices
-            stop_loss_price = buy_price * 0.93        # -7% Emergency Brake
-            trailing_stop_price = new_highest * 0.95  # -5% from Peak (The Ratchet)
+            stop_loss_price = buy_price * 0.93  # -7% Emergency Brake
+            
+            # LEVEL 2 UPGRADE: Dynamic ATR-Based Trailing Stop
+            # Instead of fixed 5%, use 2x ATR below the highest
+            if current_atr > 0:
+                # ATR-based trailing stop: 2x ATR below peak
+                atr_stop_distance = 2 * current_atr
+                trailing_stop_price = new_highest - atr_stop_distance
+                stop_type = f"ATR (2x{current_atr:.2f}={atr_stop_distance:.2f})"
+            else:
+                # Fallback to fixed 5% if ATR unavailable
+                trailing_stop_price = new_highest * 0.95
+                stop_type = "Fixed 5%"
             
             # Calculate profit
             profit_pct = ((current_price - buy_price) / buy_price) * 100
@@ -240,7 +307,7 @@ class PortfolioManager:
             is_red_candle = current_price < current_open
             is_doji = abs(current_price - current_open) / current_open < 0.01 if current_open > 0 else False
             
-            # DECISION MATRIX
+            # DECISION MATRIX (LEVEL 2)
             action = "HOLD ✅"
             reason = ""
             signal_type = None
@@ -253,10 +320,10 @@ class PortfolioManager:
                 signal_type = "STOP_LOSS"
                 urgency = "CRITICAL"
             
-            # CONDITION B: The Ratchet (Trailing Stop -5% from peak)
+            # CONDITION B: The Ratchet (Dynamic ATR-based Trailing Stop)
             elif current_price <= trailing_stop_price:
                 action = "SELL NOW 💰"
-                reason = f"TRAILING STOP: Dropped 5% from peak of {new_highest:.2f}. Trend broken."
+                reason = f"TRAILING STOP ({stop_type}): Dropped below {trailing_stop_price:.2f} from peak of {new_highest:.2f}. Trend broken."
                 signal_type = "TAKE_PROFIT"
                 urgency = "HIGH"
             
@@ -267,13 +334,22 @@ class PortfolioManager:
                 signal_type = "CLIMAX"
                 urgency = "HIGH"
             
+            # CONDITION D: The Zombie Killer (LEVEL 2 NEW)
+            # If held >10 days AND profit <2%, free up capital
+            elif days_held > 10 and profit_pct < 2:
+                action = "SELL NOW 🧟"
+                reason = f"ZOMBIE KILLER: Held {days_held} days with only {profit_pct:.2f}% profit. Free up capital for better opportunities."
+                signal_type = "ZOMBIE_EXIT"
+                urgency = "MEDIUM"
+            
             # Display status
             if verbose:
-                print(f"\n{ticker.ljust(15)} | Status: {action}")
+                zombie_warning = " ⚠️ ZOMBIE" if days_held > 10 and profit_pct < 2 and signal_type != "ZOMBIE_EXIT" else ""
+                print(f"\n{ticker.ljust(15)} | Status: {action}{zombie_warning}")
                 print(f"  Buy: {buy_price:.2f} | Current: {current_price:.2f} | Highest: {new_highest:.2f}")
-                print(f"  Profit: {profit_pct:+.2f}% ({profit_amount:+,.0f} BDT)")
-                print(f"  Stop Loss: {stop_loss_price:.2f} | Trail Stop: {trailing_stop_price:.2f}")
-                print(f"  RVOL: {rvol:.2f}x | Volume: {current_volume:,}")
+                print(f"  Profit: {profit_pct:+.2f}% ({profit_amount:+,.0f} BDT) | Days Held: {days_held}")
+                print(f"  Stop Loss: {stop_loss_price:.2f} | Trail Stop: {trailing_stop_price:.2f} ({stop_type})")
+                print(f"  ATR: {current_atr:.2f} | RVOL: {rvol:.2f}x | Volume: {current_volume:,}")
                 
                 if signal_type:
                     print(f"  ⚡ {reason}")
@@ -294,7 +370,9 @@ class PortfolioManager:
                     'quantity': quantity,
                     'rvol': rvol,
                     'stop_loss_price': stop_loss_price,
-                    'trailing_stop_price': trailing_stop_price
+                    'trailing_stop_price': trailing_stop_price,
+                    'atr': current_atr,
+                    'days_held': days_held
                 })
         
         conn.close()

@@ -1,0 +1,18 @@
+[Unit]
+Description=DSE Sniper Backend API
+After=network.target
+
+[Service]
+Type=simple
+User=tushar
+WorkingDirectory=/home/tushar/dev/dse-sniper/stock-prediction-system
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 12001
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dse-sniper-backend
+
+[Install]
+WantedBy=multi-user.target

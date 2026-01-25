@@ -33,6 +33,40 @@ class StockAnalyzer:
         self.high_cap_threshold = 500  # Paid-up capital > 500 Cr (Penny trap)
         self.price_change_threshold = 0.02  # 2% price change for quiet accumulation
         
+    def calculate_atr(self, df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
+        """
+        Calculate Average True Range (ATR) - The "Breathing Room" indicator
+        
+        ATR measures volatility by calculating the "True Range" which captures:
+        1. Normal daily range (High - Low)
+        2. Gap up scenarios (High - Previous Close)
+        3. Gap down scenarios (Previous Close - Low)
+        
+        This helps set dynamic stop losses that adapt to each stock's natural movement.
+        
+        Args:
+            df: DataFrame with OHLCV data
+            period: Lookback period for ATR (default: 14 days)
+            
+        Returns:
+            DataFrame with ATR column added
+        """
+        df = df.copy()
+        
+        # Calculate the 3 components of True Range
+        high_low = df['high'] - df['low']
+        high_prev_close = np.abs(df['high'] - df['close'].shift(1))
+        low_prev_close = np.abs(df['low'] - df['close'].shift(1))
+        
+        # True Range is the maximum of these three
+        df['TR'] = pd.concat([high_low, high_prev_close, low_prev_close], axis=1).max(axis=1)
+        
+        # Calculate ATR using Exponential Weighted Moving Average (Wilder's Smoothing)
+        # This approximates Wilder's smoothing method: ((Prior ATR * 13) + Current TR) / 14
+        df['ATR'] = df['TR'].ewm(alpha=1/period, adjust=False).mean()
+        
+        return df
+    
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Calculate technical indicators for stock data
@@ -65,6 +99,9 @@ class StockAnalyzer:
         
         # Calculate Daily Range
         df['daily_range'] = ((df['high'] - df['low']) / df['low'] * 100)
+        
+        # Calculate ATR (Average True Range) - Level 2 Volatility Indicator
+        df = self.calculate_atr(df, period=14)
         
         return df
     
