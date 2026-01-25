@@ -42,6 +42,8 @@ interface PortfolioItem {
   atr_distance: number;
   is_zombie: boolean;
   volume: number;
+  // v3 field
+  rsi?: number;
 }
 
 interface Alert {
@@ -76,46 +78,19 @@ export default function Dashboard() {
   const [newQty, setNewQty] = useState('');
   const [submitting, setSubmitting] = useState(false);
   
-  // Tooltip State
-  const [activeTooltip, setActiveTooltip] = useState<number | null>(null);
-  const [tooltipPosition, setTooltipPosition] = useState<{top?: number; bottom?: number; left: number}>({left: 0});
+  // Modal State
+  const [activeModal, setActiveModal] = useState<number | null>(null);
 
-  // Calculate tooltip position using fixed positioning
-  const calculateTooltipPosition = (buttonElement: HTMLElement): {top?: number; bottom?: number; left: number} => {
-    const rect = buttonElement.getBoundingClientRect();
-    const viewportHeight = window.innerHeight;
-    const viewportWidth = window.innerWidth;
-    const tooltipWidth = 550;
-    const tooltipMaxHeight = 600;
-    
-    // Calculate vertical position
-    const spaceBelow = viewportHeight - rect.bottom;
-    const spaceAbove = rect.top;
-    
-    // Horizontal position (try to center on button, but stay in viewport)
-    let left = rect.left - tooltipWidth / 2 + rect.width / 2;
-    if (left < 10) left = 10;
-    if (left + tooltipWidth > viewportWidth - 10) left = viewportWidth - tooltipWidth - 10;
-    
-    // Vertical position - show below if space, otherwise show above
-    if (spaceBelow >= 400 || spaceBelow > spaceAbove) {
-      return { top: rect.bottom + 8, left };
-    } else {
-      return { bottom: viewportHeight - rect.top + 8, left };
-    }
-  };
-
-  // Click outside handler
+  // Click outside handler (on backdrop)
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as HTMLElement;
-      if (!target.closest('.tooltip-container') && !target.closest('.tooltip-trigger')) {
-        setActiveTooltip(null);
+    const handleEscKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setActiveModal(null);
       }
     };
 
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscKey);
+    return () => document.removeEventListener('keydown', handleEscKey);
   }, []);
 
   // Fetch Data
@@ -310,32 +285,20 @@ export default function Dashboard() {
                         <div className="flex items-center gap-2">
                           <span>{sig.Reason}</span>
                           <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (activeTooltip === i) {
-                                setActiveTooltip(null);
-                              } else {
-                                const position = calculateTooltipPosition(e.currentTarget);
-                                setTooltipPosition(position);
-                                setActiveTooltip(i);
-                              }
-                            }}
-                            className="tooltip-trigger inline-flex items-center justify-center w-4 h-4 rounded-full hover:bg-gray-700 transition-colors"
+                            onClick={() => setActiveModal(i)}
+                            className="inline-flex items-center justify-center w-4 h-4 rounded-full hover:bg-gray-700 transition-colors"
                           >
-                            <Info className={`w-3.5 h-3.5 transition-colors ${activeTooltip === i ? 'text-green-400' : 'text-gray-500'}`} />
+                            <Info className={`w-3.5 h-3.5 transition-colors ${activeModal === i ? 'text-green-400' : 'text-gray-500'}`} />
                           </button>
                         </div>
                         
-                        {/* Custom Tooltip */}
-                        {activeTooltip === i && (
-                          <div 
-                            className="tooltip-container fixed z-[9999] bg-gray-950 border border-green-500/50 rounded-lg p-4 shadow-2xl w-[500px] max-h-[600px] overflow-y-auto animate-in fade-in duration-200"
-                            style={{
-                              top: tooltipPosition.top !== undefined ? `${tooltipPosition.top}px` : 'auto',
-                              bottom: tooltipPosition.bottom !== undefined ? `${tooltipPosition.bottom}px` : 'auto',
-                              left: `${tooltipPosition.left}px`
-                            }}
-                          >
+                        {/* Buy Signal Modal */}
+                        {activeModal === i && (
+                          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80" onClick={() => setActiveModal(null)}>
+                            <div 
+                              className="bg-gray-950 border border-green-500/50 rounded-lg p-6 shadow-2xl w-[90vw] max-w-[600px] max-h-[90vh] overflow-y-auto"
+                              onClick={(e) => e.stopPropagation()}
+                            >
                             <div className="text-xs font-mono whitespace-pre-wrap select-text">
                               <div className="text-green-400 font-bold mb-3 text-sm border-b border-gray-700 pb-2">
                                 📊 DETAILED CALCULATION BREAKDOWN
@@ -356,6 +319,27 @@ export default function Dashboard() {
                                 </div>
                                 <div className={sig.RVOL > 2.5 ? 'text-green-400' : 'text-red-400'}>
                                   {sig.RVOL > 2.5 ? '✅ RVOL > 2.5 (Unusual volume activity detected!)' : '❌ RVOL ≤ 2.5 (Normal volume)'}
+                                </div>
+                              </div>
+                              
+                              <div className="border-t border-gray-800 pt-3 mb-3 bg-gradient-to-r from-purple-900/20 to-transparent p-3 rounded">
+                                <div className="text-purple-400 font-bold mb-2">🚀 v3 UPGRADE: PROJECTED RVOL (Intraday Accuracy)</div>
+                                <div className="text-gray-400 mb-2 text-xs">
+                                  Problem Solved: Previously, 11 AM snapshot showed falsely low RVOL (only 1 hour of volume vs full-day average)
+                                </div>
+                                <div className="bg-gray-900 p-2 rounded mb-2">
+                                  <div className="text-cyan-300 font-bold mb-1">NEW LOGIC:</div>
+                                  <div className="text-xs text-gray-300 space-y-1">
+                                    <div>1️⃣ 20-Day Avg uses SHIFTED data (excludes today's partial)</div>
+                                    <div>2️⃣ If intraday snapshot (is_final=0):</div>
+                                    <div className="ml-4">• Calculate minutes elapsed since 10 AM</div>
+                                    <div className="ml-4">• Project: (current_vol / minutes) × 270</div>
+                                    <div className="ml-4">• Use projected volume for RVOL</div>
+                                    <div>3️⃣ Example: 50k vol at 11 AM → projects to 650k by 2:30 PM</div>
+                                  </div>
+                                </div>
+                                <div className="text-green-400 text-xs">
+                                  ✅ Result: Catch breakouts at 11 AM instead of waiting for 2:45 PM close!
                                 </div>
                               </div>
                               
@@ -401,6 +385,7 @@ export default function Dashboard() {
                                   <div>• SMA = Simple Moving Average (200 days)</div>
                                 </div>
                               </div>
+                            </div>
                             </div>
                           </div>
                         )}
@@ -459,33 +444,20 @@ export default function Dashboard() {
                             'text-green-500'
                           }`}>{item.status}</span>
                           <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const portfolioTooltipIndex = signals.length + i;
-                              if (activeTooltip === portfolioTooltipIndex) {
-                                setActiveTooltip(null);
-                              } else {
-                                const position = calculateTooltipPosition(e.currentTarget);
-                                setTooltipPosition(position);
-                                setActiveTooltip(portfolioTooltipIndex);
-                              }
-                            }}
-                            className="tooltip-trigger inline-flex items-center justify-center w-4 h-4 rounded-full hover:bg-gray-700 transition-colors"
+                            onClick={() => setActiveModal(signals.length + i)}
+                            className="inline-flex items-center justify-center w-4 h-4 rounded-full hover:bg-gray-700 transition-colors"
                           >
-                            <Info className={`w-3.5 h-3.5 transition-colors ${activeTooltip === signals.length + i ? 'text-blue-400' : 'text-gray-500'}`} />
+                            <Info className={`w-3.5 h-3.5 transition-colors ${activeModal === signals.length + i ? 'text-blue-400' : 'text-gray-500'}`} />
                           </button>
                         </div>
                         
-                        {/* Sell Logic Tooltip */}
-                        {activeTooltip === signals.length + i && (
-                          <div 
-                            className="tooltip-container fixed z-[9999] bg-gray-950 border border-blue-500/50 rounded-lg p-4 shadow-2xl w-[550px] max-h-[600px] overflow-y-auto animate-in fade-in duration-200"
-                            style={{
-                              top: tooltipPosition.top !== undefined ? `${tooltipPosition.top}px` : 'auto',
-                              bottom: tooltipPosition.bottom !== undefined ? `${tooltipPosition.bottom}px` : 'auto',
-                              left: `${tooltipPosition.left}px`
-                            }}
-                          >
+                        {/* Sell Logic Modal */}
+                        {activeModal === signals.length + i && (
+                          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80" onClick={() => setActiveModal(null)}>
+                            <div 
+                              className="bg-gray-950 border border-blue-500/50 rounded-lg p-6 shadow-2xl w-[90vw] max-w-[650px] max-h-[90vh] overflow-y-auto"
+                              onClick={(e) => e.stopPropagation()}
+                            >
                             <div className="text-xs font-mono whitespace-pre-wrap select-text">
                               <div className="text-blue-400 font-bold mb-3 text-sm border-b border-gray-700 pb-2">
                                 💰 LEVEL 2 SELL LOGIC - DETAILED BREAKDOWN
@@ -530,6 +502,42 @@ export default function Dashboard() {
                                 </div>
                               </div>
                               
+                              <div className="border-t border-gray-800 pt-3 mb-3 bg-gradient-to-r from-purple-900/20 to-transparent p-3 rounded">
+                                <div className="text-purple-400 font-bold mb-2">🚀 v3 UPGRADE: RSI-BASED DYNAMIC RATCHET</div>
+                                <div className="text-gray-400 mb-2 text-xs">
+                                  Problem Solved: Level 2 used fixed 2×ATR. Parabolic stocks crashed before stop hit.
+                                </div>
+                                <div className="bg-gray-900 p-2 rounded mb-2">
+                                  <div className="text-cyan-300 font-bold mb-1">NEW LOGIC:</div>
+                                  <div className="text-xs text-gray-300 space-y-1">
+                                    <div>RSI (Relative Strength Index): <span className="text-yellow-300 font-bold">{item.rsi ? item.rsi.toFixed(1) : 'N/A'}</span></div>
+                                    <div className="mt-2 border-t border-gray-700 pt-2">
+                                      <div className="font-bold text-white">ATR MULTIPLIER LOGIC:</div>
+                                      <div className="ml-2 mt-1 space-y-1">
+                                        <div>• RSI &lt; 70: <span className="text-green-400">2.0× ATR</span> (Standard - let winners run)</div>
+                                        <div>• RSI 70-80: <span className="text-yellow-400">1.5× ATR</span> (Tight - stock overheating)</div>
+                                        <div>• RSI &gt; 80: <span className="text-red-400">1.0× ATR</span> (Aggressive - extreme parabolic)</div>
+                                      </div>
+                                    </div>
+                                    <div className="mt-2 border-t border-gray-700 pt-2">
+                                      <div className="font-bold text-white">Current Status:</div>
+                                      <div className="ml-2">
+                                        {item.rsi && item.rsi > 80 ? (
+                                          <div className="text-red-400">🔴 RSI &gt; 80: Very tight stop (1.0× ATR) - Lock profits NOW!</div>
+                                        ) : item.rsi && item.rsi > 70 ? (
+                                          <div className="text-yellow-400">🟡 RSI &gt; 70: Tightening stop (1.5× ATR) - Watch closely</div>
+                                        ) : (
+                                          <div className="text-green-400">🟢 RSI &lt; 70: Loose stop (2.0× ATR) - Healthy trend</div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="text-green-400 text-xs">
+                                  ✅ Result: Protect profits at peak momentum while letting healthy uptrends run!
+                                </div>
+                              </div>
+                              
                               <div className="border-t border-gray-800 pt-3 mb-3">
                                 <div className="text-purple-400 font-bold mb-2">🛡️ STOP LOSS LEVELS:</div>
                                 <div className="bg-gray-900 p-2 rounded space-y-2">
@@ -541,16 +549,16 @@ export default function Dashboard() {
                                   </div>
                                   
                                   <div>
-                                    <div className="text-yellow-400 font-bold">2️⃣ TRAILING STOP (Level 2: Dynamic ATR)</div>
+                                    <div className="text-yellow-400 font-bold">2️⃣ TRAILING STOP (v3: RSI-Adjusted ATR)</div>
                                     <div>Price: <span className="text-white">{item.trailing_stop_price.toFixed(2)} BDT</span></div>
                                     <div>Type: <span className="text-cyan-300">{item.stop_type}</span></div>
-                                    {item.stop_type === 'ATR' ? (
+                                    {item.stop_type.includes('ATR') ? (
                                       <>
                                         <div className="text-xs text-gray-400 mt-1">
-                                          Formula: Peak ({item.highest_seen.toFixed(2)}) - (2 × ATR {item.atr.toFixed(2)}) = {item.trailing_stop_price.toFixed(2)}
+                                          Formula: Peak ({item.highest_seen.toFixed(2)}) - (Multiplier × ATR {item.atr.toFixed(2)}) = {item.trailing_stop_price.toFixed(2)}
                                         </div>
                                         <div className="text-xs text-green-400 mt-1">
-                                          ✅ Adapts to volatility - Gives stock breathing room
+                                          ✅ v3: Multiplier adjusts based on RSI momentum
                                         </div>
                                       </>
                                     ) : (
@@ -624,6 +632,7 @@ export default function Dashboard() {
                                   <div>5️⃣ <span className="text-green-500">HOLD</span> - All good, keep holding!</div>
                                 </div>
                               </div>
+                            </div>
                             </div>
                           </div>
                         )}
@@ -703,16 +712,19 @@ export default function Dashboard() {
           </section>
 
           <section className="bg-blue-900/20 rounded-lg p-6 border border-blue-800">
-            <h3 className="text-sm font-bold text-blue-400 mb-2">ℹ️ SYSTEM INFO</h3>
+            <h3 className="text-sm font-bold text-blue-400 mb-2">ℹ️ SYSTEM INFO (v3)</h3>
             <div className="text-xs text-blue-200 space-y-2">
               <p>
-                <strong>Auto-Update:</strong> Daily at 2:45 PM (Bangladesh Time)
+                <strong>Auto-Update:</strong> 11:00 AM, 1:00 PM, 2:45 PM (Bangladesh Time)
               </p>
               <p>
                 <strong>Data Source:</strong> Dhaka Stock Exchange via StockSurfer
               </p>
               <p>
-                <strong>Analysis Engine:</strong> RVOL-based volume anomaly detection
+                <strong>Analysis Engine:</strong> Projected RVOL + RSI-based trailing stops
+              </p>
+              <p>
+                <strong>v3 Features:</strong> Intraday snapshots, dynamic ATR multiplier
               </p>
             </div>
           </section>
