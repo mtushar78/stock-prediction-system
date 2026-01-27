@@ -1,11 +1,14 @@
 """
 Analyzer Module for DSE Sniper System
 Implements RVOL calculation, scoring, and signal generation
+v3: Projected RVOL for intraday accuracy
 """
 
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional
+from datetime import datetime
+import pytz
 import logging
 from db_manager import DatabaseManager
 
@@ -33,6 +36,44 @@ class StockAnalyzer:
         self.high_cap_threshold = 500  # Paid-up capital > 500 Cr (Penny trap)
         self.price_change_threshold = 0.02  # 2% price change for quiet accumulation
         
+    def calculate_projected_volume(self, current_vol: float, current_time: datetime = None) -> float:
+        """
+        v3 UPGRADE: Extrapolate current volume to EOD
+        DSE Market Hours: 10:00 AM - 2:30 PM (4.5 hours = 270 minutes)
+        
+        This prevents intraday snapshots from polluting moving averages.
+        Example: 10:30 AM with 50k volume projects to ~650k by EOD.
+        
+        Args:
+            current_vol: Current volume seen so far today
+            current_time: Current time (defaults to now in Bangladesh timezone)
+            
+        Returns:
+            Projected volume for end of day
+        """
+        if current_time is None:
+            current_time = datetime.now(pytz.timezone('Asia/Dhaka'))
+        
+        # Market start/end times
+        market_start = current_time.replace(hour=10, minute=0, second=0, microsecond=0)
+        
+        # If before market, return 0
+        if current_time < market_start:
+            return 0
+        
+        # Calculate minutes elapsed since market open
+        delta = current_time - market_start
+        minutes_elapsed = delta.total_seconds() / 60
+        
+        # Cap at 270 minutes (full trading day: 4.5 hours)
+        minutes_elapsed = min(max(minutes_elapsed, 1), 270)
+        
+        # Linear Projection: (current_vol / minutes_so_far) * 270
+        # v4 future: Use U-shaped curve weighting for more accuracy
+        projected = (current_vol / minutes_elapsed) * 270
+        
+        return projected
+    
     def calculate_atr(self, df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
         """
         Calculate Average True Range (ATR) - The "Breathing Room" indicator
@@ -70,6 +111,7 @@ class StockAnalyzer:
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Calculate technical indicators for stock data
+        v3 UPGRADE: Uses projected RVOL for intraday snapshots
         
         Args:
             df: DataFrame with OHLCV data
@@ -86,11 +128,32 @@ class StockAnalyzer:
         # Calculate Simple Moving Average (SMA)
         df['sma_200'] = df['close'].rolling(window=self.sma_period, min_periods=1).mean()
         
-        # Calculate Average Volume (20-day)
-        df['avg_volume_20'] = df['volume'].rolling(window=self.rvol_period, min_periods=1).mean()
+        # v3 UPGRADE: Calculate Average Volume on COMPLETED days only
+        # Shift by 1 so we don't include today's partial data in the average
+        df['avg_volume_20'] = df['volume'].shift(1).rolling(window=self.rvol_period, min_periods=1).mean()
         
-        # Calculate Relative Volume (RVOL)
-        df['rvol'] = df['volume'] / df['avg_volume_20'].replace(0, np.nan)
+        # v3 UPGRADE: Projected Volume Logic
+        # Check if we're running during market hours AND last row is today
+        current_time = datetime.now(pytz.timezone('Asia/Dhaka'))
+        is_market_open = 10 <= current_time.hour < 14 or (current_time.hour == 14 and current_time.minute <= 30)
+        
+        # Create projected_vol column (defaults to actual volume)
+        df['projected_vol'] = df['volume']
+        
+        # Check if last row is marked as intraday snapshot (is_final=0)
+        if len(df) > 0 and 'is_final' in df.columns:
+            last_idx = df.index[-1]
+            is_intraday_snapshot = df.at[last_idx, 'is_final'] == 0
+            
+            if is_intraday_snapshot and is_market_open:
+                # Apply projection to last row only
+                current_vol = df.at[last_idx, 'volume']
+                proj_vol = self.calculate_projected_volume(current_vol, current_time)
+                df.at[last_idx, 'projected_vol'] = proj_vol
+                logger.info(f"v3: Projected volume {current_vol:,} → {proj_vol:,.0f}")
+        
+        # Calculate RVOL using PROJECTED volume
+        df['rvol'] = df['projected_vol'] / df['avg_volume_20'].replace(0, np.nan)
         df['rvol'] = df['rvol'].fillna(0)
         
         # Calculate Price Change (%)

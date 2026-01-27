@@ -1,69 +1,15 @@
 'use client';
-'use client';
 
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { AlertTriangle, TrendingUp, Wallet, PlusCircle, RefreshCw, Clock, Info } from 'lucide-react';
+import { Wallet, PlusCircle, Clock, Info, AlertCircle } from 'lucide-react';
+import Header from './components/Header';
+import AlertsSection from './components/AlertsSection';
+import VolumeDetailModal from './components/VolumeDetailModal';
+import { Signal, PortfolioItem, Alert, SystemStatus } from './types';
 
 // API Base URL - Read from environment variable or fallback to localhost
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-
-// TypeScript Types
-interface Signal {
-  Ticker: string;
-  Price: number;
-  RVOL: number;
-  Score: number;
-  Signal: string;
-  Reason: string;
-  Volume?: number;
-  AvgVolume20?: number;
-  PriceChange?: number;
-  SMA200?: number;
-}
-
-interface PortfolioItem {
-  ticker: string;
-  buy_price: number;
-  quantity: number;
-  highest_seen: number;
-  current_price: number;
-  profit_pct: number;
-  profit_amount: number;
-  status: string;
-  purchase_date: string;
-  // Level 2 fields
-  atr: number;
-  days_held: number;
-  rvol: number;
-  stop_loss_price: number;
-  trailing_stop_price: number;
-  stop_type: string;
-  atr_distance: number;
-  is_zombie: boolean;
-  volume: number;
-  // v3 field
-  rsi?: number;
-}
-
-interface Alert {
-  ticker: string;
-  type: string;
-  value: string;
-  action: string;
-  reason: string;
-  urgency: string;
-  current_price: number;
-  buy_price: number;
-  profit_amount: number;
-}
-
-interface SystemStatus {
-  status: string;
-  market_status: string;
-  last_update: string | null;
-  next_update: string | null;
-}
 
 export default function Dashboard() {
   const [signals, setSignals] = useState<Signal[]>([]);
@@ -80,6 +26,7 @@ export default function Dashboard() {
   
   // Modal State
   const [activeModal, setActiveModal] = useState<number | null>(null);
+  const [volumeModalSignal, setVolumeModalSignal] = useState<Signal | null>(null);
 
   // Click outside handler (on backdrop)
   useEffect(() => {
@@ -176,36 +123,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 p-4 md:p-8 font-mono">
-      <header className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center border-b border-gray-700 pb-4 gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-green-400 flex items-center gap-2">
-            <TrendingUp className="w-8 h-8" /> DSE SNIPER
-          </h1>
-          <p className="text-gray-500 text-sm">Algorithmic Volume Analysis Terminal</p>
-        </div>
-        <div className="flex gap-4 flex-wrap">
-          <div className="bg-gray-800 px-4 py-2 rounded">
-            <span className="text-gray-400 text-xs block">SYSTEM STATUS</span>
-            <span className={`font-bold ${systemStatus?.status === 'ONLINE' ? 'text-green-500' : 'text-red-500'}`}>
-              ● {systemStatus?.status || 'LOADING'}
-            </span>
-          </div>
-          <div className="bg-gray-800 px-4 py-2 rounded">
-            <span className="text-gray-400 text-xs block">MARKET</span>
-            <span className={`font-bold ${systemStatus?.market_status === 'OPEN' ? 'text-green-500' : 'text-yellow-500'}`}>
-              {systemStatus?.market_status || 'UNKNOWN'}
-            </span>
-          </div>
-          <button 
-            onClick={fetchData}
-            disabled={loading}
-            className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 px-4 py-2 rounded flex items-center gap-2 transition"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
-        </div>
-      </header>
+      <Header systemStatus={systemStatus} loading={loading} onRefresh={fetchData} />
 
       {/* Last Update Info */}
       {systemStatus && (
@@ -218,36 +136,12 @@ export default function Dashboard() {
           <div className="flex items-center gap-2">
             <Clock className="w-4 h-4 text-gray-400" />
             <span className="text-gray-400">Next Update:</span>
-            <span className="text-blue-400">{systemStatus.next_update || 'Scheduled at 2:45 PM'}</span>
+            <span className="text-blue-400">{systemStatus.next_update || '11 AM / 1 PM / 2:45 PM'}</span>
           </div>
         </div>
       )}
 
-      {/* 🚨 ALERT SECTION */}
-      {alerts.length > 0 && (
-        <section className="mb-8 bg-red-900/20 border border-red-600 rounded-lg p-4 animate-pulse">
-          <h2 className="text-red-500 font-bold flex items-center gap-2 mb-3 text-xl">
-            <AlertTriangle className="w-6 h-6" /> URGENT ACTION REQUIRED
-          </h2>
-          {alerts.map((alert, idx) => (
-            <div key={idx} className="flex flex-col md:flex-row justify-between items-start md:items-center bg-red-950/50 p-4 rounded mb-2 gap-3">
-              <div className="flex-1">
-                <span className="font-bold text-2xl block mb-1">{alert.ticker}</span>
-                <span className="text-red-300 text-sm block">{alert.reason}</span>
-                <span className="text-gray-400 text-xs">Buy: {alert.buy_price} | Current: {alert.current_price}</span>
-              </div>
-              <div className="flex flex-col items-end gap-2">
-                <span className={`text-xl font-bold ${alert.profit_amount >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  {alert.value} ({alert.profit_amount >= 0 ? '+' : ''}{alert.profit_amount.toFixed(0)} BDT)
-                </span>
-                <span className="bg-red-600 text-white px-4 py-2 rounded font-bold">
-                  {alert.action}
-                </span>
-              </div>
-            </div>
-          ))}
-        </section>
-      )}
+      <AlertsSection alerts={alerts} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         
@@ -261,6 +155,7 @@ export default function Dashboard() {
                   <tr className="text-gray-500 text-xs border-b border-gray-700">
                     <th className="pb-3 pr-4">TICKER</th>
                     <th className="pb-3 pr-4">PRICE</th>
+                    <th className="pb-3 pr-4">VOLUME</th>
                     <th className="pb-3 pr-4">RVOL</th>
                     <th className="pb-3 pr-4">SCORE</th>
                     <th className="pb-3">REASON</th>
@@ -271,6 +166,12 @@ export default function Dashboard() {
                     <tr key={i} className="border-b border-gray-700/50 hover:bg-gray-700/30 transition">
                       <td className="py-3 pr-4 font-bold text-green-400">{sig.Ticker}</td>
                       <td className="py-3 pr-4">{sig.Price}</td>
+                      <td className="py-3 pr-4">
+                        <button onClick={() => setVolumeModalSignal(sig)} className="flex items-center gap-1 hover:text-cyan-400 transition">
+                          <span className="text-white">{(sig.Volume || 0).toLocaleString()}</span>
+                          <AlertCircle className="w-3.5 h-3.5 text-cyan-400" />
+                        </button>
+                      </td>
                       <td className="py-3 pr-4 font-bold text-yellow-400">{sig.RVOL}x</td>
                       <td className="py-3 pr-4">
                         <span className={`px-2 py-1 rounded text-xs font-bold ${
@@ -412,9 +313,11 @@ export default function Dashboard() {
                 <thead>
                   <tr className="text-gray-500 text-xs border-b border-gray-700">
                     <th className="pb-3 pr-4">TICKER</th>
-                    <th className="pb-3 pr-4">BUY</th>
+                    <th className="pb-3 pr-4">AVG COST</th>
                     <th className="pb-3 pr-4">CURRENT</th>
                     <th className="pb-3 pr-4">QTY</th>
+                    <th className="pb-3 pr-4">TOTAL COST</th>
+                    <th className="pb-3 pr-4">MKT VALUE</th>
                     <th className="pb-3 pr-4">PROFIT</th>
                     <th className="pb-3 pr-4">STATUS</th>
                     <th className="pb-3">ACTION</th>
@@ -427,6 +330,8 @@ export default function Dashboard() {
                       <td className="py-3 pr-4">{item.buy_price.toFixed(2)}</td>
                       <td className="py-3 pr-4">{item.current_price.toFixed(2)}</td>
                       <td className="py-3 pr-4">{item.quantity}</td>
+                      <td className="py-3 pr-4">{(item.buy_price * item.quantity).toFixed(0)}</td>
+                      <td className="py-3 pr-4 text-cyan-400">{(item.current_price * item.quantity).toFixed(0)}</td>
                       <td className="py-3 pr-4">
                         <span className={item.profit_pct >= 0 ? 'text-green-400' : 'text-red-400'}>
                           {item.profit_pct >= 0 ? '+' : ''}{item.profit_pct.toFixed(2)}%
@@ -737,14 +642,20 @@ export default function Dashboard() {
                   <span className="text-gray-500">Positions:</span>
                   <span className="text-white font-bold">{portfolio.length}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Total Invested:</span>
+                <div className="flex justify-between border-b border-gray-700 pb-2">
+                  <span className="text-gray-500">Total Cost:</span>
                   <span className="text-white font-bold">
                     {portfolio.reduce((sum, p) => sum + (p.buy_price * p.quantity), 0).toFixed(0)} BDT
                   </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Total P/L:</span>
+                <div className="flex justify-between border-b border-gray-700 pb-2">
+                  <span className="text-gray-500">Market Value:</span>
+                  <span className="text-cyan-400 font-bold">
+                    {portfolio.reduce((sum, p) => sum + (p.current_price * p.quantity), 0).toFixed(0)} BDT
+                  </span>
+                </div>
+                <div className="flex justify-between pt-1">
+                  <span className="text-gray-500 font-bold">Total P/L:</span>
                   <span className={`font-bold ${
                     portfolio.reduce((sum, p) => sum + p.profit_amount, 0) >= 0 
                       ? 'text-green-400' 
@@ -760,6 +671,14 @@ export default function Dashboard() {
         </div>
 
       </div>
+
+      {/* Volume Detail Modal */}
+      {volumeModalSignal && (
+        <VolumeDetailModal 
+          signal={volumeModalSignal} 
+          onClose={() => setVolumeModalSignal(null)} 
+        />
+      )}
     </div>
   );
 }

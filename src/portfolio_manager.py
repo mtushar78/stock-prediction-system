@@ -202,6 +202,39 @@ class PortfolioManager:
         days_held = (current_dt - purchase_dt).days
         return days_held
     
+    def calculate_rsi(self, df: pd.DataFrame, period: int = 14) -> float:
+        """
+        v3 UPGRADE: Calculate Relative Strength Index (RSI)
+        
+        RSI measures momentum (0-100):
+        - RSI > 70: Overbought (tighten trailing stop)
+        - RSI > 80: Extremely overbought (very tight stop)
+        - RSI < 30: Oversold
+        
+        Args:
+            df: DataFrame with 'close' column
+            period: Lookback period (default: 14 days)
+            
+        Returns:
+            Latest RSI value (float)
+        """
+        if len(df) < period + 1:
+            return 50.0  # Neutral default if insufficient data
+        
+        # Calculate price changes
+        delta = df['close'].diff()
+        
+        # Separate gains and losses
+        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+        
+        # Calculate RS and RSI
+        rs = gain / loss.replace(0, np.nan)
+        rsi = 100 - (100 / (1 + rs))
+        
+        # Return latest RSI value
+        return rsi.iloc[-1] if not pd.isna(rsi.iloc[-1]) else 50.0
+    
     def check_sell_signals(self, verbose: bool = True) -> List[Dict]:
         """
         Run daily check for sell signals (The Harvest Module core logic)
@@ -268,6 +301,9 @@ class PortfolioManager:
             # Calculate ATR (Level 2: Dynamic Volatility Measure)
             current_atr = self.calculate_atr(market_data, period=14)
             
+            # v3 UPGRADE: Calculate RSI (Momentum Measure)
+            current_rsi = self.calculate_rsi(market_data, period=14)
+            
             # Calculate Days Held (Level 2: Zombie Killer)
             days_held = self.calculate_days_held(purchase_date)
             
@@ -287,13 +323,26 @@ class PortfolioManager:
             # Calculate trigger prices
             stop_loss_price = buy_price * 0.93  # -7% Emergency Brake
             
-            # LEVEL 2 UPGRADE: Dynamic ATR-Based Trailing Stop
-            # Instead of fixed 5%, use 2x ATR below the highest
+            # v3 UPGRADE: RSI-Based Dynamic ATR Multiplier
+            # Default: Loose leash (let winners run)
+            atr_multiplier = 2.0
+            stop_desc = "Standard"
+            
+            # If RSI > 70 (Overbought): Tighten leash
+            if current_rsi > 70:
+                atr_multiplier = 1.5
+                stop_desc = "Tight (RSI > 70)"
+            
+            # If RSI > 80 (Extreme Overbought): Very tight leash
+            if current_rsi > 80:
+                atr_multiplier = 1.0
+                stop_desc = "Aggressive (RSI > 80)"
+            
+            # Calculate ATR-based trailing stop with dynamic multiplier
             if current_atr > 0:
-                # ATR-based trailing stop: 2x ATR below peak
-                atr_stop_distance = 2 * current_atr
+                atr_stop_distance = atr_multiplier * current_atr
                 trailing_stop_price = new_highest - atr_stop_distance
-                stop_type = f"ATR (2x{current_atr:.2f}={atr_stop_distance:.2f})"
+                stop_type = f"ATR x{atr_multiplier} ({stop_desc})"
             else:
                 # Fallback to fixed 5% if ATR unavailable
                 trailing_stop_price = new_highest * 0.95
@@ -349,7 +398,7 @@ class PortfolioManager:
                 print(f"  Buy: {buy_price:.2f} | Current: {current_price:.2f} | Highest: {new_highest:.2f}")
                 print(f"  Profit: {profit_pct:+.2f}% ({profit_amount:+,.0f} BDT) | Days Held: {days_held}")
                 print(f"  Stop Loss: {stop_loss_price:.2f} | Trail Stop: {trailing_stop_price:.2f} ({stop_type})")
-                print(f"  ATR: {current_atr:.2f} | RVOL: {rvol:.2f}x | Volume: {current_volume:,}")
+                print(f"  ATR: {current_atr:.2f} | RSI: {current_rsi:.1f} | RVOL: {rvol:.2f}x | Volume: {current_volume:,}")
                 
                 if signal_type:
                     print(f"  ⚡ {reason}")

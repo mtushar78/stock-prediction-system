@@ -119,13 +119,14 @@ class StockSurferFetcher:
             logger.error(f"Error fetching data for {ticker}: {e}")
             return pd.DataFrame()
     
-    def update_ticker(self, ticker: str, delay: float = 2.0) -> bool:
+    def update_ticker(self, ticker: str, delay: float = 2.0, is_final: bool = True) -> bool:
         """
         Fetch and update data for a single ticker
         
         Args:
             ticker: Stock ticker symbol
             delay: Delay in seconds after request
+            is_final: True for EOD closed candle (2:45 PM), False for intraday snapshot
             
         Returns:
             True if successful, False otherwise
@@ -138,8 +139,8 @@ class StockSurferFetcher:
                 logger.warning(f"No data to update for {ticker}")
                 return False
             
-            # Insert into database
-            self.db.insert_stock_data(df, ticker, source="stocksurferbd")
+            # Insert into database with is_final flag
+            self.db.insert_stock_data(df, ticker, source="stocksurferbd", is_final=is_final)
             
             logger.info(f"Successfully updated {ticker} with {len(df)} records")
             
@@ -153,13 +154,14 @@ class StockSurferFetcher:
             return False
     
     def update_all_tickers(self, ticker_list: Optional[List[str]] = None,
-                          delay: float = 2.0) -> dict:
+                          delay: float = 2.0, is_final: bool = True) -> dict:
         """
         Update data for all tickers or a specified list
         
         Args:
             ticker_list: List of tickers to update (default: all from database)
             delay: Delay in seconds between requests
+            is_final: True for EOD closed candle (2:45 PM), False for intraday snapshot
             
         Returns:
             Dictionary with update statistics
@@ -167,7 +169,7 @@ class StockSurferFetcher:
         if ticker_list is None:
             ticker_list = self.db.get_all_tickers()
         
-        logger.info(f"Updating {len(ticker_list)} tickers using stocksurferbd...")
+        logger.info(f"Updating {len(ticker_list)} tickers using stocksurferbd... [is_final={is_final}]")
         
         success_count = 0
         failed_count = 0
@@ -176,7 +178,7 @@ class StockSurferFetcher:
         for i, ticker in enumerate(ticker_list, 1):
             logger.info(f"Processing {i}/{len(ticker_list)}: {ticker}")
             
-            if self.update_ticker(ticker, delay):
+            if self.update_ticker(ticker, delay, is_final=is_final):
                 success_count += 1
             else:
                 failed_count += 1

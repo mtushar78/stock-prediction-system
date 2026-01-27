@@ -71,7 +71,7 @@ class DatabaseManager:
             logger.error(f"Error initializing database: {e}")
             raise
     
-    def insert_stock_data(self, df: pd.DataFrame, ticker: str, source: str = "adjusted_data"):
+    def insert_stock_data(self, df: pd.DataFrame, ticker: str, source: str = "adjusted_data", is_final: bool = True):
         """
         Insert stock data into database
         
@@ -79,26 +79,28 @@ class DatabaseManager:
             df: DataFrame with columns: Date, Open, High, Low, Close, Volume
             ticker: Stock ticker symbol
             source: Data source identifier
+            is_final: True for EOD closed candle (2:45 PM), False for intraday snapshot
         """
         try:
             # Prepare data
             df = df.copy()
             df['ticker'] = ticker
+            df['is_final'] = 1 if is_final else 0
             df.columns = [col.lower() for col in df.columns]
             
             # Ensure date is in proper format
             df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
             
             # Select required columns
-            columns = ['date', 'ticker', 'open', 'high', 'low', 'close', 'volume']
+            columns = ['date', 'ticker', 'open', 'high', 'low', 'close', 'volume', 'is_final']
             df = df[columns]
             
             # Insert data using INSERT OR REPLACE to handle duplicates
             cursor = self.conn.cursor()
             for _, row in df.iterrows():
                 cursor.execute('''
-                    INSERT OR REPLACE INTO stock_data (date, ticker, open, high, low, close, volume)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT OR REPLACE INTO stock_data (date, ticker, open, high, low, close, volume, is_final)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ''', tuple(row))
             
             # Update metadata

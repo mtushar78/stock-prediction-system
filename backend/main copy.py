@@ -26,7 +26,7 @@ from src.db_manager import DatabaseManager
 from src.analyzer import StockAnalyzer
 from src.portfolio_manager import PortfolioManager
 from src.stocksurfer_fetcher import StockSurferFetcher
-from src.dse_scraper import run_daily_scraper
+# from src.dse_scraper import run_daily_scraper  # COMMENTED OUT - HAS BUGS
 
 # Configure logging
 logging.basicConfig(
@@ -56,47 +56,51 @@ class SystemStatus(BaseModel):
     last_update: Optional[str] = None
     next_update: Optional[str] = None
 
-# Background task using DSE Scraper
-async def scheduled_scraper_and_analysis(is_final: int = 0):
+# Background task to update data (RESTORED - Using StockSurfer)
+async def scheduled_data_update(is_final_update: bool = False):
     """
-    Run DSE scraper and analysis
+    Run data update during market hours (3 times: opening, middle, closing)
     
     Args:
-        is_final: 0 for intraday, 1 for final EOD
+        is_final_update: True ONLY for 2:45 PM run (market closed, final candle)
     """
     try:
-        update_type = "FINAL" if is_final else "INTRADAY"
-        logger.info(f"⏰ Starting scraper [{update_type}]...")
+        update_type = "FINAL CANDLE" if is_final_update else "INTRADAY SNAPSHOT"
+        logger.info(f"⏰ Starting scheduled data update [{update_type}]...")
         
-        # Run DSE scraper
-        success = await asyncio.to_thread(run_daily_scraper, is_final)
+        db = DatabaseManager(DB_PATH)
         
-        if not success:
-            logger.error("❌ Scraper failed")
-            return
-        
-        # Run analysis after scraping
+        # Update stock data from stocksurferbd with is_final flag
         try:
-            db = DatabaseManager(DB_PATH)
+            fetcher = StockSurferFetcher(db)
+            stats = fetcher.update_all_tickers(delay=2.0, is_final=is_final_update)
+            logger.info(f"✅ Data update completed: {stats['success']} success, {stats['failed']} failed")
+        except ImportError:
+            logger.warning("stocksurferbd not available, skipping data update")
+        except Exception as e:
+            logger.error(f"Error updating data: {e}")
+        
+        # Run analysis and save signals to a temporary table
+        try:
             analyzer = StockAnalyzer(db)
             df_results = analyzer.analyze_all_tickers()
             
             if not df_results.empty:
+                # Save results to signals_today table
                 conn = db.get_connection()
                 df_results.to_sql('signals_today', conn, if_exists='replace', index=False)
                 conn.close()
-                logger.info(f"✅ Analysis: {len(df_results)} signals generated")
+                logger.info(f"✅ Analysis completed: {len(df_results)} signals generated")
             else:
-                logger.info("No signals generated")
-            
-            db.close()
+                logger.info("No signals generated today")
         except Exception as e:
             logger.error(f"Error during analysis: {e}")
         
-        logger.info(f"✅ Scraper and analysis completed [{update_type}]")
+        db.close()
+        logger.info("✅ Scheduled update completed successfully")
         
     except Exception as e:
-        logger.error(f"❌ Scraper failed: {e}")
+        logger.error(f"❌ Scheduled update failed: {e}")
 
 # Lifespan context manager for startup/shutdown
 @asynccontextmanager
@@ -128,56 +132,45 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ Initial analysis failed: {e}")
     
-    # Schedule DSE Scraper - 4 times daily
-    # 1. Morning scrape at 11:00 AM - INTRADAY (is_final=0)
+    # Schedule 3 updates during market hours (10:00 AM - 2:30 PM) - RESTORED
+    # 1. Morning update at 11:00 AM - INTRADAY SNAPSHOT
     scheduler.add_job(
-        scheduled_scraper_and_analysis,
+        scheduled_data_update,
         CronTrigger(hour=11, minute=0, timezone=BANGLADESH_TZ),
-        args=[0],  # is_final = 0
-        id='morning_scrape',
-        name='Morning Scrape (11 AM)',
+        args=[False],  # is_final = False
+        id='morning_update',
+        name='Morning Data Update',
         replace_existing=True
     )
     
-    # 2. Afternoon scrape at 1:00 PM - INTRADAY (is_final=0)
+    # 2. Afternoon update at 1:00 PM - INTRADAY SNAPSHOT
     scheduler.add_job(
-        scheduled_scraper_and_analysis,
+        scheduled_data_update,
         CronTrigger(hour=13, minute=0, timezone=BANGLADESH_TZ),
-        args=[0],  # is_final = 0
-        id='afternoon_scrape',
-        name='Afternoon Scrape (1 PM)',
+        args=[False],  # is_final = False
+        id='afternoon_update',
+        name='Afternoon Data Update',
         replace_existing=True
     )
     
-    # 3. Pre-close scrape at 2:30 PM - INTRADAY (is_final=0)
+    # 3. Closing update at 2:45 PM (after market closes at 2:30 PM) - FINAL CANDLE
     scheduler.add_job(
-        scheduled_scraper_and_analysis,
-        CronTrigger(hour=14, minute=30, timezone=BANGLADESH_TZ),
-        args=[0],  # is_final = 0
-        id='preclose_scrape',
-        name='Pre-Close Scrape (2:30 PM)',
-        replace_existing=True
-    )
-    
-    # 4. Final scrape at 3:15 PM - FINAL EOD (is_final=1)
-    scheduler.add_job(
-        scheduled_scraper_and_analysis,
-        CronTrigger(hour=15, minute=15, timezone=BANGLADESH_TZ),
-        args=[1],  # is_final = 1
-        id='final_scrape',
-        name='Final Scrape (3:15 PM)',
+        scheduled_data_update,
+        CronTrigger(hour=14, minute=45, timezone=BANGLADESH_TZ),
+        args=[True],  # is_final = True
+        id='closing_update',
+        name='Closing Data Update (FINAL)',
         replace_existing=True
     )
     
     scheduler.start()
-    logger.info("⏰ Scheduler started: DSE Scraper (4 times daily)")
-    logger.info("  - 11:00 AM (intraday)")
-    logger.info("  - 1:00 PM (intraday)")
-    logger.info("  - 2:30 PM (intraday)")
-    logger.info("  - 3:15 PM (FINAL)")
+    logger.info("⏰ Scheduler started: 3 updates during market hours")
+    logger.info("  - Morning: 11:00 AM")
+    logger.info("  - Afternoon: 1:00 PM")
+    logger.info("  - Closing: 2:45 PM")
     
     # Get next run times
-    for job_id in ['morning_scrape', 'afternoon_scrape', 'preclose_scrape', 'final_scrape']:
+    for job_id in ['morning_update', 'afternoon_update', 'closing_update']:
         job = scheduler.get_job(job_id)
         if job and job.next_run_time:
             next_run = job.next_run_time.strftime('%Y-%m-%d %H:%M:%S %Z')
