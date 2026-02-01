@@ -327,6 +327,30 @@ class StockAnalyzer:
             # Generate signal
             signal = self.generate_signal(score_result['score'])
             
+            # Determine market status
+            current_time = datetime.now(pytz.timezone('Asia/Dhaka'))
+            is_market_open = 10 <= current_time.hour < 14 or (current_time.hour == 14 and current_time.minute <= 30)
+            is_intraday = 'is_final' in row and row['is_final'] == 0
+            
+            # Calculate volume fields based on market status
+            current_vol = int(row['volume'])
+            
+            # Last closing volume is the previous day's volume (or today's if final)
+            if len(df) >= 2:
+                if is_intraday:
+                    # If we're looking at intraday data, last closing is previous day
+                    last_closing_vol = int(df.iloc[-2]['volume'])
+                else:
+                    # If we're looking at final data, last closing is today's volume
+                    last_closing_vol = current_vol
+            else:
+                last_closing_vol = current_vol
+            
+            # Projected volume (only during market hours and if intraday)
+            projected_vol = None
+            if is_market_open and is_intraday:
+                projected_vol = int(row['projected_vol']) if pd.notna(row['projected_vol']) else None
+            
             # Prepare result
             result = {
                 'ticker': ticker,
@@ -334,6 +358,11 @@ class StockAnalyzer:
                 'date': row['date'].strftime('%Y-%m-%d'),
                 'close': round(row['close'], 2),
                 'volume': int(row['volume']),
+                'last_closing_vol': last_closing_vol,
+                'current_vol': current_vol if is_market_open else last_closing_vol,
+                'projected_vol': projected_vol,
+                'is_market_open': is_market_open,
+                'is_intraday': is_intraday,
                 'rvol': round(row['rvol'], 2) if pd.notna(row['rvol']) else 0,
                 'avg_volume_20': int(row['avg_volume_20']) if pd.notna(row['avg_volume_20']) else 0,
                 'price_change_pct': round(row['price_change_pct'], 2) if pd.notna(row['price_change_pct']) else 0,

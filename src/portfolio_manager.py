@@ -48,6 +48,22 @@ class PortfolioManager:
                 quantity INTEGER NOT NULL,
                 highest_seen REAL NOT NULL,
                 purchase_date TEXT NOT NULL,
+                notes TEXT,
+                total_cost REAL DEFAULT 0,
+                commission_paid REAL DEFAULT 0
+            )
+        ''')
+        
+        # Create purchase_history table for tracking all buy transactions
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS purchase_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker TEXT NOT NULL,
+                buy_price REAL NOT NULL,
+                quantity INTEGER NOT NULL,
+                commission REAL NOT NULL,
+                total_cost REAL NOT NULL,
+                purchase_date TEXT NOT NULL,
                 notes TEXT
             )
         ''')
@@ -57,9 +73,9 @@ class PortfolioManager:
         logger.info("Portfolio database initialized")
     
     def add_trade(self, ticker: str, buy_price: float, quantity: int, 
-                  date: Optional[str] = None, notes: str = "") -> bool:
+                  date: Optional[str] = None, notes: str = "", budget: Optional[float] = None) -> Dict:
         """
-        Add a new trade to portfolio
+        Add a new trade to portfolio with commission calculation
         
         Args:
             ticker: Stock ticker
@@ -67,32 +83,167 @@ class PortfolioManager:
             quantity: Number of shares
             date: Purchase date (default: today)
             notes: Optional notes
+            budget: Optional budget for suggested quantity calculation
             
         Returns:
-            True if successful, False otherwise
+            Dictionary with trade details including commission
         """
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
+        
+        # Calculate commission (0.40% of trade value)
+        COMMISSION_RATE = 0.004  # 0.40%
+        trade_value = buy_price * quantity
+        commission = trade_value * COMMISSION_RATE
+        total_cost = trade_value + commission
         
         conn = self.get_db_connection()
         cursor = conn.cursor()
         
         try:
-            # Initial highest_seen is the buy_price
+            # Check if position exists
+            cursor.execute("SELECT * FROM portfolio WHERE ticker = ?", (ticker,))
+            existing = cursor.fetchone()
+            
+            if existing:
+                # Update existing position - calculate new average price
+                old_qty = existing[2]  # quantity column
+                old_avg_price = existing[1]  # buy_price column
+                old_total_cost = existing[6] if len(existing) > 6 else (old_qty * old_avg_price)  # total_cost column
+                old_commission = existing[7] if len(existing) > 7 else 0  # commission_paid column
+                
+                new_qty = old_qty + quantity
+                new_total_cost = old_total_cost + total_cost
+                new_commission_total = old_commission + commission
+                new_avg_price = (old_total_cost + trade_value + commission) / new_qty
+                
+                # CRITICAL FIX: Reset purchase_date to today when averaging down
+                # This prevents the "Zombie Date Trap" where old purchase dates
+                # trigger false zombie warnings after adding more shares
+                cursor.execute('''
+                    UPDATE portfolio 
+                    SET quantity = ?, buy_price = ?, total_cost = ?, commission_paid = ?, purchase_date = ?
+                    WHERE ticker = ?
+                ''', (new_qty, new_avg_price, new_total_cost, new_commission_total, date, ticker))
+                
+                logger.info(f"✅ Updated {ticker}: Added {quantity} shares @ {buy_price} BDT. New avg: {new_avg_price:.2f}, Total qty: {new_qty}, Purchase date reset to {date}")
+            else:
+                # Insert new position
+                cursor.execute('''
+                    INSERT INTO portfolio (ticker, buy_price, quantity, highest_seen, purchase_date, notes, total_cost, commission_paid)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (ticker, buy_price, quantity, buy_price, date, notes, total_cost, commission))
+                
+                logger.info(f"✅ Added {ticker}: {quantity} shares @ {buy_price} BDT on {date}")
+            
+            # Record in purchase history
             cursor.execute('''
-                INSERT INTO portfolio (ticker, buy_price, quantity, highest_seen, purchase_date, notes)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (ticker, buy_price, quantity, buy_price, date, notes))
+                INSERT INTO purchase_history (ticker, buy_price, quantity, commission, total_cost, purchase_date, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (ticker, buy_price, quantity, commission, total_cost, date, notes))
             
             conn.commit()
-            logger.info(f"✅ Added {ticker}: {quantity} shares @ {buy_price} BDT on {date}")
-            return True
             
-        except sqlite3.IntegrityError:
-            logger.error(f"❌ Error: You already hold {ticker}. Use update_position() instead.")
-            return False
+            return {
+                'success': True,
+                'ticker': ticker,
+                'quantity': quantity,
+                'buy_price': buy_price,
+                'commission': round(commission, 2),
+                'total_cost': round(total_cost, 2),
+                'date': date
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error adding trade: {e}")
+            conn.rollback()
+            return {'success': False, 'error': str(e)}
         finally:
             conn.close()
+    
+    def calculate_optimal_buy(self, ticker: str, current_price: float, budget: float, 
+                             signal_strength: int = 50) -> Dict:
+        """
+        Calculate optimal number of shares to buy based on budget and signal strength
+        
+        Args:
+            ticker: Stock ticker
+            current_price: Current market price
+            budget: Available budget
+            signal_strength: Signal score (0-100)
+            
+        Returns:
+            Dictionary with buy recommendation
+        """
+        COMMISSION_RATE = 0.004  # 0.40%
+        
+        # Adjust budget allocation based on signal strength
+        # Strong signals (80+): Use up to 100% of budget
+        # Medium signals (45-79): Use up to 70% of budget
+        # Weak signals (<45): Use up to 40% of budget
+        if signal_strength >= 80:
+            budget_allocation = 1.0
+        elif signal_strength >= 45:
+            budget_allocation = 0.7
+        else:
+            budget_allocation = 0.4
+        
+        allocated_budget = budget * budget_allocation
+        
+        # Calculate max quantity considering commission
+        # budget = (price * qty) + (price * qty * commission_rate)
+        # budget = price * qty * (1 + commission_rate)
+        # qty = budget / (price * (1 + commission_rate))
+        max_quantity = int(allocated_budget / (current_price * (1 + COMMISSION_RATE)))
+        
+        if max_quantity <= 0:
+            return {
+                'can_buy': False,
+                'reason': 'Insufficient budget',
+                'min_required': round(current_price * (1 + COMMISSION_RATE), 2)
+            }
+        
+        # Calculate actual costs
+        trade_value = current_price * max_quantity
+        commission = trade_value * COMMISSION_RATE
+        total_cost = trade_value + commission
+        avg_price = total_cost / max_quantity
+        
+        return {
+            'can_buy': True,
+            'ticker': ticker,
+            'suggested_quantity': max_quantity,
+            'price_per_share': round(current_price, 2),
+            'trade_value': round(trade_value, 2),
+            'commission': round(commission, 2),
+            'total_cost': round(total_cost, 2),
+            'avg_price_per_share': round(avg_price, 2),
+            'remaining_budget': round(budget - total_cost, 2),
+            'budget_used_pct': round((total_cost / budget) * 100, 2),
+            'signal_strength': signal_strength
+        }
+    
+    def get_purchase_history(self, ticker: Optional[str] = None) -> pd.DataFrame:
+        """
+        Get purchase history for a ticker or all tickers
+        
+        Args:
+            ticker: Optional ticker to filter by
+            
+        Returns:
+            DataFrame with purchase history
+        """
+        conn = self.get_db_connection()
+        
+        if ticker:
+            query = "SELECT * FROM purchase_history WHERE ticker = ? ORDER BY purchase_date DESC"
+            df = pd.read_sql(query, conn, params=(ticker,))
+        else:
+            query = "SELECT * FROM purchase_history ORDER BY purchase_date DESC"
+            df = pd.read_sql(query, conn)
+        
+        conn.close()
+        return df
     
     def update_position(self, ticker: str, quantity: int, avg_price: Optional[float] = None):
         """

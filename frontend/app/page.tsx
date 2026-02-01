@@ -2,11 +2,12 @@
 
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Wallet, PlusCircle, Clock, Info, AlertCircle } from 'lucide-react';
+import { Wallet, PlusCircle, Clock, Info, AlertCircle, Calculator, History } from 'lucide-react';
 import Header from './components/Header';
 import AlertsSection from './components/AlertsSection';
 import VolumeDetailModal from './components/VolumeDetailModal';
-import { Signal, PortfolioItem, Alert, SystemStatus } from './types';
+import PortfolioVolumeModal from './components/PortfolioVolumeModal';
+import { Signal, PortfolioItem, Alert, SystemStatus, PurchaseHistory, BuyRecommendation } from './types';
 
 // API Base URL - Read from environment variable or fallback to localhost
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -27,6 +28,16 @@ export default function Dashboard() {
   // Modal State
   const [activeModal, setActiveModal] = useState<number | null>(null);
   const [volumeModalSignal, setVolumeModalSignal] = useState<Signal | null>(null);
+  const [portfolioVolumeModal, setPortfolioVolumeModal] = useState<{ ticker: string; volume: number } | null>(null);
+  const [purchaseHistoryModal, setPurchaseHistoryModal] = useState<string | null>(null);
+  const [purchaseHistory, setPurchaseHistory] = useState<PurchaseHistory[]>([]);
+  
+  // Budget Buy State
+  const [showBudgetBuy, setShowBudgetBuy] = useState(false);
+  const [budgetTicker, setBudgetTicker] = useState('');
+  const [budget, setBudget] = useState('');
+  const [buyRecommendation, setBuyRecommendation] = useState<BuyRecommendation | null>(null);
+  const [calculating, setCalculating] = useState(false);
 
   // Click outside handler (on backdrop)
   useEffect(() => {
@@ -155,7 +166,9 @@ export default function Dashboard() {
                   <tr className="text-gray-500 text-xs border-b border-gray-700">
                     <th className="pb-3 pr-4">TICKER</th>
                     <th className="pb-3 pr-4">PRICE</th>
-                    <th className="pb-3 pr-4">VOLUME</th>
+                    <th className="pb-3 pr-4">LAST CLOSING VOL</th>
+                    <th className="pb-3 pr-4">CURRENT VOL</th>
+                    <th className="pb-3 pr-4">PROJECTED VOL</th>
                     <th className="pb-3 pr-4">RVOL</th>
                     <th className="pb-3 pr-4">SCORE</th>
                     <th className="pb-3">REASON</th>
@@ -168,9 +181,21 @@ export default function Dashboard() {
                       <td className="py-3 pr-4">{sig.Price}</td>
                       <td className="py-3 pr-4">
                         <button onClick={() => setVolumeModalSignal(sig)} className="flex items-center gap-1 hover:text-cyan-400 transition">
-                          <span className="text-white">{(sig.Volume || 0).toLocaleString()}</span>
+                          <span className="text-white">{(sig.LastClosingVol || sig.Volume || 0).toLocaleString()}</span>
                           <AlertCircle className="w-3.5 h-3.5 text-cyan-400" />
                         </button>
+                      </td>
+                      <td className="py-3 pr-4">
+                        <span className={`${sig.IsMarketOpen ? 'text-green-400' : 'text-gray-500'}`}>
+                          {sig.IsMarketOpen ? (sig.CurrentVol || 0).toLocaleString() : (sig.LastClosingVol || sig.Volume || 0).toLocaleString()}
+                        </span>
+                      </td>
+                      <td className="py-3 pr-4">
+                        {sig.IsMarketOpen && sig.ProjectedVol ? (
+                          <span className="text-yellow-400">{sig.ProjectedVol.toLocaleString()}</span>
+                        ) : (
+                          <span className="text-gray-600">-</span>
+                        )}
                       </td>
                       <td className="py-3 pr-4 font-bold text-yellow-400">{sig.RVOL}x</td>
                       <td className="py-3 pr-4">
@@ -258,6 +283,9 @@ export default function Dashboard() {
                                     <div>Price: <span className="text-white">{sig.Price} BDT</span></div>
                                     <div>200-Day SMA: <span className="text-white">{sig.SMA200?.toFixed(2) || 'N/A'} BDT</span></div>
                                     <div>Price Change: <span className="text-white">{sig.PriceChange?.toFixed(2) || 'N/A'}%</span></div>
+                                    <div className="text-xs text-gray-500 mt-1 italic">
+                                      (Yesterday's close → Today's close)
+                                    </div>
                                   </div>
                                   <div className="text-yellow-300 font-bold mt-2">Final Score: {sig.Score}/100</div>
                                 </div>
@@ -315,9 +343,9 @@ export default function Dashboard() {
                     <th className="pb-3 pr-4">TICKER</th>
                     <th className="pb-3 pr-4">AVG COST</th>
                     <th className="pb-3 pr-4">CURRENT</th>
+                    <th className="pb-3 pr-4">VOLUME</th>
                     <th className="pb-3 pr-4">QTY</th>
                     <th className="pb-3 pr-4">TOTAL COST</th>
-                    <th className="pb-3 pr-4">MKT VALUE</th>
                     <th className="pb-3 pr-4">PROFIT</th>
                     <th className="pb-3 pr-4">STATUS</th>
                     <th className="pb-3">ACTION</th>
@@ -326,12 +354,42 @@ export default function Dashboard() {
                 <tbody>
                   {portfolio.map((item, i) => (
                     <tr key={i} className="border-b border-gray-700/50 hover:bg-gray-700/30 transition">
-                      <td className="py-3 pr-4 font-bold">{item.ticker}</td>
+                      <td className="py-3 pr-4 font-bold flex items-center gap-1">
+                        {item.ticker}
+                        <button
+                          onClick={async () => {
+                            try {
+                              const res = await axios.get(`${API_URL}/api/purchase-history/${item.ticker}`);
+                              setPurchaseHistory(res.data);
+                              setPurchaseHistoryModal(item.ticker);
+                            } catch (err) {
+                              console.error('Error fetching purchase history:', err);
+                            }
+                          }}
+                          className="inline-flex items-center justify-center hover:text-purple-400 transition-colors"
+                          title="Purchase History"
+                        >
+                          <History className="w-3 h-3 text-purple-400" />
+                        </button>
+                      </td>
                       <td className="py-3 pr-4">{item.buy_price.toFixed(2)}</td>
                       <td className="py-3 pr-4">{item.current_price.toFixed(2)}</td>
+                      <td className="py-3 pr-4">
+                        <button 
+                          onClick={() => setPortfolioVolumeModal({ ticker: item.ticker, volume: item.volume })}
+                          className="flex items-center gap-1 hover:text-cyan-400 transition"
+                        >
+                          <span className="text-white">{item.volume.toLocaleString()}</span>
+                          <AlertCircle className="w-3.5 h-3.5 text-cyan-400" />
+                        </button>
+                      </td>
                       <td className="py-3 pr-4">{item.quantity}</td>
-                      <td className="py-3 pr-4">{(item.buy_price * item.quantity).toFixed(0)}</td>
-                      <td className="py-3 pr-4 text-cyan-400">{(item.current_price * item.quantity).toFixed(0)}</td>
+                      <td className="py-3 pr-4">
+                        <span className="text-orange-400">{item.total_cost?.toFixed(2) || (item.buy_price * item.quantity).toFixed(2)}</span>
+                        <div className="text-xs text-gray-500">
+                          +{item.commission_paid?.toFixed(2) || '0.00'} comm
+                        </div>
+                      </td>
                       <td className="py-3 pr-4">
                         <span className={item.profit_pct >= 0 ? 'text-green-400' : 'text-red-400'}>
                           {item.profit_pct >= 0 ? '+' : ''}{item.profit_pct.toFixed(2)}%
@@ -678,6 +736,111 @@ export default function Dashboard() {
           signal={volumeModalSignal} 
           onClose={() => setVolumeModalSignal(null)} 
         />
+      )}
+
+      {/* Portfolio Volume Modal */}
+      {portfolioVolumeModal && (
+        <PortfolioVolumeModal 
+          ticker={portfolioVolumeModal.ticker}
+          currentVolume={portfolioVolumeModal.volume}
+          onClose={() => setPortfolioVolumeModal(null)} 
+        />
+      )}
+
+      {/* Purchase History Modal */}
+      {purchaseHistoryModal && (
+        <div 
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80"
+          onClick={() => setPurchaseHistoryModal(null)}
+        >
+          <div 
+            className="bg-gray-950 border border-purple-500/50 rounded-lg p-6 shadow-2xl w-[90vw] max-w-[700px] max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-purple-400 flex items-center gap-2">
+                <History className="w-5 h-5" />
+                {purchaseHistoryModal} - Purchase History
+              </h3>
+              <button
+                onClick={() => setPurchaseHistoryModal(null)}
+                className="text-gray-500 hover:text-gray-300 transition-colors text-xl font-bold"
+              >
+                ×
+              </button>
+            </div>
+
+            {purchaseHistory.length === 0 ? (
+              <div className="text-center text-gray-400 py-8">No purchase history found</div>
+            ) : (
+              <>
+                <div className="bg-gray-900 rounded p-4 mb-4">
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <div className="text-gray-500">Total Purchases</div>
+                      <div className="text-white font-bold text-lg">{purchaseHistory.length}</div>
+                    </div>
+                    <div>
+                      <div className="text-gray-500">Total Commission Paid</div>
+                      <div className="text-orange-400 font-bold text-lg">
+                        {purchaseHistory.reduce((sum, p) => sum + p.commission, 0).toFixed(2)} BDT
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <h4 className="text-sm font-bold text-gray-400 mb-2">Purchase Breakdown:</h4>
+                  <div className="max-h-[400px] overflow-y-auto space-y-2">
+                    {purchaseHistory.map((item, index) => (
+                      <div 
+                        key={index}
+                        className="bg-gray-900/50 p-3 rounded border border-gray-800"
+                      >
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div>
+                            <span className="text-gray-500">Date:</span>
+                            <span className="text-white ml-2">{item.purchase_date}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Price:</span>
+                            <span className="text-cyan-400 ml-2 font-bold">{item.buy_price.toFixed(2)} BDT</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Quantity:</span>
+                            <span className="text-white ml-2 font-bold">{item.quantity}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Trade Value:</span>
+                            <span className="text-white ml-2">{(item.buy_price * item.quantity).toFixed(2)} BDT</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Commission (0.40%):</span>
+                            <span className="text-orange-400 ml-2 font-bold">{item.commission.toFixed(2)} BDT</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Total Cost:</span>
+                            <span className="text-yellow-400 ml-2 font-bold">{item.total_cost.toFixed(2)} BDT</span>
+                          </div>
+                        </div>
+                        {item.notes && (
+                          <div className="mt-2 text-xs text-gray-500 italic border-t border-gray-800 pt-2">
+                            Note: {item.notes}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mt-4 text-xs text-gray-500 bg-gray-900/30 p-3 rounded">
+                  <div className="font-bold text-gray-400 mb-1">💡 Commission Info:</div>
+                  <div>Every transaction incl has a 0.40% stockhouse commission fee automatically calculated and added to your average cost.</div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

@@ -11,6 +11,11 @@ export interface Signal {
   AvgVolume20?: number;
   PriceChange?: number;
   SMA200?: number;
+  LastClosingVol?: number;
+  CurrentVol?: number;
+  ProjectedVol?: number;
+  IsMarketOpen?: boolean;
+  IsIntraday?: boolean;
 }
 
 export interface PortfolioItem {
@@ -35,6 +40,41 @@ export interface PortfolioItem {
   volume: number;
   // v3 field
   rsi?: number;
+  // New fields
+  total_cost?: number;
+  commission_paid?: number;
+}
+
+export interface PurchaseHistory {
+  id: number;
+  ticker: string;
+  buy_price: number;
+  quantity: number;
+  commission: number;
+  total_cost: number;
+  purchase_date: string;
+  notes: string;
+}
+
+export interface VolumeHistory {
+  date: string;
+  volume: number;
+}
+
+export interface BuyRecommendation {
+  can_buy: boolean;
+  ticker?: string;
+  suggested_quantity?: number;
+  price_per_share?: number;
+  trade_value?: number;
+  commission?: number;
+  total_cost?: number;
+  avg_price_per_share?: number;
+  remaining_budget?: number;
+  budget_used_pct?: number;
+  signal_strength?: number;
+  reason?: string;
+  min_required?: number;
 }
 
 export interface Alert {

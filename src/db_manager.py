@@ -118,10 +118,20 @@ class DatabaseManager:
             self.conn.rollback()
             raise
     
+    def get_connection(self):
+        """
+        Get a fresh database connection
+        This ensures we always read the latest data from disk, not cached data
+        
+        Returns:
+            sqlite3.Connection object
+        """
+        return sqlite3.connect(self.db_path)
+    
     def get_stock_data(self, ticker: str, start_date: Optional[str] = None, 
                        end_date: Optional[str] = None) -> pd.DataFrame:
         """
-        Retrieve stock data from database
+        Retrieve stock data from database with FRESH connection
         
         Args:
             ticker: Stock ticker symbol
@@ -145,7 +155,11 @@ class DatabaseManager:
             
             query += " ORDER BY date ASC"
             
-            df = pd.read_sql_query(query, self.conn, params=params)
+            # Use fresh connection to avoid caching
+            fresh_conn = self.get_connection()
+            df = pd.read_sql_query(query, fresh_conn, params=params)
+            fresh_conn.close()
+            
             df['date'] = pd.to_datetime(df['date'])
             
             return df

@@ -50,6 +50,12 @@ class Trade(BaseModel):
     date: Optional[str] = None
     notes: Optional[str] = ""
 
+class BudgetBuyRequest(BaseModel):
+    ticker: str
+    budget: float
+    current_price: Optional[float] = None
+    signal_strength: Optional[int] = 50
+
 class SystemStatus(BaseModel):
     status: str
     market_status: str
@@ -94,6 +100,7 @@ async def scheduled_scraper_and_analysis(is_final: int = 0):
             logger.error(f"Error during analysis: {e}")
         
         logger.info(f"✅ Scraper and analysis completed [{update_type}]")
+        logger.info("🔄 Data refresh complete - fresh connections will be used on next API call")
         
     except Exception as e:
         logger.error(f"❌ Scraper failed: {e}")
@@ -274,69 +281,73 @@ def get_sniper_signals():
     try:
         db = DatabaseManager(DB_PATH)
         
-        # Try to fetch pre-calculated signals
-        try:
-            df = pd.read_sql(
-                "SELECT * FROM signals_today WHERE signal IN ('BUY', 'WAIT') ORDER BY score DESC",
-                db.conn
-            )
-            db.close()
-            
-            if not df.empty:
-                # Rename columns for frontend
-                df = df.rename(columns={
-                    'ticker': 'Ticker',
-                    'close': 'Price',
-                    'rvol': 'RVOL',
-                    'score': 'Score',
-                    'signal': 'Signal',
-                    'reasons': 'Reason',
-                    'volume': 'Volume',
-                    'avg_volume_20': 'AvgVolume20',
-                    'price_change_pct': 'PriceChange',
-                    'sma_200': 'SMA200'
-                })
-                
-                # Format Reason (convert list to string)
-                if 'Reason' in df.columns:
-                    df['Reason'] = df['Reason'].apply(lambda x: ', '.join(eval(x)) if isinstance(x, str) and x.startswith('[') else x)
-                
-                return df.to_dict(orient="records")
-        except Exception as e:
-            logger.warning(f"No pre-calculated signals found, running fresh analysis: {e}")
-            
-            # Run fresh analysis
-            analyzer = StockAnalyzer(db)
-            df_results = analyzer.analyze_all_tickers()
-            
-            conn.close()
-            db.close()
-            
-            if not df_results.empty:
-                # Filter for BUY and WAIT signals
-                df_filtered = df_results[df_results['signal'].isin(['BUY', 'WAIT'])].copy()
-                
-                # Rename columns
-                df_filtered = df_filtered.rename(columns={
-                    'ticker': 'Ticker',
-                    'close': 'Price',
-                    'rvol': 'RVOL',
-                    'score': 'Score',
-                    'signal': 'Signal',
-                    'reasons': 'Reason'
-                })
-                
-                # Format Reason
-                if 'Reason' in df_filtered.columns:
-                    df_filtered['Reason'] = df_filtered['Reason'].apply(lambda x: ', '.join(x) if isinstance(x, list) else x)
-                
-                return df_filtered.to_dict(orient="records")
-            
+        # Fetch pre-calculated signals
+        df = pd.read_sql(
+            "SELECT * FROM signals_today WHERE signal IN ('BUY', 'WAIT') ORDER BY score DESC",
+            db.conn
+        )
+        
+        logger.info(f"✅ Fetched {len(df)} signals from signals_today table")
+        
+        db.close()
+        
+        if df.empty:
+            logger.warning("⚠️  No signals found in database")
             return []
+        
+        try:
+            # Replace ALL NaN values with None for JSON compatibility
+            df = df.replace({float('nan'): None})
+            
+            # Fill numeric columns with 0 (except sma_200 which stays None)
+            numeric_columns = ['projected_vol', 'price_change_pct', 'avg_volume_20', 'rvol', 'score', 'volume', 'close']
+            for col in numeric_columns:
+                if col in df.columns:
+                    df[col] = df[col].fillna(0)
+            
+            logger.info(f"✅ Processed NaN values successfully")
+            
+            # Rename columns for frontend
+            df = df.rename(columns={
+                'ticker': 'Ticker',
+                'close': 'Price',
+                'rvol': 'RVOL',
+                'score': 'Score',
+                'signal': 'Signal',
+                'reasons': 'Reason',
+                'volume': 'Volume',
+                'last_closing_vol': 'LastClosingVol',
+                'current_vol': 'CurrentVol',
+                'projected_vol': 'ProjectedVol',
+                'is_market_open': 'IsMarketOpen',
+                'is_intraday': 'IsIntraday',
+                'avg_volume_20': 'AvgVolume20',
+                'price_change_pct': 'PriceChange',
+                'sma_200': 'SMA200'
+            })
+            
+            # Format Reason (convert list to string)
+            if 'Reason' in df.columns:
+                df['Reason'] = df['Reason'].apply(lambda x: ', '.join(eval(x)) if isinstance(x, str) and x.startswith('[') else x)
+            
+            result = df.to_dict(orient="records")
+            logger.info(f"✅ Returning {len(result)} signals to frontend")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ CRITICAL ERROR processing signals data: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            raise HTTPException(status_code=500, detail=f"Error processing signals: {str(e)}")
     
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error getting sniper signals: {e}")
-        return []
+        logger.error(f"❌ CRITICAL ERROR in get_sniper_signals: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.get("/api/portfolio")
 def get_portfolio():
@@ -414,6 +425,10 @@ def get_portfolio():
             elif is_zombie:
                 status = 'ZOMBIE_WARNING'
             
+            # Get total cost and commission from database
+            total_cost = position.get('total_cost', position['buy_price'] * position['quantity'])
+            commission_paid = position.get('commission_paid', 0)
+            
             results.append({
                 'ticker': ticker,
                 'buy_price': position['buy_price'],
@@ -433,7 +448,10 @@ def get_portfolio():
                 'stop_type': stop_type,
                 'atr_distance': round(2 * atr, 2) if atr > 0 else 0,
                 'is_zombie': is_zombie,
-                'volume': int(current_volume)
+                'volume': int(current_volume),
+                # Commission and cost details
+                'total_cost': round(total_cost, 2),
+                'commission_paid': round(commission_paid, 2)
             })
         
         db.close()
@@ -446,11 +464,11 @@ def get_portfolio():
 
 @app.post("/api/trade")
 def add_trade(trade: Trade):
-    """Add a new trade to portfolio"""
+    """Add a new trade to portfolio with commission calculation"""
     try:
         pm = PortfolioManager(DB_PATH)
         
-        success = pm.add_trade(
+        result = pm.add_trade(
             ticker=trade.ticker.upper(),
             buy_price=trade.buy_price,
             quantity=trade.quantity,
@@ -458,21 +476,105 @@ def add_trade(trade: Trade):
             notes=trade.notes or ""
         )
         
-        if success:
+        if result.get('success'):
             return {
                 "success": True,
-                "message": f"Added {trade.ticker.upper()} to portfolio"
+                "message": f"Added {trade.ticker.upper()} to portfolio",
+                "details": result
             }
         else:
             raise HTTPException(
                 status_code=400,
-                detail=f"{trade.ticker.upper()} already exists in portfolio"
+                detail=result.get('error', 'Failed to add trade')
             )
     
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error adding trade: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/calculate-buy")
+def calculate_buy(request: BudgetBuyRequest):
+    """Calculate optimal buy quantity based on budget and signal strength"""
+    try:
+        pm = PortfolioManager(DB_PATH)
+        db = DatabaseManager(DB_PATH)
+        
+        # Get current price if not provided
+        current_price = request.current_price
+        if not current_price:
+            cursor = db.conn.cursor()
+            cursor.execute(
+                "SELECT close FROM stock_data WHERE ticker=? ORDER BY date DESC LIMIT 1",
+                (request.ticker.upper(),)
+            )
+            result = cursor.fetchone()
+            if result:
+                current_price = result[0]
+            else:
+                raise HTTPException(status_code=404, detail=f"No market data found for {request.ticker}")
+        
+        # Calculate optimal buy
+        recommendation = pm.calculate_optimal_buy(
+            ticker=request.ticker.upper(),
+            current_price=current_price,
+            budget=request.budget,
+            signal_strength=request.signal_strength or 50
+        )
+        
+        db.close()
+        
+        return recommendation
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error calculating buy: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/purchase-history/{ticker}")
+def get_purchase_history(ticker: str):
+    """Get purchase history for a specific ticker"""
+    try:
+        pm = PortfolioManager(DB_PATH)
+        history_df = pm.get_purchase_history(ticker.upper())
+        
+        if history_df.empty:
+            return []
+        
+        return history_df.to_dict(orient="records")
+    
+    except Exception as e:
+        logger.error(f"Error getting purchase history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/volume-history/{ticker}")
+def get_volume_history(ticker: str):
+    """Get 20-day volume history for a ticker"""
+    try:
+        db = DatabaseManager(DB_PATH)
+        
+        cursor = db.conn.cursor()
+        cursor.execute(
+            "SELECT date, volume FROM stock_data WHERE ticker=? ORDER BY date DESC LIMIT 20",
+            (ticker.upper(),)
+        )
+        rows = cursor.fetchall()
+        
+        db.close()
+        
+        if not rows:
+            return []
+        
+        # Convert to list of dicts
+        history = [{'date': row[0], 'volume': row[1]} for row in rows]
+        history.reverse()  # Oldest first
+        
+        return history
+    
+    except Exception as e:
+        logger.error(f"Error getting volume history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/trade/{ticker}")

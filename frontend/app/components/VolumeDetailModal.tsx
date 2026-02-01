@@ -1,4 +1,10 @@
-import { Signal } from '../types';
+'use client';
+
+import { useEffect, useState } from 'react';
+import axios from 'axios';
+import { Signal, VolumeHistory } from '../types';
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 interface VolumeDetailModalProps {
   signal: Signal;
@@ -6,18 +12,26 @@ interface VolumeDetailModalProps {
 }
 
 export default function VolumeDetailModal({ signal, onClose }: VolumeDetailModalProps) {
+  const [volumeHistory, setVolumeHistory] = useState<VolumeHistory[]>([]);
+  const [loading, setLoading] = useState(true);
+  
   const avgVolume = signal.AvgVolume20 || 0;
   const todayVolume = signal.Volume || 0;
-  
-  // Mock last 20 days data - in real app, fetch from API
-  const last20Days = Array.from({ length: 20 }, (_, i) => {
-    const date = new Date();
-    date.setDate(date.getDate() - (20 - i));
-    return {
-      date: date.toISOString().split('T')[0],
-      volume: Math.round(avgVolume * (0.8 + Math.random() * 0.4))
+
+  useEffect(() => {
+    const fetchVolumeHistory = async () => {
+      try {
+        const response = await axios.get(`${API_URL}/api/volume-history/${signal.Ticker}`);
+        setVolumeHistory(response.data);
+      } catch (error) {
+        console.error('Error fetching volume history:', error);
+      } finally {
+        setLoading(false);
+      }
     };
-  });
+
+    fetchVolumeHistory();
+  }, [signal.Ticker]);
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80" onClick={onClose}>
@@ -73,34 +87,42 @@ export default function VolumeDetailModal({ signal, onClose }: VolumeDetailModal
           {/* Last 20 Days */}
           <div className="border-t border-gray-800 pt-3">
             <div className="text-blue-400 font-bold mb-2">📅 LAST 20 DAYS VOLUME HISTORY:</div>
-            <div className="bg-gray-900 p-3 rounded max-h-[300px] overflow-y-auto">
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-gray-900">
-                  <tr className="text-gray-500 border-b border-gray-700">
-                    <th className="pb-2 text-left">Date</th>
-                    <th className="pb-2 text-right">Volume</th>
-                    <th className="pb-2 text-right">vs Avg</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {last20Days.map((day, i) => {
-                    const vsAvg = ((day.volume / avgVolume) * 100 - 100).toFixed(1);
-                    return (
-                      <tr key={i} className="border-b border-gray-800">
-                        <td className="py-2 text-gray-400">{day.date}</td>
-                        <td className="py-2 text-right text-white">{day.volume.toLocaleString()}</td>
-                        <td className={`py-2 text-right text-xs ${parseFloat(vsAvg) > 0 ? 'text-green-400' : 'text-red-400'}`}>
-                          {parseFloat(vsAvg) > 0 ? '+' : ''}{vsAvg}%
-                        </td>
+            {loading ? (
+              <div className="text-center text-gray-400 py-8">Loading volume history...</div>
+            ) : volumeHistory.length === 0 ? (
+              <div className="text-center text-gray-400 py-8">No volume history available</div>
+            ) : (
+              <>
+                <div className="bg-gray-900 p-3 rounded max-h-[300px] overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 bg-gray-900">
+                      <tr className="text-gray-500 border-b border-gray-700">
+                        <th className="pb-2 text-left">Date</th>
+                        <th className="pb-2 text-right">Volume</th>
+                        <th className="pb-2 text-right">vs Avg</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            <div className="mt-2 text-gray-500 text-xs">
-              * Average Volume: {avgVolume.toLocaleString()} shares
-            </div>
+                    </thead>
+                    <tbody>
+                      {volumeHistory.slice().reverse().map((day, i) => {
+                        const vsAvg = avgVolume > 0 ? ((day.volume / avgVolume) * 100 - 100).toFixed(1) : '0.0';
+                        return (
+                          <tr key={i} className="border-b border-gray-800">
+                            <td className="py-2 text-gray-400">{day.date}</td>
+                            <td className="py-2 text-right text-white">{day.volume.toLocaleString()}</td>
+                            <td className={`py-2 text-right text-xs ${parseFloat(vsAvg) > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                              {parseFloat(vsAvg) > 0 ? '+' : ''}{vsAvg}%
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="mt-2 text-gray-500 text-xs">
+                  * Average Volume: {avgVolume.toLocaleString()} shares
+                </div>
+              </>
+            )}
           </div>
 
           {/* Close Button */}
