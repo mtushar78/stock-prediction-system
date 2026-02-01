@@ -16,6 +16,13 @@ export interface Signal {
   ProjectedVol?: number;
   IsMarketOpen?: boolean;
   IsIntraday?: boolean;
+  // v4 NEW FIELDS: Enhanced Risk Management
+  NearestSupport?: number;
+  NearestResistance?: number;
+  RecommendedStopLoss?: number;
+  RewardRiskRatio?: number;
+  ATR?: number;
+  TrendStatus?: string;  // 'UPTREND' or 'DOWNTREND'
 }
 
 export interface PortfolioItem {

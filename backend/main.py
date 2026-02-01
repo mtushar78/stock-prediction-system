@@ -307,7 +307,7 @@ def get_sniper_signals():
             
             logger.info(f"✅ Processed NaN values successfully")
             
-            # Rename columns for frontend
+            # Rename columns for frontend (including v4 fields)
             df = df.rename(columns={
                 'ticker': 'Ticker',
                 'close': 'Price',
@@ -323,7 +323,14 @@ def get_sniper_signals():
                 'is_intraday': 'IsIntraday',
                 'avg_volume_20': 'AvgVolume20',
                 'price_change_pct': 'PriceChange',
-                'sma_200': 'SMA200'
+                'sma_200': 'SMA200',
+                # v4 NEW FIELDS
+                'nearest_support': 'NearestSupport',
+                'nearest_resistance': 'NearestResistance',
+                'recommended_stop_loss': 'RecommendedStopLoss',
+                'reward_risk_ratio': 'RewardRiskRatio',
+                'atr': 'ATR',
+                'trend_status': 'TrendStatus'
             })
             
             # Format Reason (convert list to string)
