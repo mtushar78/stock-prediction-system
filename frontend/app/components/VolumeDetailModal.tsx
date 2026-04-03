@@ -44,9 +44,9 @@ export default function VolumeDetailModal({ signal, onClose }: VolumeDetailModal
             📊 VOLUME ANALYSIS - {signal.Ticker}
           </div>
           
-          {/* Today's Volume */}
+          {/* Todays Volume */}
           <div className="mb-4">
-            <div className="text-yellow-400 font-bold mb-2">📈 TODAY'S VOLUME:</div>
+            <div className="text-yellow-400 font-bold mb-2">📈 TODAY&apos;S VOLUME:</div>
             <div className="bg-gray-900 p-3 rounded">
               <div className="text-2xl text-white font-bold">{todayVolume.toLocaleString()}</div>
               <div className="text-gray-400 text-xs mt-1">shares traded</div>
@@ -58,12 +58,12 @@ export default function VolumeDetailModal({ signal, onClose }: VolumeDetailModal
             <div className="text-purple-400 font-bold mb-2">🧮 RVOL CALCULATION:</div>
             <div className="bg-gray-900 p-3 rounded space-y-2">
               <div className="text-gray-300">
-                <span className="text-cyan-400 font-bold">Formula:</span> RVOL = Today's Volume / 20-Day Average Volume
+                <span className="text-cyan-400 font-bold">Formula:</span> RVOL = Today&apos;s Volume / 20-Day Average Volume
               </div>
               <div className="border-t border-gray-700 pt-2 mt-2">
                 <div className="grid grid-cols-2 gap-2 text-sm">
                   <div>
-                    <div className="text-gray-500">Today's Volume:</div>
+                    <div className="text-gray-500">Today&apos;s Volume:</div>
                     <div className="text-white font-bold">{todayVolume.toLocaleString()}</div>
                   </div>
                   <div>

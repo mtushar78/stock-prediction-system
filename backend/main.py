@@ -62,6 +62,12 @@ class SystemStatus(BaseModel):
     last_update: Optional[str] = None
     next_update: Optional[str] = None
 
+
+class TickerAnalyzeRequest(BaseModel):
+    ticker: str
+    analysis_date: Optional[str] = None  # YYYY-MM-DD
+    paid_up_capital: Optional[float] = None  # optional override
+
 # Background task using DSE Scraper
 async def scheduled_scraper_and_analysis(is_final: int = 0):
     """
@@ -85,19 +91,53 @@ async def scheduled_scraper_and_analysis(is_final: int = 0):
         try:
             db = DatabaseManager(DB_PATH)
             analyzer = StockAnalyzer(db)
-            df_results = analyzer.analyze_all_tickers()
+            
+            # v6: Load fundamentals for Low Float scoring
+            paid_up_data = db.get_all_fundamentals()
+            logger.info(f"[{update_type}] Loaded fundamentals for {len(paid_up_data)} tickers")
+            df_results = analyzer.analyze_all_tickers(paid_up_data=paid_up_data)
+            
+            logger.info(f"[{update_type}] Analysis returned: {len(df_results)} results")
             
             if not df_results.empty:
-                conn = db.get_connection()
-                df_results.to_sql('signals_today', conn, if_exists='replace', index=False)
-                conn.close()
-                logger.info(f"✅ Analysis: {len(df_results)} signals generated")
+                # CRITICAL: Convert reasons list to string for SQL storage
+                df_results_copy = df_results.copy()
+                df_results_copy['reasons'] = df_results_copy['reasons'].apply(
+                    lambda x: str(x) if isinstance(x, list) else x
+                )
+                # Serialize v5_details dict as JSON string
+                import json as _json
+                if 'v5_details' in df_results_copy.columns:
+                    df_results_copy['v5_details'] = df_results_copy['v5_details'].apply(
+                        lambda x: _json.dumps(x) if isinstance(x, dict) else x
+                    )
+                
+                # Save to database
+                df_results_copy.to_sql('signals_today', db.conn, if_exists='replace', index=False)
+                db.conn.commit()
+                
+                # Verify save
+                cursor = db.conn.cursor()
+                cursor.execute('SELECT COUNT(*) FROM signals_today')
+                count = cursor.fetchone()[0]
+                
+                logger.info(f"✅ [{update_type}] Analysis: {len(df_results)} signals generated")
+                logger.info(f"✅ [{update_type}] Verified: {count} signals saved to signals_today")
+                
+                # Count signal types
+                buy_count = len(df_results[df_results['signal'] == 'BUY'])
+                wait_count = len(df_results[df_results['signal'] == 'WAIT'])
+                logger.info(f"   [{update_type}] BUY signals: {buy_count}, WAIT signals: {wait_count}")
             else:
-                logger.info("No signals generated")
+                logger.warning(f"⚠️  [{update_type}] No signals generated - DataFrame empty")
+                logger.warning(f"   Possible reasons: All stocks below 200 SMA or insufficient data")
             
             db.close()
+            
         except Exception as e:
-            logger.error(f"Error during analysis: {e}")
+            logger.error(f"❌ [{update_type}] Analysis FAILED: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
         
         logger.info(f"✅ Scraper and analysis completed [{update_type}]")
         logger.info("🔄 Data refresh complete - fresh connections will be used on next API call")
@@ -115,73 +155,196 @@ async def lifespan(app: FastAPI):
     
     # Run initial analysis on startup
     logger.info("📊 Running initial analysis...")
+    analysis_success = False
     try:
         db = DatabaseManager(DB_PATH)
         analyzer = StockAnalyzer(db)
-        df_results = analyzer.analyze_all_tickers()
+        
+        # v6: Load fundamentals for Low Float scoring
+        paid_up_data = db.get_all_fundamentals()
+        logger.info(f"Loaded fundamentals for {len(paid_up_data)} tickers")
+        df_results = analyzer.analyze_all_tickers(paid_up_data=paid_up_data)
+        
+        logger.info(f"Analysis complete: {len(df_results)} results returned")
         
         if not df_results.empty:
             # Save results to signals_today table
             # Convert reasons list to string for SQL storage
             df_results_copy = df_results.copy()
             df_results_copy['reasons'] = df_results_copy['reasons'].apply(lambda x: str(x) if isinstance(x, list) else x)
+            # Serialize v5_details dict as JSON string
+            import json as _json
+            if 'v5_details' in df_results_copy.columns:
+                df_results_copy['v5_details'] = df_results_copy['v5_details'].apply(
+                    lambda x: _json.dumps(x) if isinstance(x, dict) else x
+                )
+            
+            # Save to database
             df_results_copy.to_sql('signals_today', db.conn, if_exists='replace', index=False)
             db.conn.commit()
+            
+            # Verify save
+            cursor = db.conn.cursor()
+            cursor.execute('SELECT COUNT(*) FROM signals_today')
+            count = cursor.fetchone()[0]
+            
             logger.info(f"✅ Initial analysis completed: {len(df_results)} signals generated")
+            logger.info(f"✅ Verified: {count} signals saved to signals_today table")
+            
+            # Count BUY and WAIT signals
+            buy_count = len(df_results[df_results['signal'] == 'BUY'])
+            wait_count = len(df_results[df_results['signal'] == 'WAIT'])
+            logger.info(f"   - BUY signals: {buy_count}")
+            logger.info(f"   - WAIT signals: {wait_count}")
+            
+            analysis_success = True
         else:
-            logger.warning("⚠️  No signals generated on startup")
+            logger.warning("⚠️  No signals generated on startup - DataFrame is empty")
+            logger.warning("This could indicate:")
+            logger.warning("  1. No stocks meet v4 criteria (all in downtrends)")
+            logger.warning("  2. Insufficient historical data (need 200 days)")
+            logger.warning("  3. Analysis logic error")
         
         db.close()
+        
     except Exception as e:
-        logger.error(f"❌ Initial analysis failed: {e}")
+        logger.error(f"❌ Initial analysis FAILED: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        logger.error("CRITICAL: Startup analysis failed - signals table may be empty!")
+    
+    if not analysis_success:
+        logger.warning("⚠️  STARTUP ANALYSIS DID NOT COMPLETE SUCCESSFULLY")
+        logger.warning("API will return empty signals until next scheduled update")
     
     # Schedule DSE Scraper - 4 times daily
-    # 1. Morning scrape at 11:00 AM - INTRADAY (is_final=0)
+    # 1. Morning scrape at 10:30 AM - INTRADAY (is_final=0)
+    scheduler.add_job(
+        scheduled_scraper_and_analysis,
+        CronTrigger(hour=10, minute=30, timezone=BANGLADESH_TZ),
+        args=[0],  # is_final = 0
+        id='morning_scrape_1030',
+        name='Morning Scrape (10:30 AM)',
+        replace_existing=True
+    )
+    
+        # 1. Morning scrape at 11:00 AM - INTRADAY (is_final=0)
     scheduler.add_job(
         scheduled_scraper_and_analysis,
         CronTrigger(hour=11, minute=0, timezone=BANGLADESH_TZ),
         args=[0],  # is_final = 0
-        id='morning_scrape',
+        id='morning_scrape_1100',
         name='Morning Scrape (11 AM)',
         replace_existing=True
     )
-    
+        # 1. Morning scrape at 11:30 AM - INTRADAY (is_final=0)
+    scheduler.add_job(
+        scheduled_scraper_and_analysis,
+        CronTrigger(hour=11, minute=30, timezone=BANGLADESH_TZ),
+        args=[0],  # is_final = 0
+        id='morning_scrape_1130',
+        name='Morning Scrape (11:30 AM)',
+        replace_existing=True
+    )    # 1. Morning scrape at 12:00 PM - INTRADAY (is_final=0)
+    scheduler.add_job(
+        scheduled_scraper_and_analysis,
+        CronTrigger(hour=12, minute=0, timezone=BANGLADESH_TZ),
+        args=[0],  # is_final = 0
+        id='morning_scrape_1200',
+        name='Morning Scrape (12 PM)',
+        replace_existing=True
+    )
+    scheduler.add_job(
+        scheduled_scraper_and_analysis,
+        CronTrigger(hour=12, minute=30, timezone=BANGLADESH_TZ),
+        args=[0],  # is_final = 0
+        id='morning_scrape_1230',
+        name='Morning Scrape (12:30 PM)',
+        replace_existing=True
+    )
     # 2. Afternoon scrape at 1:00 PM - INTRADAY (is_final=0)
     scheduler.add_job(
         scheduled_scraper_and_analysis,
         CronTrigger(hour=13, minute=0, timezone=BANGLADESH_TZ),
         args=[0],  # is_final = 0
-        id='afternoon_scrape',
+        id='afternoon_scrape_1300',
         name='Afternoon Scrape (1 PM)',
         replace_existing=True
     )
     
+        # 2. Afternoon scrape at 1:30 PM - INTRADAY (is_final=0)
+    scheduler.add_job(
+        scheduled_scraper_and_analysis,
+        CronTrigger(hour=13, minute=30, timezone=BANGLADESH_TZ),
+        args=[0],  # is_final = 0
+        id='afternoon_scrape_1330',
+        name='Afternoon Scrape (1:30 PM)',
+        replace_existing=True
+    )
+        # 2. Afternoon scrape at 2:00 PM - INTRADAY (is_final=0)
+    scheduler.add_job(
+        scheduled_scraper_and_analysis,
+        CronTrigger(hour=14, minute=0, timezone=BANGLADESH_TZ),
+        args=[0],  # is_final = 0
+        id='afternoon_scrape_1400',
+        name='Afternoon Scrape (2 PM)',
+        replace_existing=True
+    )
+
     # 3. Pre-close scrape at 2:30 PM - INTRADAY (is_final=0)
     scheduler.add_job(
         scheduled_scraper_and_analysis,
         CronTrigger(hour=14, minute=30, timezone=BANGLADESH_TZ),
         args=[0],  # is_final = 0
-        id='preclose_scrape',
+        id='preclose_scrape_1430',
         name='Pre-Close Scrape (2:30 PM)',
         replace_existing=True
     )
     
+        # 3. Pre-close scrape at 3:00 PM - INTRADAY (is_final=0)
+    scheduler.add_job(
+        scheduled_scraper_and_analysis,
+        CronTrigger(hour=15, minute=00, timezone=BANGLADESH_TZ),
+        args=[0],  # is_final = 0
+        id='preclose_scrape_1500',
+        name='Pre-Close Scrape (3 PM)',
+        replace_existing=True
+    )
     # 4. Final scrape at 3:15 PM - FINAL EOD (is_final=1)
     scheduler.add_job(
         scheduled_scraper_and_analysis,
         CronTrigger(hour=15, minute=15, timezone=BANGLADESH_TZ),
         args=[1],  # is_final = 1
-        id='final_scrape',
+        id='final_scrape_1515',
         name='Final Scrape (3:15 PM)',
         replace_existing=True
     )
     
+    # v6: Weekly fundamentals scrape — Saturday 8 AM (market closed)
+    async def scheduled_fundamentals_scrape():
+        try:
+            from src.fundamentals_scraper import scrape_all
+            logger.info("Starting weekly fundamentals scrape...")
+            await asyncio.to_thread(scrape_all, delay=1.5)
+            logger.info("Weekly fundamentals scrape complete")
+        except Exception as e:
+            logger.error(f"Fundamentals scrape failed: {e}")
+
+    scheduler.add_job(
+        scheduled_fundamentals_scrape,
+        CronTrigger(day_of_week='sat', hour=8, minute=0, timezone=BANGLADESH_TZ),
+        id='weekly_fundamentals',
+        name='Weekly Fundamentals Scrape',
+        replace_existing=True
+    )
+
     scheduler.start()
-    logger.info("⏰ Scheduler started: DSE Scraper (4 times daily)")
-    logger.info("  - 11:00 AM (intraday)")
-    logger.info("  - 1:00 PM (intraday)")
-    logger.info("  - 2:30 PM (intraday)")
+    logger.info("Scheduler started: DSE Scraper + Weekly Fundamentals")
+    logger.info("  - 11:30 AM (intraday)")
+    logger.info("  - 2:00 PM (intraday)")
+    logger.info("  - 3:00 PM (intraday)")
     logger.info("  - 3:15 PM (FINAL)")
+    logger.info("  - Saturday 8 AM (fundamentals refresh)")
     
     # Get next run times
     for job_id in ['morning_scrape', 'afternoon_scrape', 'preclose_scrape', 'final_scrape']:
@@ -330,12 +493,29 @@ def get_sniper_signals():
                 'recommended_stop_loss': 'RecommendedStopLoss',
                 'reward_risk_ratio': 'RewardRiskRatio',
                 'atr': 'ATR',
-                'trend_status': 'TrendStatus'
+                'trend_status': 'TrendStatus',
+                'raw_score': 'RawScore'
             })
             
             # Format Reason (convert list to string)
             if 'Reason' in df.columns:
                 df['Reason'] = df['Reason'].apply(lambda x: ', '.join(eval(x)) if isinstance(x, str) and x.startswith('[') else x)
+            
+            # Deserialize v5_details JSON string back to dict for frontend
+            import json as _json
+            if 'v5_details' in df.columns:
+                def _parse_v5(x):
+                    if isinstance(x, str):
+                        try:
+                            return _json.loads(x)
+                        except Exception:
+                            return {}
+                    if isinstance(x, dict):
+                        return x
+                    return {}
+                df['v5_details'] = df['v5_details'].apply(_parse_v5)
+            else:
+                df['v5_details'] = [{}] * len(df)
             
             result = df.to_dict(orient="records")
             logger.info(f"✅ Returning {len(result)} signals to frontend")
@@ -356,6 +536,54 @@ def get_sniper_signals():
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
+
+@app.get("/api/tickers")
+def get_all_tickers():
+    """Return all available tickers in DB for dropdown/autocomplete."""
+    try:
+        db = DatabaseManager(DB_PATH)
+        tickers = db.get_all_tickers()
+        db.close()
+        return tickers
+    except Exception as e:
+        logger.error(f"Error getting tickers: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/analyze-ticker")
+def analyze_ticker_detailed(request: TickerAnalyzeRequest):
+    """Analyze a single ticker and return a detailed calculation breakdown."""
+    try:
+        ticker = (request.ticker or '').upper().strip()
+        if not ticker:
+            raise HTTPException(status_code=400, detail="ticker is required")
+
+        db = DatabaseManager(DB_PATH)
+        analyzer = StockAnalyzer(db)
+
+        # v6: Auto-load paid_up_capital from fundamentals if not provided
+        paid_up_capital = request.paid_up_capital
+        if paid_up_capital is None:
+            fundamentals = db.get_all_fundamentals()
+            paid_up_capital = fundamentals.get(ticker)
+
+        result = analyzer.analyze_ticker_detailed(
+            ticker=ticker,
+            paid_up_capital=paid_up_capital,
+            analysis_date=request.analysis_date,
+        )
+
+        db.close()
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in analyze_ticker_detailed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/portfolio")
 def get_portfolio():
     """Get current portfolio holdings with live P/L and Level 2 sell logic details"""
@@ -371,102 +599,144 @@ def get_portfolio():
         
         results = []
         for _, position in portfolio_df.iterrows():
-            ticker = position['ticker']
-            
-            # Get market data for ATR calculation
-            cursor = db.conn.cursor()
-            cursor.execute(
-                "SELECT date, close, high, low, open, volume FROM stock_data WHERE ticker=? ORDER BY date DESC LIMIT 30",
-                (ticker,)
-            )
-            market_data = cursor.fetchall()
-            
-            if not market_data:
+            try:
+                ticker = position['ticker']
+                
+                # Get market data for ATR calculation
+                cursor = db.conn.cursor()
+                cursor.execute(
+                    "SELECT date, close, high, low, open, volume FROM stock_data WHERE ticker=? ORDER BY date DESC LIMIT 30",
+                    (ticker,)
+                )
+                market_data = cursor.fetchall()
+                
+                if not market_data:
+                    logger.warning(f"No market data for {ticker}, skipping")
+                    continue
+                
+                # Create DataFrame for ATR calculation
+                df_market = pd.DataFrame(market_data, columns=['date', 'close', 'high', 'low', 'open', 'volume'])
+                
+                current_price = float(df_market.iloc[0]['close'])
+                current_open = float(df_market.iloc[0]['open'])
+                current_volume = int(df_market.iloc[0]['volume'])
+                
+                # Calculate profit
+                profit_pct = ((current_price - position['buy_price']) / position['buy_price']) * 100
+                profit_amount = (current_price - position['buy_price']) * position['quantity']
+                
+                # Calculate ATR (Level 2) with error handling
+                try:
+                    atr = pm.calculate_atr(df_market, period=14)
+                    if atr is None or pd.isna(atr):
+                        atr = 0.0
+                except Exception as e:
+                    logger.warning(f"ATR calculation failed for {ticker}: {e}")
+                    atr = 0.0
+                
+                # Calculate days held (Level 2)
+                try:
+                    days_held = pm.calculate_days_held(position['purchase_date'])
+                except Exception as e:
+                    logger.warning(f"Days held calculation failed for {ticker}: {e}")
+                    days_held = 0
+                
+                # Calculate RVOL
+                if len(df_market) >= 20:
+                    avg_volume_20 = df_market['volume'].mean()
+                    rvol = current_volume / avg_volume_20 if avg_volume_20 > 0 else 0
+                else:
+                    rvol = 0
+                
+                # Calculate stop prices
+                stop_loss_price = position['buy_price'] * 0.93  # -7% Emergency Brake
+                
+                # Dynamic ATR-based trailing stop
+                if atr > 0:
+                    atr_stop_distance = 2 * atr
+                    trailing_stop_price = position['highest_seen'] - atr_stop_distance
+                    stop_type = f"ATR"
+                else:
+                    trailing_stop_price = position['highest_seen'] * 0.95
+                    stop_type = "Fixed 5%"
+                
+                # Determine status and check for zombie
+                status = 'HOLD'
+                is_zombie = days_held > 10 and profit_pct < 2
+                
+                # Check sell conditions
+                if current_price <= stop_loss_price:
+                    status = 'STOP_LOSS'
+                elif current_price <= trailing_stop_price:
+                    status = 'TAKE_PROFIT'
+                elif is_zombie:
+                    status = 'ZOMBIE_WARNING'
+                
+                # Get total cost and commission from database with defaults
+                total_cost = position.get('total_cost', position['buy_price'] * position['quantity'])
+                commission_paid = position.get('commission_paid', 0)
+                
+                # Calculate RSI safely (optional field)
+                rsi = None
+                try:
+                    if 'close' in df_market.columns and len(df_market) >= 14:
+                        delta = df_market['close'].diff()
+                        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                        rs = gain / loss
+                        rsi = 100 - (100 / (1 + rs.iloc[0]))
+                        if pd.isna(rsi):
+                            rsi = None
+                except Exception as e:
+                    logger.debug(f"RSI calculation skipped for {ticker}: {e}")
+                    rsi = None
+                
+                results.append({
+                    'ticker': ticker,
+                    'buy_price': float(position['buy_price']),
+                    'quantity': int(position['quantity']),
+                    'highest_seen': float(position['highest_seen']),
+                    'purchase_date': str(position['purchase_date']),
+                    'current_price': round(current_price, 2),
+                    'profit_pct': round(profit_pct, 2),
+                    'profit_amount': round(profit_amount, 2),
+                    'status': status,
+                    # Level 2 details
+                    'atr': round(float(atr), 2),
+                    'days_held': int(days_held),
+                    'rvol': round(float(rvol), 2),
+                    'stop_loss_price': round(stop_loss_price, 2),
+                    'trailing_stop_price': round(trailing_stop_price, 2),
+                    'stop_type': stop_type,
+                    'atr_distance': round(2 * float(atr), 2) if atr > 0 else 0,
+                    'is_zombie': bool(is_zombie),
+                    'volume': int(current_volume),
+                    # Commission and cost details
+                    'total_cost': round(float(total_cost), 2),
+                    'commission_paid': round(float(commission_paid), 2),
+                    # RSI (optional)
+                    'rsi': round(float(rsi), 1) if rsi is not None else None
+                })
+                
+                logger.debug(f"✅ Portfolio item processed: {ticker}")
+                
+            except Exception as e:
+                logger.error(f"Error processing portfolio item {ticker}: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                # Continue with next item instead of crashing
                 continue
-            
-            # Create DataFrame for ATR calculation
-            df_market = pd.DataFrame(market_data, columns=['date', 'close', 'high', 'low', 'open', 'volume'])
-            
-            current_price = df_market.iloc[0]['close']
-            current_open = df_market.iloc[0]['open']
-            current_volume = df_market.iloc[0]['volume']
-            
-            # Calculate profit
-            profit_pct = ((current_price - position['buy_price']) / position['buy_price']) * 100
-            profit_amount = (current_price - position['buy_price']) * position['quantity']
-            
-            # Calculate ATR (Level 2)
-            atr = pm.calculate_atr(df_market, period=14)
-            
-            # Calculate days held (Level 2)
-            days_held = pm.calculate_days_held(position['purchase_date'])
-            
-            # Calculate RVOL
-            if len(df_market) >= 20:
-                avg_volume_20 = df_market['volume'].mean()
-                rvol = current_volume / avg_volume_20 if avg_volume_20 > 0 else 0
-            else:
-                rvol = 0
-            
-            # Calculate stop prices
-            stop_loss_price = position['buy_price'] * 0.93  # -7% Emergency Brake
-            
-            # Dynamic ATR-based trailing stop
-            if atr > 0:
-                atr_stop_distance = 2 * atr
-                trailing_stop_price = position['highest_seen'] - atr_stop_distance
-                stop_type = f"ATR"
-            else:
-                trailing_stop_price = position['highest_seen'] * 0.95
-                stop_type = "Fixed 5%"
-            
-            # Determine status and check for zombie
-            status = 'HOLD'
-            is_zombie = days_held > 10 and profit_pct < 2
-            
-            # Check sell conditions
-            if current_price <= stop_loss_price:
-                status = 'STOP_LOSS'
-            elif current_price <= trailing_stop_price:
-                status = 'TAKE_PROFIT'
-            elif is_zombie:
-                status = 'ZOMBIE_WARNING'
-            
-            # Get total cost and commission from database
-            total_cost = position.get('total_cost', position['buy_price'] * position['quantity'])
-            commission_paid = position.get('commission_paid', 0)
-            
-            results.append({
-                'ticker': ticker,
-                'buy_price': position['buy_price'],
-                'quantity': position['quantity'],
-                'highest_seen': position['highest_seen'],
-                'purchase_date': position['purchase_date'],
-                'current_price': round(current_price, 2),
-                'profit_pct': round(profit_pct, 2),
-                'profit_amount': round(profit_amount, 2),
-                'status': status,
-                # Level 2 details
-                'atr': round(atr, 2),
-                'days_held': days_held,
-                'rvol': round(rvol, 2),
-                'stop_loss_price': round(stop_loss_price, 2),
-                'trailing_stop_price': round(trailing_stop_price, 2),
-                'stop_type': stop_type,
-                'atr_distance': round(2 * atr, 2) if atr > 0 else 0,
-                'is_zombie': is_zombie,
-                'volume': int(current_volume),
-                # Commission and cost details
-                'total_cost': round(total_cost, 2),
-                'commission_paid': round(commission_paid, 2)
-            })
         
         db.close()
         
+        logger.info(f"✅ Portfolio API: Returning {len(results)} positions")
         return results
     
     except Exception as e:
-        logger.error(f"Error getting portfolio: {e}")
+        logger.error(f"❌ CRITICAL ERROR in get_portfolio: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        # Return empty array instead of crashing
         return []
 
 @app.post("/api/trade")
@@ -584,6 +854,43 @@ def get_volume_history(ticker: str):
         logger.error(f"Error getting volume history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.get("/api/price-history/{ticker}")
+def get_price_history(ticker: str):
+    """Get 20-day OHLC (open/high/low/close) history for a ticker"""
+    try:
+        db = DatabaseManager(DB_PATH)
+
+        cursor = db.conn.cursor()
+        cursor.execute(
+            "SELECT date, open, high, low, close FROM stock_data WHERE ticker=? ORDER BY date DESC LIMIT 20",
+            (ticker.upper(),)
+        )
+        rows = cursor.fetchall()
+
+        db.close()
+
+        if not rows:
+            return []
+
+        history = [
+            {
+                'date': row[0],
+                'open': row[1],
+                'high': row[2],
+                'low': row[3],
+                'close': row[4],
+            }
+            for row in rows
+        ]
+        history.reverse()  # Oldest first
+
+        return history
+
+    except Exception as e:
+        logger.error(f"Error getting price history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.delete("/api/trade/{ticker}")
 def remove_trade(ticker: str):
     """Remove a position from portfolio"""
@@ -640,18 +947,52 @@ def get_portfolio_summary():
         logger.error(f"Error getting portfolio summary: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/fundamentals")
+def get_fundamentals():
+    """Get fundamentals for all tickers"""
+    try:
+        db = DatabaseManager(DB_PATH)
+        df = db.get_fundamentals_full()
+        db.close()
+        if df.empty:
+            return []
+        df = df.replace({float('nan'): None})
+        return df.to_dict(orient="records")
+    except Exception as e:
+        logger.error(f"Error getting fundamentals: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/fundamentals/{ticker}")
+def get_ticker_fundamentals(ticker: str):
+    """Get fundamentals for a specific ticker"""
+    try:
+        db = DatabaseManager(DB_PATH)
+        cursor = db.conn.cursor()
+        cursor.execute("SELECT * FROM fundamentals WHERE ticker = ?", (ticker.upper(),))
+        cols = [desc[0] for desc in cursor.description]
+        row = cursor.fetchone()
+        db.close()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"No fundamentals for {ticker}")
+        return dict(zip(cols, row))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting fundamentals for {ticker}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/trigger-update")
 async def trigger_manual_update():
     """Manually trigger data update (for testing)"""
     try:
-        logger.info("🔄 Manual update triggered...")
-        asyncio.create_task(scheduled_data_update())
-        
+        logger.info("Manual update triggered...")
+        asyncio.create_task(scheduled_scraper_and_analysis())
+
         return {
             "success": True,
             "message": "Update started in background"
         }
-    
+
     except Exception as e:
         logger.error(f"Error triggering update: {e}")
         raise HTTPException(status_code=500, detail=str(e))

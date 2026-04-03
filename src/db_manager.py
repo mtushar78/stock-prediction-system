@@ -44,6 +44,8 @@ class DatabaseManager:
                     low REAL,
                     close REAL,
                     volume INTEGER,
+                    is_final INTEGER DEFAULT 1,
+                    public_volume INTEGER DEFAULT NULL,
                     PRIMARY KEY (date, ticker)
                 )
             ''')
@@ -63,7 +65,35 @@ class DatabaseManager:
                     record_count INTEGER
                 )
             ''')
-            
+
+            # v6: Add trade_count and value_mn columns (idempotent)
+            for col_def in [
+                'trade_count INTEGER DEFAULT NULL',
+                'value_mn REAL DEFAULT NULL',
+            ]:
+                try:
+                    cursor.execute(f'ALTER TABLE stock_data ADD COLUMN {col_def}')
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
+
+            # v6: Create fundamentals table for company-level data
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS fundamentals (
+                    ticker TEXT PRIMARY KEY,
+                    paid_up_capital REAL,
+                    paid_up_capital_cr REAL,
+                    sector TEXT,
+                    market_category TEXT,
+                    total_shares INTEGER,
+                    market_cap REAL,
+                    face_value REAL,
+                    eps REAL,
+                    pe_ratio REAL,
+                    nav REAL,
+                    last_updated TEXT
+                )
+            ''')
+
             self.conn.commit()
             logger.info(f"Database initialized at {self.db_path}")
             
@@ -74,45 +104,54 @@ class DatabaseManager:
     def insert_stock_data(self, df: pd.DataFrame, ticker: str, source: str = "adjusted_data", is_final: bool = True):
         """
         Insert stock data into database
-        
+
         Args:
             df: DataFrame with columns: Date, Open, High, Low, Close, Volume
+                Optional columns: TradeCount, ValueMN (will be mapped to trade_count, value_mn)
             ticker: Stock ticker symbol
             source: Data source identifier
             is_final: True for EOD closed candle (2:45 PM), False for intraday snapshot
         """
         try:
-            # Prepare data
             df = df.copy()
             df['ticker'] = ticker
             df['is_final'] = 1 if is_final else 0
             df.columns = [col.lower() for col in df.columns]
-            
-            # Ensure date is in proper format
+
             df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
-            
-            # Select required columns
+
+            # Base columns always present
             columns = ['date', 'ticker', 'open', 'high', 'low', 'close', 'volume', 'is_final']
+
+            # Optional v6 columns — map DataFrame names to DB column names
+            extra_col_map = {
+                'tradecount': 'trade_count',
+                'valuemn': 'value_mn',
+            }
+            for df_col, db_col in extra_col_map.items():
+                if df_col in df.columns:
+                    df.rename(columns={df_col: db_col}, inplace=True)
+                    columns.append(db_col)
+
             df = df[columns]
-            
-            # Insert data using INSERT OR REPLACE to handle duplicates
+
             cursor = self.conn.cursor()
+            col_names = ', '.join(columns)
+            placeholders = ', '.join(['?'] * len(columns))
             for _, row in df.iterrows():
-                cursor.execute('''
-                    INSERT OR REPLACE INTO stock_data (date, ticker, open, high, low, close, volume, is_final)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', tuple(row))
-            
-            # Update metadata
-            cursor = self.conn.cursor()
+                cursor.execute(
+                    f'INSERT OR REPLACE INTO stock_data ({col_names}) VALUES ({placeholders})',
+                    tuple(row)
+                )
+
             cursor.execute('''
                 INSERT OR REPLACE INTO metadata (ticker, last_updated, data_source, record_count)
                 VALUES (?, datetime('now'), ?, ?)
             ''', (ticker, source, len(df)))
-            
+
             self.conn.commit()
             logger.info(f"Inserted {len(df)} records for {ticker}")
-            
+
         except Exception as e:
             logger.error(f"Error inserting data for {ticker}: {e}")
             self.conn.rollback()
@@ -255,6 +294,22 @@ class DatabaseManager:
             logger.error(f"Error getting stats: {e}")
             return {}
     
+    def get_all_fundamentals(self) -> dict:
+        """Return {ticker: paid_up_capital_cr} dict for Low Float scoring."""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT ticker, paid_up_capital_cr FROM fundamentals")
+            return {row[0]: row[1] for row in cursor.fetchall() if row[1] is not None}
+        except Exception:
+            return {}
+
+    def get_fundamentals_full(self) -> pd.DataFrame:
+        """Return full fundamentals table as DataFrame."""
+        try:
+            return pd.read_sql("SELECT * FROM fundamentals", self.conn)
+        except Exception:
+            return pd.DataFrame()
+
     def close(self):
         """Close database connection"""
         if self.conn:

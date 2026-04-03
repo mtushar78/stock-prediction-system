@@ -6,6 +6,7 @@ interface SignalsTableProps {
   loading: boolean;
   onVolumeClick: (signal: Signal) => void;
   onInfoClick: (index: number) => void;
+  onPriceInfoClick: (signal: Signal) => void;
   activeModalIndex: number | null;
 }
 
@@ -14,6 +15,7 @@ export default function SignalsTable({
   loading, 
   onVolumeClick, 
   onInfoClick,
+  onPriceInfoClick,
   activeModalIndex 
 }: SignalsTableProps) {
   return (
@@ -38,11 +40,25 @@ export default function SignalsTable({
             {signals.map((sig, i) => (
               <tr key={i} className="border-b border-gray-700/50 hover:bg-gray-700/30 transition">
                 <td className="py-3 pr-4 font-bold text-green-400">{sig.Ticker}</td>
-                <td className="py-3 pr-4">{sig.Price}</td>
+                <td className="py-3 pr-4">
+                  <div className="flex items-center gap-2">
+                    <span>{sig.Price}</span>
+                    <button
+                      onClick={() => onPriceInfoClick(sig)}
+                      className="inline-flex items-center justify-center w-4 h-4 rounded-full hover:bg-gray-700 transition-colors"
+                      title="View last 20 days OHLC"
+                    >
+                      <Info className="w-3.5 h-3.5 text-gray-500 hover:text-emerald-400" />
+                    </button>
+                  </div>
+                </td>
                 <td className="py-3 pr-4">
                   {sig.TrendStatus ? (
-                    <span className={`text-xs font-bold ${sig.TrendStatus === 'UPTREND' ? 'text-green-400' : 'text-red-400'}`}>
-                      {sig.TrendStatus === 'UPTREND' ? '⬆️' : '⬇️'}
+                    <span className={`text-xs font-bold ${
+                      sig.TrendStatus === 'UPTREND' ? 'text-green-400' :
+                      sig.TrendStatus === 'NEAR_SMA' ? 'text-yellow-400' : 'text-red-400'
+                    }`}>
+                      {sig.TrendStatus === 'UPTREND' ? '⬆️' : sig.TrendStatus === 'NEAR_SMA' ? '↔️' : '⬇️'}
                     </span>
                   ) : (
                     <span className="text-gray-600">-</span>
@@ -55,8 +71,8 @@ export default function SignalsTable({
                   </button>
                 </td>
                 <td className="py-3 pr-4">
-                  <span className={`${sig.IsMarketOpen ? 'text-green-400' : 'text-gray-500'}`}>
-                    {sig.IsMarketOpen ? (sig.CurrentVol || 0).toLocaleString() : (sig.LastClosingVol || sig.Volume || 0).toLocaleString()}
+                  <span className={`${sig.IsMarketOpen ? 'text-green-400' : 'text-white'}`}>
+                    {(sig.CurrentVol || 0).toLocaleString()}
                   </span>
                 </td>
                 <td className="py-3 pr-4">
@@ -69,8 +85,8 @@ export default function SignalsTable({
                 <td className="py-3 pr-4 font-bold text-yellow-400">{sig.RVOL}x</td>
                 <td className="py-3 pr-4">
                   <span className={`px-2 py-1 rounded text-xs font-bold ${
-                    sig.Score >= 80 ? 'bg-green-900 text-green-300' : 
-                    sig.Score >= 45 ? 'bg-yellow-900 text-yellow-300' : 
+                    sig.Score >= 55 ? 'bg-green-900 text-green-300' :
+                    sig.Score >= 30 ? 'bg-yellow-900 text-yellow-300' :
                     'bg-gray-700 text-gray-300'
                   }`}>
                     {sig.Score}

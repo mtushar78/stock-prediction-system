@@ -6,6 +6,7 @@ interface PortfolioTableProps {
   onVolumeClick: (ticker: string, volume: number) => void;
   onHistoryClick: (ticker: string) => Promise<void>;
   onInfoClick: (index: number) => void;
+  onPriceInfoClick: (ticker: string, currentPrice: number) => void;
   onRemove: (ticker: string) => void;
   activeModalIndex: number | null;
 }
@@ -15,6 +16,7 @@ export default function PortfolioTable({
   onVolumeClick,
   onHistoryClick,
   onInfoClick,
+  onPriceInfoClick,
   onRemove,
   activeModalIndex
 }: PortfolioTableProps) {
@@ -52,7 +54,18 @@ export default function PortfolioTable({
                   </button>
                 </td>
                 <td className="py-3 pr-4">{item.buy_price.toFixed(2)}</td>
-                <td className="py-3 pr-4">{item.current_price.toFixed(2)}</td>
+                <td className="py-3 pr-4">
+                  <div className="flex items-center gap-2">
+                    <span>{item.current_price.toFixed(2)}</span>
+                    <button
+                      onClick={() => onPriceInfoClick(item.ticker, item.current_price)}
+                      className="inline-flex items-center justify-center w-4 h-4 rounded-full hover:bg-gray-700 transition-colors"
+                      title="View last 20 days OHLC"
+                    >
+                      <Info className="w-3.5 h-3.5 text-gray-500 hover:text-emerald-400" />
+                    </button>
+                  </div>
+                </td>
                 <td className="py-3 pr-4">
                   <button 
                     onClick={() => onVolumeClick(item.ticker, item.volume)}

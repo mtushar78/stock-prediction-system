@@ -80,40 +80,44 @@ class StockSurferFetcher:
             column_mapping = {
                 'DATE': 'Date',
                 'OPENP': 'Open',
-                'HIGH': 'High', 
+                'HIGH': 'High',
                 'LOW': 'Low',
-                'CLOSEP': 'Close',  # Use CLOSEP (closing price) instead of LTP
-                'VOLUME': 'Volume'
+                'CLOSEP': 'Close',
+                'VOLUME': 'Volume',
+                'TRADE': 'TradeCount',
+                'VALUE_MN': 'ValueMN',
             }
-            
-            # Rename columns
+
             df = df.rename(columns=column_mapping)
-            
-            # Ensure required columns exist
+
             required_cols = ['Date', 'Open', 'High', 'Low', 'Close', 'Volume']
             for col in required_cols:
                 if col not in df.columns:
                     logger.error(f"Missing column {col} in data for {ticker}")
                     return pd.DataFrame()
-            
-            # Convert data types
+
             df['Date'] = pd.to_datetime(df['Date'])
             df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce').fillna(0).astype(int)
-            
+
             for col in ['Open', 'High', 'Low', 'Close']:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
-            
-            # Remove rows with NaN prices
+
+            # v6: Convert optional columns
+            if 'TradeCount' in df.columns:
+                df['TradeCount'] = pd.to_numeric(df['TradeCount'], errors='coerce').fillna(0).astype(int)
+            if 'ValueMN' in df.columns:
+                df['ValueMN'] = pd.to_numeric(df['ValueMN'], errors='coerce')
+
             df = df.dropna(subset=['Open', 'High', 'Low', 'Close'], how='all')
-            
-            # Sort by date (stocksurferbd returns newest first, we want oldest first)
             df = df.sort_values('Date')
-            
+
             logger.info(f"Fetched {len(df)} records for {ticker}")
             if not df.empty:
                 logger.info(f"Date range: {df['Date'].min()} to {df['Date'].max()}")
-            
-            return df[required_cols]
+
+            # Include optional columns if available
+            all_cols = required_cols + [c for c in ['TradeCount', 'ValueMN'] if c in df.columns]
+            return df[all_cols]
             
         except Exception as e:
             logger.error(f"Error fetching data for {ticker}: {e}")

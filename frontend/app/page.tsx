@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import axios from 'axios';
 import { Clock } from 'lucide-react';
 import Header from './components/Header';
@@ -15,6 +16,7 @@ import PortfolioVolumeModal from './components/PortfolioVolumeModal';
 import SignalDetailModal from './components/SignalDetailModal';
 import PortfolioDetailModal from './components/PortfolioDetailModal';
 import PurchaseHistoryModal from './components/PurchaseHistoryModal';
+import PriceHistoryModal from './components/PriceHistoryModal';
 import { Signal, PortfolioItem, Alert, SystemStatus, PurchaseHistory } from './types';
 
 // API Base URL
@@ -40,6 +42,8 @@ export default function Dashboard() {
   const [portfolioVolumeModal, setPortfolioVolumeModal] = useState<{ ticker: string; volume: number } | null>(null);
   const [purchaseHistoryModal, setPurchaseHistoryModal] = useState<string | null>(null);
   const [purchaseHistory, setPurchaseHistory] = useState<PurchaseHistory[]>([]);
+
+  const [priceHistoryModal, setPriceHistoryModal] = useState<{ ticker: string; currentPrice?: number } | null>(null);
 
   // Keyboard shortcut handler
   useEffect(() => {
@@ -102,8 +106,9 @@ export default function Dashboard() {
       setNewPrice('');
       setNewQty('');
       fetchData();
-    } catch (err: any) {
-      alert(`❌ Error: ${err.response?.data?.detail || err.message}`);
+    } catch (err: unknown) {
+      const maybeAxiosError = err as { response?: { data?: { detail?: string } }; message?: string };
+      alert(`❌ Error: ${maybeAxiosError.response?.data?.detail || maybeAxiosError.message || 'Unknown error'}`);
     } finally {
       setSubmitting(false);
     }
@@ -117,8 +122,9 @@ export default function Dashboard() {
       await axios.delete(`${API_URL}/api/trade/${ticker}`);
       alert(`✅ ${ticker} removed from portfolio`);
       fetchData();
-    } catch (err: any) {
-      alert(`❌ Error: ${err.response?.data?.detail || err.message}`);
+    } catch (err: unknown) {
+      const maybeAxiosError = err as { response?: { data?: { detail?: string } }; message?: string };
+      alert(`❌ Error: ${maybeAxiosError.response?.data?.detail || maybeAxiosError.message || 'Unknown error'}`);
     }
   };
 
@@ -136,6 +142,16 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 p-4 md:p-8 font-mono">
       <Header systemStatus={systemStatus} loading={loading} onRefresh={fetchData} />
+
+      {/* Quick navigation */}
+      <div className="mb-6 flex flex-wrap gap-3">
+        <Link
+          href="/analyze"
+          className="bg-gray-800 hover:bg-gray-700 border border-gray-700 px-4 py-2 rounded text-sm transition"
+        >
+          🧮 Manual Analyze
+        </Link>
+      </div>
 
       {/* Last Update Info */}
       {systemStatus && (
@@ -163,6 +179,7 @@ export default function Dashboard() {
             loading={loading}
             onVolumeClick={(signal) => setVolumeModalSignal(signal)}
             onInfoClick={(index) => setActiveModal(index)}
+            onPriceInfoClick={(signal) => setPriceHistoryModal({ ticker: signal.Ticker, currentPrice: signal.Price })}
             activeModalIndex={activeModal}
           />
           
@@ -171,6 +188,7 @@ export default function Dashboard() {
             onVolumeClick={(ticker, volume) => setPortfolioVolumeModal({ ticker, volume })}
             onHistoryClick={handlePurchaseHistoryClick}
             onInfoClick={(index) => setActiveModal(signals.length + index)}
+            onPriceInfoClick={(ticker, currentPrice) => setPriceHistoryModal({ ticker, currentPrice })}
             onRemove={handleRemovePosition}
             activeModalIndex={activeModal !== null && activeModal >= signals.length ? activeModal - signals.length : null}
           />
@@ -230,6 +248,14 @@ export default function Dashboard() {
           ticker={purchaseHistoryModal}
           history={purchaseHistory}
           onClose={() => setPurchaseHistoryModal(null)}
+        />
+      )}
+
+      {priceHistoryModal && (
+        <PriceHistoryModal
+          ticker={priceHistoryModal.ticker}
+          currentPrice={priceHistoryModal.currentPrice}
+          onClose={() => setPriceHistoryModal(null)}
         />
       )}
     </div>

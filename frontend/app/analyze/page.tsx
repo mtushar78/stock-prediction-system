@@ -1,0 +1,476 @@
+'use client';
+
+import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import axios from 'axios';
+import { DetailedTickerAnalysis, ScoreBreakdownItem } from '../types';
+
+// API Base URL
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+function Badge({ label, variant }: { label: string; variant: 'green' | 'yellow' | 'red' | 'gray' | 'blue' }) {
+  const cls =
+    variant === 'green'
+      ? 'bg-green-900/30 border-green-700 text-green-300'
+      : variant === 'yellow'
+        ? 'bg-yellow-900/30 border-yellow-700 text-yellow-300'
+        : variant === 'red'
+          ? 'bg-red-900/30 border-red-700 text-red-300'
+          : variant === 'blue'
+            ? 'bg-blue-900/30 border-blue-700 text-blue-300'
+            : 'bg-gray-800 border-gray-700 text-gray-300';
+  return <span className={`inline-flex items-center px-2 py-1 text-xs border rounded ${cls}`}>{label}</span>;
+}
+
+function fmt(n: number | null | undefined, digits = 2) {
+  if (n === null || n === undefined || Number.isNaN(n)) return '-';
+  return n.toFixed(digits);
+}
+
+function fmtInt(n: number | null | undefined) {
+  if (n === null || n === undefined || Number.isNaN(n)) return '-';
+  return Math.round(n).toLocaleString();
+}
+
+function pointsColor(points: number) {
+  if (points > 0) return 'text-green-400';
+  if (points < 0) return 'text-red-400';
+  return 'text-gray-400';
+}
+
+function BreakdownRow({ item }: { item: ScoreBreakdownItem }) {
+  return (
+    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 border-b border-gray-800 py-2">
+      <div className="flex items-center gap-2">
+        <span className={`text-sm font-bold ${item.passed ? 'text-green-400' : 'text-gray-300'}`}>{item.passed ? '✅' : '❌'}</span>
+        <div>
+          <div className="text-sm text-gray-200">{item.name}</div>
+          <div className="text-xs text-gray-500">{item.details}</div>
+        </div>
+      </div>
+      <div className={`text-sm font-bold ${pointsColor(item.points)}`}>{item.points > 0 ? `+${item.points}` : `${item.points}`}</div>
+    </div>
+  );
+}
+
+export default function AnalyzeTickerPage() {
+  const [tickers, setTickers] = useState<string[]>([]);
+  const [tickerInput, setTickerInput] = useState('');
+  const [loadingTickers, setLoadingTickers] = useState(false);
+  const [loadingAnalyze, setLoadingAnalyze] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<DetailedTickerAnalysis | null>(null);
+
+  // Fetch tickers for datalist
+  useEffect(() => {
+    const load = async () => {
+      try {
+        setLoadingTickers(true);
+        const res = await axios.get<string[]>(`${API_URL}/api/tickers`);
+        setTickers(res.data || []);
+      } catch (e) {
+        console.error(e);
+        setTickers([]);
+      } finally {
+        setLoadingTickers(false);
+      }
+    };
+    load();
+  }, []);
+
+  const normalizedTicker = useMemo(() => tickerInput.trim().toUpperCase(), [tickerInput]);
+
+  const analyze = async () => {
+    setError(null);
+    setResult(null);
+    if (!normalizedTicker) {
+      setError('Please select / type a ticker first.');
+      return;
+    }
+    try {
+      setLoadingAnalyze(true);
+      const res = await axios.post<DetailedTickerAnalysis>(`${API_URL}/api/analyze-ticker`, {
+        ticker: normalizedTicker,
+      });
+      setResult(res.data);
+    } catch (err: unknown) {
+      const maybeAxiosError = err as { response?: { data?: { detail?: string } }; message?: string };
+      setError(maybeAxiosError.response?.data?.detail || maybeAxiosError.message || 'Analyze failed');
+    } finally {
+      setLoadingAnalyze(false);
+    }
+  };
+
+  const statusBadge = useMemo(() => {
+    if (!result) return null;
+    if (result.status === 'error') return <Badge label="ERROR" variant="red" />;
+    if (result.status === 'filtered') return <Badge label="FILTERED" variant="yellow" />;
+    return <Badge label="OK" variant="green" />;
+  }, [result]);
+
+  const signalBadge = useMemo(() => {
+    const sig = result?.score?.signal;
+    if (!sig) return null;
+    if (sig === 'BUY') return <Badge label="BUY" variant="green" />;
+    if (sig === 'WAIT') return <Badge label="WAIT" variant="yellow" />;
+    return <Badge label={sig} variant="gray" />;
+  }, [result]);
+
+  return (
+    <div className="min-h-screen bg-gray-900 text-gray-100 p-4 md:p-8 font-mono">
+      <div className="mb-8 flex items-start justify-between gap-4 flex-wrap border-b border-gray-700 pb-4">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-bold text-green-400">Manual Ticker Analysis</h1>
+          <p className="text-gray-500 text-sm">Pick any stock from DB or type manually. See every step of the calculation.</p>
+        </div>
+
+        <Link
+          href="/"
+          className="bg-gray-800 hover:bg-gray-700 border border-gray-700 px-4 py-2 rounded text-sm transition"
+        >
+          ← Back to Dashboard
+        </Link>
+      </div>
+
+      {/* Upper section: select/search */}
+      <section className="bg-gray-800 rounded-lg p-6 border border-gray-700 mb-6">
+        <h2 className="text-lg font-bold mb-4 text-blue-300">Select Stock</h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+          <div className="md:col-span-2">
+            <label className="block text-xs text-gray-400 mb-2">Ticker (dropdown + autocomplete)</label>
+            <input
+              className="w-full bg-gray-950 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-green-500"
+              list="tickers"
+              value={tickerInput}
+              onChange={(e) => setTickerInput(e.target.value)}
+              placeholder={loadingTickers ? 'Loading tickers…' : 'Type e.g. GP or click to choose'}
+            />
+            <datalist id="tickers">
+              {tickers.map((t) => (
+                <option key={t} value={t} />
+              ))}
+            </datalist>
+            <div className="text-xs text-gray-600 mt-2">
+              {tickers.length > 0 ? `Loaded ${tickers.length} tickers.` : 'No tickers loaded yet.'}
+            </div>
+          </div>
+
+          <button
+            onClick={analyze}
+            disabled={loadingAnalyze}
+            className="bg-green-600 hover:bg-green-700 disabled:bg-gray-700 disabled:text-gray-400 px-4 py-2 rounded font-bold transition"
+          >
+            {loadingAnalyze ? 'Analyzing…' : 'Analyze'}
+          </button>
+        </div>
+
+        {error && <div className="mt-4 text-sm text-red-300">❌ {error}</div>}
+      </section>
+
+      {/* Result section */}
+      <section className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h2 className="text-lg font-bold text-green-300">Result</h2>
+            <div className="text-xs text-gray-500 mt-1">Detailed breakdown for the selected ticker</div>
+          </div>
+          <div className="flex items-center gap-2">
+            {statusBadge}
+            {signalBadge}
+            {result?.score?.final_score !== undefined && result?.score?.final_score !== null && (
+              <Badge label={`Score: ${result.score.final_score}`} variant="blue" />
+            )}
+          </div>
+        </div>
+
+        {!result && <div className="text-gray-600 text-sm mt-6">Select a ticker and click Analyze.</div>}
+
+        {result && (
+          <div className="mt-6 space-y-6">
+            {/* Top summary */}
+            <div className="bg-gray-950 border border-gray-700 rounded p-4">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div>
+                  <div className="text-xs text-gray-500">Ticker</div>
+                  <div className="text-xl font-bold text-green-400">{result.ticker}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-500">Date</div>
+                  <div className="text-sm text-gray-200">{result.meta?.analysis_date || '-'}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-500">Market</div>
+                  <div className="text-sm text-gray-200">
+                    {result.meta?.is_market_open ? 'OPEN' : 'CLOSED'}{result.meta?.is_intraday ? ' (intraday snapshot)' : ''}
+                  </div>
+                </div>
+              </div>
+
+              {result.message && (
+                <div className="mt-3 text-sm">
+                  <span className="text-gray-400">Message:</span> <span className="text-yellow-300">{result.message}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Filters */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="bg-gray-950 border border-gray-700 rounded p-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-bold text-purple-300">Survival Filters</h3>
+                  {result.filters?.survival?.passed ? <Badge label="PASSED" variant="green" /> : <Badge label="FAILED" variant="yellow" />}
+                </div>
+
+                <div className="mt-3 text-xs text-gray-500">Reason: {result.filters?.survival?.reason || '-'}</div>
+
+                <div className="mt-4 space-y-3 text-sm">
+                  {result.filters?.survival?.rules && (
+                    <>
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <div className="text-gray-200">Ghost Town</div>
+                          <div className="text-xs text-gray-500">{result.filters.survival.rules.ghost_town.details}</div>
+                        </div>
+                        {result.filters.survival.rules.ghost_town.passed ? <Badge label="OK" variant="green" /> : <Badge label="BLOCK" variant="yellow" />}
+                      </div>
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <div className="text-gray-200">Price Stuck</div>
+                          <div className="text-xs text-gray-500">{result.filters.survival.rules.price_stuck.details}</div>
+                        </div>
+                        {result.filters.survival.rules.price_stuck.passed ? <Badge label="OK" variant="green" /> : <Badge label="BLOCK" variant="yellow" />}
+                      </div>
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <div className="text-gray-200">Min Volume</div>
+                          <div className="text-xs text-gray-500">{result.filters.survival.rules.min_volume.details}</div>
+                        </div>
+                        {result.filters.survival.rules.min_volume.passed ? <Badge label="OK" variant="green" /> : <Badge label="BLOCK" variant="yellow" />}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-gray-950 border border-gray-700 rounded p-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-bold text-cyan-300">Trend Filter (200 SMA)</h3>
+                  {result.filters?.trend?.passed === false
+                    ? <Badge label="DEEP DOWNTREND" variant="red" />
+                    : result.filters?.trend?.close != null && result.filters?.trend?.sma_200 != null && result.filters.trend.close < result.filters.trend.sma_200
+                      ? <Badge label="NEAR SMA" variant="yellow" />
+                      : <Badge label="UPTREND" variant="green" />}
+                </div>
+                <div className="mt-3 text-xs text-gray-500">{result.filters?.trend?.reason || '-'}</div>
+
+                <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
+                  <div className="bg-gray-900 border border-gray-800 rounded p-3">
+                    <div className="text-xs text-gray-500">Close</div>
+                    <div className="text-gray-100 font-bold">৳{fmt(result.filters?.trend?.close, 2)}</div>
+                  </div>
+                  <div className="bg-gray-900 border border-gray-800 rounded p-3">
+                    <div className="text-xs text-gray-500">SMA 200</div>
+                    <div className="text-gray-100 font-bold">৳{fmt(result.filters?.trend?.sma_200, 2)}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Indicators */}
+            <div className="bg-gray-950 border border-gray-700 rounded p-4">
+              <h3 className="font-bold text-blue-300 mb-3">Indicators / Inputs</h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                <div className="bg-gray-900 border border-gray-800 rounded p-3">
+                  <div className="text-xs text-gray-500">Close</div>
+                  <div className="font-bold">৳{fmt(result.indicators?.close, 2)}</div>
+                </div>
+                <div className="bg-gray-900 border border-gray-800 rounded p-3">
+                  <div className="text-xs text-gray-500">RVOL</div>
+                  <div className="font-bold text-yellow-400">{fmt(result.indicators?.rvol, 2)}x</div>
+                </div>
+                <div className="bg-gray-900 border border-gray-800 rounded p-3">
+                  <div className="text-xs text-gray-500">Avg Vol 20</div>
+                  <div className="font-bold">{fmtInt(result.indicators?.avg_volume_20)}</div>
+                </div>
+                <div className="bg-gray-900 border border-gray-800 rounded p-3">
+                  <div className="text-xs text-gray-500">Today Vol</div>
+                  <div className="font-bold">{fmtInt(result.indicators?.current_vol)}</div>
+                </div>
+                <div className="bg-gray-900 border border-gray-800 rounded p-3">
+                  <div className="text-xs text-gray-500">Projected Vol</div>
+                  <div className="font-bold text-yellow-300">{result.meta?.is_market_open ? fmtInt(result.indicators?.projected_vol) : '-'}</div>
+                </div>
+                <div className="bg-gray-900 border border-gray-800 rounded p-3">
+                  <div className="text-xs text-gray-500">Price Change %</div>
+                  <div className="font-bold">{fmt(result.indicators?.price_change_pct, 2)}%</div>
+                </div>
+                <div className="bg-gray-900 border border-gray-800 rounded p-3">
+                  <div className="text-xs text-gray-500">ATR (14)</div>
+                  <div className="font-bold">{fmt(result.indicators?.atr, 2)}</div>
+                </div>
+                <div className="bg-gray-900 border border-gray-800 rounded p-3">
+                  <div className="text-xs text-gray-500">Daily Range %</div>
+                  <div className="font-bold">{fmt(result.indicators?.daily_range_pct, 2)}%</div>
+                </div>
+                <div className="bg-gray-900 border border-gray-800 rounded p-3">
+                  <div className="text-xs text-gray-500">Close Position Ratio</div>
+                  <div className="font-bold text-cyan-300">{fmt(result.indicators?.close_position_ratio, 4)}</div>
+                </div>
+                <div className="bg-gray-900 border border-gray-800 rounded p-3">
+                  <div className="text-xs text-gray-500">OBV Slope (20d)</div>
+                  <div className="font-bold">{fmt(result.indicators?.obv_slope_20, 2)}</div>
+                </div>
+                <div className="bg-gray-900 border border-gray-800 rounded p-3">
+                  <div className="text-xs text-gray-500">Price Slope (20d)</div>
+                  <div className="font-bold">{fmt(result.indicators?.price_slope_20, 4)}</div>
+                </div>
+                <div className="bg-gray-900 border border-gray-800 rounded p-3">
+                  <div className="text-xs text-gray-500">Vol MA 3/10</div>
+                  <div className="font-bold">{fmtInt(result.indicators?.vol_ma_3)} / {fmtInt(result.indicators?.vol_ma_10)}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Support/Resistance + Risk */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="bg-gray-950 border border-gray-700 rounded p-4">
+                <h3 className="font-bold text-emerald-300 mb-3">Support / Resistance</h3>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">Nearest Support</span>
+                    <span className="font-bold text-green-400">৳{fmt(result.support_resistance?.nearest_support, 2)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">Nearest Resistance</span>
+                    <span className="font-bold text-red-400">৳{fmt(result.support_resistance?.nearest_resistance, 2)}</span>
+                  </div>
+                  <div className="pt-2 border-t border-gray-800">
+                    <div className="text-xs text-gray-500 mb-1">All Support Levels</div>
+                    <div className="text-xs text-gray-400 break-words">
+                      {(result.support_resistance?.all_support_levels || []).length > 0
+                        ? result.support_resistance?.all_support_levels.map((x) => fmt(x, 2)).join(', ')
+                        : '-'}
+                    </div>
+                  </div>
+                  <div className="pt-2 border-t border-gray-800">
+                    <div className="text-xs text-gray-500 mb-1">All Resistance Levels</div>
+                    <div className="text-xs text-gray-400 break-words">
+                      {(result.support_resistance?.all_resistance_levels || []).length > 0
+                        ? result.support_resistance?.all_resistance_levels.map((x) => fmt(x, 2)).join(', ')
+                        : '-'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-gray-950 border border-gray-700 rounded p-4">
+                <h3 className="font-bold text-orange-300 mb-3">Risk / Stop Loss / RR</h3>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">Stop from Support (support × 0.98)</span>
+                    <span className="font-bold">৳{fmt(result.risk?.stop_from_support, 2)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">Stop from ATR (close − 1.5×ATR)</span>
+                    <span className="font-bold">৳{fmt(result.risk?.stop_from_atr, 2)}</span>
+                  </div>
+                  <div className="flex items-center justify-between pt-2 border-t border-gray-800">
+                    <span className="text-gray-200 font-bold">Recommended Stop Loss</span>
+                    <span className="font-bold text-yellow-300">৳{fmt(result.risk?.recommended_stop_loss, 2)}</span>
+                  </div>
+
+                  <div className="pt-2 border-t border-gray-800">
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Reward:Risk</span>
+                      {result.risk?.reward_risk?.valid ? (
+                        <Badge
+                          label={`${result.risk.reward_risk.ratio.toFixed(2)}:1${result.risk.reward_risk.recommended ? ' ✅' : ' ⚠️'}`}
+                          variant={result.risk.reward_risk.recommended ? 'green' : 'yellow'}
+                        />
+                      ) : (
+                        <Badge label="N/A" variant="gray" />
+                      )}
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-3 text-xs text-gray-400">
+                      <div>
+                        <div className="text-gray-500">Risk</div>
+                        <div>
+                          {result.risk?.reward_risk?.risk_amount !== undefined ? `৳${fmt(result.risk.reward_risk.risk_amount, 2)}` : '-'}
+                          {result.risk?.reward_risk?.risk_percent !== undefined ? ` (${fmt(result.risk.reward_risk.risk_percent, 2)}%)` : ''}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-gray-500">Reward</div>
+                        <div>
+                          {result.risk?.reward_risk?.reward_amount !== undefined ? `৳${fmt(result.risk.reward_risk.reward_amount, 2)}` : '-'}
+                          {result.risk?.reward_risk?.reward_percent !== undefined ? ` (${fmt(result.risk.reward_risk.reward_percent, 2)}%)` : ''}
+                        </div>
+                      </div>
+                    </div>
+                    {!result.risk?.reward_risk?.valid && (
+                      <div className="text-xs text-gray-500 mt-2">{result.risk?.reward_risk?.reason || 'Needs ATR + support + resistance'}</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Score breakdown */}
+            <div className="bg-gray-950 border border-gray-700 rounded p-4">
+              <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+                <h3 className="font-bold text-pink-300">Score Calculation Breakdown</h3>
+                <div className="flex items-center gap-2">
+                  {result.score?.raw_score !== undefined && <Badge label={`Raw: ${result.score.raw_score}`} variant="gray" />}
+                  {result.score?.final_score !== undefined && <Badge label={`Final: ${result.score.final_score}`} variant="blue" />}
+                  {result.score?.signal && (
+                    <Badge
+                      label={result.score.signal}
+                      variant={result.score.signal === 'BUY' ? 'green' : result.score.signal === 'WAIT' ? 'yellow' : 'gray'}
+                    />
+                  )}
+                </div>
+              </div>
+              <div>
+                {(result.score?.breakdown || []).map((item, idx) => (
+                  <BreakdownRow key={idx} item={item} />
+                ))}
+              </div>
+              {result.score?.official_reasons && (
+                <div className="mt-4 text-xs text-gray-500">
+                  <div className="text-gray-400 font-bold mb-1">Official Reasons (from existing analyzer)</div>
+                  <div>{result.score.official_reasons.join(', ')}</div>
+                </div>
+              )}
+            </div>
+
+            {/* Official summary (if included) */}
+            {result.official && (
+              <div className="bg-gray-950 border border-gray-700 rounded p-4">
+                <h3 className="font-bold text-gray-200 mb-3">Official Summary (compare)</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                  <div className="bg-gray-900 border border-gray-800 rounded p-3">
+                    <div className="text-xs text-gray-500">Official Signal</div>
+                    <div className="font-bold">{result.official.signal || '-'}</div>
+                  </div>
+                  <div className="bg-gray-900 border border-gray-800 rounded p-3">
+                    <div className="text-xs text-gray-500">Official Score</div>
+                    <div className="font-bold">{result.official.score ?? '-'}</div>
+                  </div>
+                  <div className="bg-gray-900 border border-gray-800 rounded p-3">
+                    <div className="text-xs text-gray-500">Trend</div>
+                    <div className="font-bold">{result.official.trend_status || '-'}</div>
+                  </div>
+                </div>
+                {result.official.reasons && (
+                  <div className="mt-3 text-xs text-gray-500">
+                    <span className="text-gray-400 font-bold">Reasons:</span> {result.official.reasons.join(', ')}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
