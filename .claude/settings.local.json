@@ -38,7 +38,8 @@
       "Bash(curl -sf -X DELETE http://127.0.0.1:12099/api/trade/_PG_TEST_ -w \"\\\\nDELETE -> %{http_code}\\\\n\")",
       "Bash(curl -sf http://127.0.0.1:12099/api/purchase-history/_PG_TEST_)",
       "Bash(ls .tmp*)",
-      "Bash(grep -E \"^\\\\.env$|^\\\\.env\\\\b\")"
+      "Bash(grep -E \"^\\\\.env$|^\\\\.env\\\\b\")",
+      "Bash(git:*)"
     ]
   }
 }

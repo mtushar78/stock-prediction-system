@@ -4,10 +4,12 @@ End-to-end guide to deploy the DSE Sniper backend (FastAPI + APScheduler) and
 frontend (Next.js) on a fresh Ubuntu server using **PM2** as the process
 manager.
 
-> **Database**: this guide assumes the existing **SQLite** database
-> (`data/dse_history.db`). It is the recommended choice — see
-> "Why SQLite" at the bottom. If you intend to migrate to PostgreSQL, that
-> requires a code rewrite of `src/db_manager.py` and is **not** covered here.
+> **Database**: this guide uses **PostgreSQL on Neon**
+> (`postgresql://...neon.tech/...`). The backend connects to it via
+> `DATABASE_URL` in a `.env` file at the project root. There is no local
+> database file on the server — all reads and writes go to Neon over TLS.
+> Migration from the legacy SQLite file is documented in
+> [section 4](#4-database--neon-postgresql).
 
 ---
 
@@ -18,9 +20,16 @@ manager.
 - A domain (optional, recommended for HTTPS) — e.g.
   `dse-sniper-backend.maksudul.com` (already referenced in
   `frontend/.env.production`)
-- Outbound internet access to:
+- A **Neon PostgreSQL project** — create one at https://neon.tech (free
+  tier is enough). You'll need the connection string in the form:
+  ```
+  postgresql://USER:PASSWORD@HOST.neon.tech/DBNAME?sslmode=require&channel_binding=require
+  ```
+- Outbound internet access from the server to:
   - `dsebd.org` (DSE data source)
-  - `geo.iproyal.com:12321` (proxy used by `src/dse_scraper.py`)
+  - `geo.iproyal.com:12321` (proxy used by `src/dse_scraper.py` and
+    `src/fundamentals_scraper.py`)
+  - `*.neon.tech:5432` (PostgreSQL)
 
 ---
 
@@ -31,11 +40,16 @@ sudo apt update && sudo apt upgrade -y
 sudo apt install -y \
   build-essential git curl ufw \
   python3 python3-venv python3-pip python3-dev \
+  libpq-dev \
   libxml2-dev libxslt1-dev zlib1g-dev \
-  sqlite3 \
+  postgresql-client \
   nginx \
   chrony
 ```
+
+`libpq-dev` is required to build `psycopg2-binary` from source on some
+distros; `postgresql-client` gives you `psql` for ad-hoc queries against
+Neon (no local server is installed).
 
 Make sure the clock is synced (cron triggers depend on accurate time):
 
@@ -76,42 +90,143 @@ git clone <your-repo-url> stock-prediction-system
 cd stock-prediction-system
 ```
 
-The expected layout:
+The expected layout (note: **no `data/dse_history.db`** anymore — `data/`
+is gitignored and is only used for transient CSV exports by the scraper):
 
 ```
 ~/dev/dse-sniper/stock-prediction-system/
+├── .env                       <-- you create this (gitignored)
+├── .env.example
 ├── backend/
 │   ├── main.py
 │   └── requirements.txt
+├── src/
+│   ├── db_manager.py          <-- PostgreSQL connector
+│   ├── analyzer.py
+│   ├── portfolio_manager.py
+│   ├── dse_scraper.py
+│   └── fundamentals_scraper.py
 ├── frontend/
 │   ├── package.json
 │   └── .env.production
-├── src/
-├── data/
-│   └── dse_history.db
-├── ecosystem.config.js
+├── migrate_sqlite_to_pg.py    <-- one-shot SQLite → Neon migration
+├── fill_gap.py                <-- gap-fill utility for stock_data
+├── ecosystem.config.js        <-- PM2 config
 └── docs/DEPLOYMENT.md
 ```
 
 ---
 
-## 4. Restore the database
+## 4. Database — Neon PostgreSQL
 
-If you are deploying onto a fresh server, copy your local
-`data/dse_history.db` (the one this repo's `fill_gap.py` populates) to the
-server **before** starting the backend. From your local machine:
+### 4.1 Create the `.env` file at the project root
+
+```bash
+cd ~/dev/dse-sniper/stock-prediction-system
+cp .env.example .env
+nano .env
+```
+
+Set `DATABASE_URL` to your Neon connection string:
+
+```
+DATABASE_URL=postgresql://neondb_owner:npg_xxxxxxxx@ep-xxxxx-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+```
+
+Lock the file down — it contains a credential:
+
+```bash
+chmod 600 .env
+```
+
+> **Why this works without pm2 env injection:** `src/db_manager.py` calls
+> `load_dotenv(PROJECT_ROOT / '.env')` at import time, so the backend picks
+> up `DATABASE_URL` regardless of how it's launched, as long as the `.env`
+> file is at the project root. **Do not** put `DATABASE_URL` into
+> `ecosystem.config.js` — that file is committed to git and would leak the
+> credential.
+
+### 4.2 Schema bootstrap
+
+The schema (`stock_data`, `metadata`, `fundamentals`, `portfolio`,
+`purchase_history`, `signals_today` + indexes) is created automatically the
+first time `DatabaseManager()` is instantiated — see
+`src/db_manager.py:init_db()`. You don't need to run any DDL by hand.
+
+To verify connectivity and bootstrap the schema before the backend starts:
+
+```bash
+source venv/bin/activate    # see section 5 if venv doesn't exist yet
+python -c "from src.db_manager import DatabaseManager; db = DatabaseManager(); print('OK'); db.close()"
+```
+
+You should see:
+
+```
+INFO:src.db_manager:Database initialized at ep-xxxxx-pooler.ap-southeast-1.aws.neon.tech
+OK
+```
+
+### 4.3 Migrate existing data from a local SQLite file (one-shot)
+
+If you're moving an existing deployment with historical data in
+`data/dse_history.db`, copy that file to the server **once** and run the
+migration script. After it succeeds, delete the SQLite file — the server
+will never read it again.
+
+From your local machine:
 
 ```bash
 scp data/dse_history.db tushar@<server>:~/dev/dse-sniper/stock-prediction-system/data/dse_history.db
 ```
 
-Verify on the server:
+On the server:
 
 ```bash
-sqlite3 data/dse_history.db "SELECT MIN(date), MAX(date), COUNT(*) FROM stock_data;"
+cd ~/dev/dse-sniper/stock-prediction-system
+source venv/bin/activate
+
+# Dry run first — prints row counts only, no writes
+python migrate_sqlite_to_pg.py --dry-run
+
+# Real migration — uses COPY into a staging table for stock_data,
+# then INSERT ... ON CONFLICT DO UPDATE for an idempotent merge.
+# Re-runnable safely; takes ~80s for 1M+ rows over a Singapore link.
+python migrate_sqlite_to_pg.py
 ```
 
-You should see the latest date (e.g., `2026-04-07`) and ~1.07M rows.
+Verify the row counts on Neon:
+
+```bash
+psql "$(grep -E '^DATABASE_URL=' .env | cut -d= -f2-)" -c "
+  SELECT 'stock_data'       AS table, COUNT(*) FROM stock_data
+  UNION ALL SELECT 'metadata',         COUNT(*) FROM metadata
+  UNION ALL SELECT 'portfolio',        COUNT(*) FROM portfolio
+  UNION ALL SELECT 'purchase_history', COUNT(*) FROM purchase_history
+  UNION ALL SELECT 'fundamentals',     COUNT(*) FROM fundamentals
+  UNION ALL SELECT 'signals_today',    COUNT(*) FROM signals_today;
+"
+```
+
+Once verified, archive and remove the SQLite file from the server:
+
+```bash
+rm data/dse_history.db
+```
+
+### 4.4 Schema-only deployment (no historical data)
+
+If you don't have an existing SQLite file, just skip 4.3 entirely. The
+first scrape (or the startup-time analyzer) will populate `stock_data`
+from scratch using `src/dse_scraper.py`, and `fill_gap.py` can backfill
+history per ticker via `stocksurferbd`:
+
+```bash
+source venv/bin/activate
+python fill_gap.py            # pulls full history for every metadata ticker
+# or
+python fill_gap.py GP BATBC   # specific tickers only
+```
 
 ---
 
@@ -124,31 +239,92 @@ source venv/bin/activate
 
 pip install --upgrade pip wheel
 pip install -r backend/requirements.txt
-
-# Extra deps used by src/ that are not in backend/requirements.txt:
-pip install stocksurferbd openpyxl beautifulsoup4 requests
 ```
 
-Smoke-test (Ctrl+C after you see "Application startup complete"):
+`backend/requirements.txt` already pins everything the backend AND the
+`src/` scripts need:
+
+| Package | Used by |
+|---|---|
+| `fastapi`, `uvicorn[standard]` | API server |
+| `pydantic` | request/response models |
+| `apscheduler`, `pytz` | scheduled scrapes |
+| `pandas`, `numpy` | analyzer |
+| `psycopg2-binary` | PostgreSQL driver |
+| `SQLAlchemy` | engine pool used by `db.engine` (pandas `to_sql`/`read_sql`) |
+| `python-dotenv` | loads `.env` |
+| `stocksurferbd` | DSE history fetcher (`fill_gap.py`) |
+| `openpyxl` | Excel parser used by `stocksurferbd` |
+| `beautifulsoup4` | HTML parser used by `dse_scraper.py` and `fundamentals_scraper.py` |
+| `requests` | HTTP client for scrapers |
+
+### 5.1 Smoke-test the backend manually
+
+Always test once with uvicorn before handing it to PM2 — that way any
+import error, schema bootstrap problem, or network failure to Neon shows
+up in your terminal instead of in `pm2 logs`.
 
 ```bash
-cd backend
-../venv/bin/uvicorn main:app --host 127.0.0.1 --port 12001
+cd ~/dev/dse-sniper/stock-prediction-system
+source venv/bin/activate
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 12001
 ```
 
-You should see:
+Expected startup output (first ~10 seconds):
 
 ```
-INFO:main:🚀 DSE Sniper API starting up...
-INFO:src.db_manager:Database initialized at .../data/dse_history.db
-INFO:main:📊 Running initial analysis...
-INFO:main:✅ Initial analysis completed: ... signals generated
-INFO: Application startup complete.
+INFO:     Started server process [...]
+INFO:     Waiting for application startup.
+INFO:backend.main:🚀 DSE Sniper API starting up...
+INFO:backend.main:📊 Database: postgres @ ep-xxxxx-pooler.ap-southeast-1.aws.neon.tech
+INFO:backend.main:📊 Running initial analysis...
+INFO:src.db_manager:Database initialized at ep-xxxxx-pooler.ap-southeast-1.aws.neon.tech
+INFO:backend.main:Loaded fundamentals for N tickers
+INFO:src.analyzer:Analyzing 421 tickers...
+WARNING:src.analyzer:Insufficient data for full analysis (need 200 days)   <-- normal, ~5x for newly listed stocks
+...
+INFO:backend.main:✅ Initial analysis completed: 251 signals generated
+INFO:backend.main:✅ Verified: 251 signals saved to signals_today table
+INFO:apscheduler.scheduler:Added job "Morning Scrape (10:30 AM)" to job store "default"
+... (12 cron jobs total)
+INFO:backend.main:Scheduler started: DSE Scraper + Weekly Fundamentals
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:12001 (Press CTRL+C to quit)
 ```
+
+In another terminal, hit a few endpoints to confirm the read path:
+
+```bash
+curl -s http://127.0.0.1:12001/             | head     # health check + last_update
+curl -s http://127.0.0.1:12001/api/sniper-signals | head
+curl -s http://127.0.0.1:12001/api/tickers   | head
+curl -s http://127.0.0.1:12001/api/portfolio | head
+```
+
+Then **Ctrl+C** to stop the dev server before launching PM2.
+
+### 5.2 What the backend startup actually does
+
+1. Loads `.env` → `DATABASE_URL`
+2. Connects to Neon and runs `init_db()` (idempotent CREATE TABLE / CREATE
+   INDEX statements) — only on the first instantiation per process
+3. Runs `StockAnalyzer.analyze_all_tickers()` once and writes the result
+   to `signals_today` so the frontend has data immediately
+4. Starts APScheduler with **12 cron jobs** in `Asia/Dhaka` timezone:
+   - 11 intraday/EOD scrapes between **10:30 and 15:15** (Sun–Thu, when
+     DSE is open)
+   - 1 weekly fundamentals scrape at **Saturday 08:00**
+5. Listens on the configured port (12001 in this guide)
+
+If any of those steps fails, the process exits non-zero and PM2 will
+restart it (`autorestart: true`, `restart_delay: 5000` in
+`ecosystem.config.js`).
 
 ---
 
 ## 6. Frontend — install + build
+
+(unchanged from the SQLite version of this doc)
 
 ```bash
 cd ~/dev/dse-sniper/stock-prediction-system/frontend
@@ -183,7 +359,7 @@ mkdir -p logs
 
 pm2 start ecosystem.config.js
 pm2 status
-pm2 logs dse-backend --lines 50
+pm2 logs dse-backend  --lines 50
 pm2 logs dse-frontend --lines 50
 ```
 
@@ -198,6 +374,11 @@ You should see two `online` processes:
 └─────┴────────────────┴─────────┴────────┘
 ```
 
+> **Reminder:** `ecosystem.config.js` does **not** set `DATABASE_URL` —
+> the backend reads it from `.env` at project-root via `python-dotenv`.
+> If pm2 reports the backend in `errored` state with
+> `RuntimeError: DATABASE_URL not set`, you forgot section 4.1.
+
 ### Make PM2 start on boot
 
 ```bash
@@ -210,7 +391,7 @@ pm2 save
 ### Verify scheduler
 
 ```bash
-curl -s http://127.0.0.1:12001/system/status
+curl -s http://127.0.0.1:12001/api/scheduler/status
 pm2 logs dse-backend --lines 100 | grep -i 'scheduler\|scrape'
 ```
 
@@ -324,22 +505,22 @@ pip install -r backend/requirements.txt
 cd frontend && npm install && npm run build && cd ..
 pm2 restart ecosystem.config.js
 pm2 save
-
-# Database backups (run nightly via cron)
-cp data/dse_history.db backups/dse_history.$(date +%F).db
 ```
 
-Add a daily backup cron entry (`crontab -e`):
+### Database backups
+
+Neon takes its own automatic point-in-time snapshots — for casual use you
+can rely on that and skip local backups entirely. If you want a belt-and-
+braces nightly dump, install `postgresql-client` (already in section 1)
+and add to `crontab -e`:
 
 ```
 30 3 * * * cd /home/tushar/dev/dse-sniper/stock-prediction-system && \
            mkdir -p backups && \
-           sqlite3 data/dse_history.db ".backup backups/dse_history.$(date +\%F).db" && \
-           find backups -name 'dse_history.*.db' -mtime +14 -delete
+           pg_dump "$(grep -E '^DATABASE_URL=' .env | cut -d= -f2-)" \
+             | gzip > backups/neon_$(date +\%F).sql.gz && \
+           find backups -name 'neon_*.sql.gz' -mtime +14 -delete
 ```
-
-`sqlite3 .backup` is hot-safe (atomic) — preferred over plain `cp` while
-the backend is writing.
 
 ---
 
@@ -353,33 +534,42 @@ Sun–Thu) and confirm:
 # 1. Watch logs live
 pm2 logs dse-backend | grep -i 'scrape\|analysis'
 
-# 2. After the scrape, the latest DB row should be today
-sqlite3 data/dse_history.db "SELECT MAX(date) FROM stock_data;"
+# 2. After the scrape, the latest row in stock_data should be today
+psql "$(grep -E '^DATABASE_URL=' .env | cut -d= -f2-)" \
+     -c "SELECT MAX(date) FROM stock_data;"
 
-# 3. signals_today should be repopulated with a fresh timestamp
-curl -s http://127.0.0.1:12001/signals/today | head
+# 3. signals_today should be repopulated with fresh BUY/WAIT entries
+curl -s http://127.0.0.1:12001/api/sniper-signals | head
 ```
 
 If a scrape fails, look in the logs for:
 - `proxy` errors → iproyal credentials may have expired
   (`src/dse_scraper.py:20-23`)
-- `connection refused` → outbound network blocked by firewall / hosting
-  provider
-- `no such table` → database was started before the schema migrations ran
-  (the `init_db` call in `db_manager.py` creates them on first connect)
+- `connection refused` / `SSL` / `could not translate host name "ep-..."`
+  → Neon endpoint is asleep (free tier auto-suspends after inactivity) or
+  the server can't reach `*.neon.tech:5432`. The first request after a
+  cold start may take 1–3 seconds — this is normal.
+- `RuntimeError: DATABASE_URL not set` → `.env` missing or unreadable by
+  the user pm2 runs as
+- `relation "stock_data" does not exist` → schema bootstrap was skipped;
+  re-run the smoke test from section 4.2 to force `init_db()`
 
 ---
 
-## Why SQLite (and not PostgreSQL)
+## Why PostgreSQL on Neon (and not local SQLite)
 
-| Concern | Reality |
+The original deployment used a local SQLite file. We migrated to Neon
+PostgreSQL because:
+
+| Concern | Outcome |
 |---|---|
-| **DB size** | 135 MB after 13+ years of data; grows ~15-20 MB/year. Will not exhaust any disk. |
-| **Concurrency** | Single writer (the scheduler), many readers (the API). SQLite WAL mode handles this perfectly. |
-| **Latency** | In-process function calls. Postgres adds 1-300ms RTT per query depending on region. The analyzer makes hundreds of queries per scrape. |
-| **Migration cost** | `src/db_manager.py`, `analyzer.py`, `backfill_*.py`, `main.py` all use raw `sqlite3`. INSERT OR REPLACE → ON CONFLICT, schema needs porting, `df.to_sql` needs SQLAlchemy. Days of work + new bugs. |
-| **Free Postgres tiers** | Storage caps (Neon 0.5 GB, Supabase 500 MB) get tight. Latency from BD to US/EU regions kills performance. |
+| **Multi-host reads** | The frontend (and any future analytics jobs) can hit Neon directly without going through this server. |
+| **Backups** | Neon does point-in-time recovery automatically; no fragile cron-based `.backup` files to manage. |
+| **Schema evolution** | Postgres `ALTER TABLE` is far less painful than SQLite's "rebuild the table" dance. |
+| **Concurrency** | Multiple writers (manual `fill_gap.py` + scheduled scrapes + portfolio API writes) no longer contend on a single file lock. |
+| **Latency** | Mitigated by a SQLAlchemy connection pool (`pool_size=5, max_overflow=10`) so the Singapore RTT is paid only on first connect, not per query. |
 
-If you ever genuinely need Postgres (multi-server writes, multi-tenant,
-advanced analytics), the migration is a focused project — open a separate
-ticket.
+The trade-off is that the server **must** have outbound TCP to
+`*.neon.tech:5432` and a valid `DATABASE_URL` in `.env`. There is no
+"offline mode" — if Neon is unreachable, the backend will fail to start
+and PM2 will keep restarting it until connectivity returns.
