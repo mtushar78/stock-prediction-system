@@ -26,38 +26,52 @@ def restore_from_csv(csv_path, date_str, is_final=1):
     print(f"✅ Loaded {len(df)} records")
     
     # Connect to database
-    db = DatabaseManager('data/dse_history.db')
+    db = DatabaseManager()
     cursor = db.conn.cursor()
-    
-    # Insert records
-    inserted = 0
+
+    rows = []
     for _, row in df.iterrows():
-        try:
-            public_vol = row.get('public_volume', None)
-            
-            cursor.execute("""
-                INSERT OR REPLACE INTO stock_data 
-                (ticker, date, open, high, low, close, volume, public_volume, is_final)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                row['ticker'],
-                date_str,
-                row['open'],
-                row['high'],
-                row['low'],
-                row['close'],
-                row['volume'],
-                public_vol,
-                is_final
-            ))
-            inserted += 1
-        except Exception as e:
-            print(f"⚠️  Error inserting {row['ticker']}: {e}")
-            continue
-    
-    db.conn.commit()
+        public_vol = row.get('public_volume', None)
+        rows.append((
+            row['ticker'],
+            date_str,
+            row['open'],
+            row['high'],
+            row['low'],
+            row['close'],
+            row['volume'],
+            public_vol,
+            is_final,
+        ))
+
+    inserted = 0
+    try:
+        import psycopg2.extras
+        psycopg2.extras.execute_values(
+            cursor,
+            """
+            INSERT INTO stock_data
+            (ticker, date, open, high, low, close, volume, public_volume, is_final)
+            VALUES %s
+            ON CONFLICT (date, ticker) DO UPDATE SET
+                open = EXCLUDED.open,
+                high = EXCLUDED.high,
+                low = EXCLUDED.low,
+                close = EXCLUDED.close,
+                volume = EXCLUDED.volume,
+                public_volume = EXCLUDED.public_volume,
+                is_final = EXCLUDED.is_final
+            """,
+            rows,
+            page_size=500,
+        )
+        inserted = len(rows)
+        db.conn.commit()
+    except Exception as e:
+        db.conn.rollback()
+        print(f"❌ Bulk insert failed: {e}")
     db.close()
-    
+
     print(f"✅ Inserted {inserted}/{len(df)} records into stock_data")
     print(f"📅 Date: {date_str}")
     print(f"🔖 is_final: {is_final}")

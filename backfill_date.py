@@ -34,8 +34,7 @@ def backfill_for_date(target_date: str, delay: float = 1.5):
         print(f"❌ Invalid date format: {target_date}. Use YYYY-MM-DD.")
         sys.exit(1)
 
-    db_path = str(Path(__file__).parent / "data" / "dse_history.db")
-    db = DatabaseManager(db_path)
+    db = DatabaseManager()
     tickers = db.get_all_tickers()
 
     if not tickers:

@@ -29,7 +29,6 @@ proxy_url = f"http://{PROXY_USERNAME}:{PROXY_PASSWORD}@geo.iproyal.com:12321"
 PROXIES = {"http": proxy_url, "https": proxy_url}
 
 DSE_COMPANY_URL = "https://www.dsebd.org/displayCompany.php?name={ticker}"
-DB_PATH = str(Path(__file__).parent.parent / "data" / "dse_history.db")
 
 
 def _parse_number(text: str):
@@ -136,39 +135,60 @@ def scrape_ticker_fundamentals(ticker: str) -> dict:
 
 
 def save_fundamentals(db: DatabaseManager, data: dict):
-    """INSERT OR REPLACE a single ticker's fundamentals into the DB."""
+    """UPSERT a single ticker's fundamentals into the DB."""
     cursor = db.conn.cursor()
-    cursor.execute("""
-        INSERT OR REPLACE INTO fundamentals
-        (ticker, paid_up_capital, paid_up_capital_cr, sector, market_category,
-         total_shares, market_cap, face_value, eps, pe_ratio, nav, last_updated)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-    """, (
-        data['ticker'],
-        data.get('paid_up_capital'),
-        data.get('paid_up_capital_cr'),
-        data.get('sector'),
-        data.get('market_category'),
-        data.get('total_shares'),
-        data.get('market_cap'),
-        data.get('face_value'),
-        data.get('eps'),
-        data.get('pe_ratio'),
-        data.get('nav'),
-    ))
-    db.conn.commit()
+    try:
+        cursor.execute("""
+            INSERT INTO fundamentals
+            (ticker, paid_up_capital, paid_up_capital_cr, sector, market_category,
+             total_shares, market_cap, face_value, eps, pe_ratio, nav, last_updated)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    to_char(NOW(), 'YYYY-MM-DD HH24:MI:SS'))
+            ON CONFLICT (ticker) DO UPDATE SET
+                paid_up_capital = EXCLUDED.paid_up_capital,
+                paid_up_capital_cr = EXCLUDED.paid_up_capital_cr,
+                sector = EXCLUDED.sector,
+                market_category = EXCLUDED.market_category,
+                total_shares = EXCLUDED.total_shares,
+                market_cap = EXCLUDED.market_cap,
+                face_value = EXCLUDED.face_value,
+                eps = EXCLUDED.eps,
+                pe_ratio = EXCLUDED.pe_ratio,
+                nav = EXCLUDED.nav,
+                last_updated = EXCLUDED.last_updated
+        """, (
+            data['ticker'],
+            data.get('paid_up_capital'),
+            data.get('paid_up_capital_cr'),
+            data.get('sector'),
+            data.get('market_category'),
+            data.get('total_shares'),
+            data.get('market_cap'),
+            data.get('face_value'),
+            data.get('eps'),
+            data.get('pe_ratio'),
+            data.get('nav'),
+        ))
+        db.conn.commit()
+    except Exception:
+        db.conn.rollback()
+        raise
 
 
 def get_missing_tickers(db: DatabaseManager) -> list:
     """Return tickers that are in stock_data but NOT in fundamentals (or have NULL paid_up_capital)."""
     cursor = db.conn.cursor()
-    cursor.execute("""
-        SELECT DISTINCT s.ticker FROM stock_data s
-        LEFT JOIN fundamentals f ON s.ticker = f.ticker
-        WHERE f.ticker IS NULL OR f.paid_up_capital IS NULL
-        ORDER BY s.ticker
-    """)
-    return [row[0] for row in cursor.fetchall()]
+    try:
+        cursor.execute("""
+            SELECT DISTINCT s.ticker FROM stock_data s
+            LEFT JOIN fundamentals f ON s.ticker = f.ticker
+            WHERE f.ticker IS NULL OR f.paid_up_capital IS NULL
+            ORDER BY s.ticker
+        """)
+        return [row[0] for row in cursor.fetchall()]
+    except Exception:
+        db.conn.rollback()
+        raise
 
 
 def scrape_all(tickers: list = None, delay: float = 1.5, retry_failed: bool = False):
@@ -179,7 +199,7 @@ def scrape_all(tickers: list = None, delay: float = 1.5, retry_failed: bool = Fa
         delay: Seconds between requests (rate limiting).
         retry_failed: If True, only scrape tickers missing from fundamentals table.
     """
-    db = DatabaseManager(DB_PATH)
+    db = DatabaseManager()
 
     if tickers is None:
         if retry_failed:

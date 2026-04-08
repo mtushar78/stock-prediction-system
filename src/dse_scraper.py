@@ -145,7 +145,7 @@ def save_to_csv(data, date_str=None):
     return csv_path
 
 
-def insert_to_database(data, date_str=None, db_path=None, is_final=1):
+def insert_to_database(data, date_str=None, is_final=1):
     """Insert scraped data into stock_data table with trade_count and value_mn"""
     if not data:
         return False
@@ -153,38 +153,55 @@ def insert_to_database(data, date_str=None, db_path=None, is_final=1):
     if not date_str:
         date_str = datetime.now().strftime('%Y-%m-%d')
 
-    if not db_path:
-        db_path = str(DATA_DIR / "dse_history.db")
-
     try:
-        db = DatabaseManager(db_path)
+        db = DatabaseManager()
         cursor = db.conn.cursor()
 
-        inserted = 0
-        for stock in data:
-            try:
-                cursor.execute("""
-                    INSERT OR REPLACE INTO stock_data
-                    (ticker, date, open, high, low, close, volume, trade_count, value_mn, is_final)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    stock['ticker'],
-                    date_str,
-                    stock['open'],
-                    stock['high'],
-                    stock['low'],
-                    stock['close'],
-                    stock['volume'],
-                    stock.get('trade_count'),
-                    stock.get('value_mn'),
-                    is_final
-                ))
-                inserted += 1
-            except Exception as e:
-                print(f"Error inserting {stock['ticker']}: {e}")
-                continue
+        rows = [
+            (
+                stock['ticker'],
+                date_str,
+                stock['open'],
+                stock['high'],
+                stock['low'],
+                stock['close'],
+                stock['volume'],
+                stock.get('trade_count'),
+                stock.get('value_mn'),
+                is_final,
+            )
+            for stock in data
+        ]
 
-        db.conn.commit()
+        try:
+            import psycopg2.extras
+            psycopg2.extras.execute_values(
+                cursor,
+                """
+                INSERT INTO stock_data
+                (ticker, date, open, high, low, close, volume, trade_count, value_mn, is_final)
+                VALUES %s
+                ON CONFLICT (date, ticker) DO UPDATE SET
+                    open = EXCLUDED.open,
+                    high = EXCLUDED.high,
+                    low = EXCLUDED.low,
+                    close = EXCLUDED.close,
+                    volume = EXCLUDED.volume,
+                    trade_count = EXCLUDED.trade_count,
+                    value_mn = EXCLUDED.value_mn,
+                    is_final = EXCLUDED.is_final
+                """,
+                rows,
+                page_size=500,
+            )
+            inserted = len(rows)
+            db.conn.commit()
+        except Exception as e:
+            db.conn.rollback()
+            print(f"Bulk insert failed: {e}")
+            db.close()
+            return False
+
         db.close()
         print(f"Inserted {inserted}/{len(data)} into stock_data (is_final={is_final})")
         return True

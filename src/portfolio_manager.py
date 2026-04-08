@@ -7,12 +7,13 @@ Manages portfolio and generates sell signals based on:
 4. The Zombie Killer (Time-based exit for dead positions)
 """
 
-import sqlite3
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 import logging
+
+from db_manager import DatabaseManager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -20,57 +21,56 @@ logger = logging.getLogger(__name__)
 
 class PortfolioManager:
     """Manages portfolio and sell signals (The Harvest Module)"""
-    
-    def __init__(self, db_path: str = "data/dse_history.db"):
-        """
-        Initialize portfolio manager
-        
-        Args:
-            db_path: Path to database
-        """
-        self.db_path = db_path
+
+    def __init__(self):
+        """Initialize portfolio manager (uses DATABASE_URL from environment)."""
+        # Use a single shared DatabaseManager — its engine is pooled, so
+        # creating one per request is cheap.
+        self._db = DatabaseManager()
         self.init_portfolio_db()
-    
+
     def get_db_connection(self):
-        """Get database connection"""
-        return sqlite3.connect(self.db_path)
-    
+        """Return a fresh pooled raw connection (caller must close it)."""
+        return self._db.get_connection()
+
     def init_portfolio_db(self):
-        """Initialize portfolio table"""
+        """Initialize portfolio tables (idempotent — DatabaseManager.init_db
+        already creates them, but keep here for safety)."""
         conn = self.get_db_connection()
         cursor = conn.cursor()
-        
-        # Create portfolio table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS portfolio (
-                ticker TEXT PRIMARY KEY,
-                buy_price REAL NOT NULL,
-                quantity INTEGER NOT NULL,
-                highest_seen REAL NOT NULL,
-                purchase_date TEXT NOT NULL,
-                notes TEXT,
-                total_cost REAL DEFAULT 0,
-                commission_paid REAL DEFAULT 0
-            )
-        ''')
-        
-        # Create purchase_history table for tracking all buy transactions
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS purchase_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                ticker TEXT NOT NULL,
-                buy_price REAL NOT NULL,
-                quantity INTEGER NOT NULL,
-                commission REAL NOT NULL,
-                total_cost REAL NOT NULL,
-                purchase_date TEXT NOT NULL,
-                notes TEXT
-            )
-        ''')
-        
-        conn.commit()
-        conn.close()
-        logger.info("Portfolio database initialized")
+        try:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS portfolio (
+                    ticker TEXT PRIMARY KEY,
+                    buy_price DOUBLE PRECISION NOT NULL,
+                    quantity INTEGER NOT NULL,
+                    highest_seen DOUBLE PRECISION NOT NULL,
+                    purchase_date TEXT NOT NULL,
+                    notes TEXT,
+                    total_cost DOUBLE PRECISION DEFAULT 0,
+                    commission_paid DOUBLE PRECISION DEFAULT 0
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS purchase_history (
+                    id SERIAL PRIMARY KEY,
+                    ticker TEXT NOT NULL,
+                    buy_price DOUBLE PRECISION NOT NULL,
+                    quantity INTEGER NOT NULL,
+                    commission DOUBLE PRECISION NOT NULL,
+                    total_cost DOUBLE PRECISION NOT NULL,
+                    purchase_date TEXT NOT NULL,
+                    notes TEXT
+                )
+            """)
+            conn.commit()
+            logger.info("Portfolio database initialized")
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to init portfolio tables: {e}")
+            raise
+        finally:
+            conn.close()
     
     def add_trade(self, ticker: str, buy_price: float, quantity: int, 
                   date: Optional[str] = None, notes: str = "", budget: Optional[float] = None) -> Dict:
@@ -99,49 +99,51 @@ class PortfolioManager:
         
         conn = self.get_db_connection()
         cursor = conn.cursor()
-        
+
         try:
             # Check if position exists
-            cursor.execute("SELECT * FROM portfolio WHERE ticker = ?", (ticker,))
+            cursor.execute("SELECT * FROM portfolio WHERE ticker = %s", (ticker,))
             existing = cursor.fetchone()
-            
+
             if existing:
-                # Update existing position - calculate new average price
-                old_qty = existing[2]  # quantity column
-                old_avg_price = existing[1]  # buy_price column
-                old_total_cost = existing[6] if len(existing) > 6 else (old_qty * old_avg_price)  # total_cost column
-                old_commission = existing[7] if len(existing) > 7 else 0  # commission_paid column
-                
+                # Update existing position - calculate new average price.
+                # Column order matches CREATE TABLE: ticker, buy_price, quantity,
+                # highest_seen, purchase_date, notes, total_cost, commission_paid.
+                old_qty = existing[2]
+                old_avg_price = existing[1]
+                old_total_cost = existing[6] if len(existing) > 6 and existing[6] is not None else (old_qty * old_avg_price)
+                old_commission = existing[7] if len(existing) > 7 and existing[7] is not None else 0
+
                 new_qty = old_qty + quantity
                 new_total_cost = old_total_cost + total_cost
                 new_commission_total = old_commission + commission
                 new_avg_price = (old_total_cost + trade_value + commission) / new_qty
-                
+
                 # CRITICAL FIX: Reset purchase_date to today when averaging down
                 # This prevents the "Zombie Date Trap" where old purchase dates
                 # trigger false zombie warnings after adding more shares
-                cursor.execute('''
-                    UPDATE portfolio 
-                    SET quantity = ?, buy_price = ?, total_cost = ?, commission_paid = ?, purchase_date = ?
-                    WHERE ticker = ?
-                ''', (new_qty, new_avg_price, new_total_cost, new_commission_total, date, ticker))
-                
+                cursor.execute("""
+                    UPDATE portfolio
+                    SET quantity = %s, buy_price = %s, total_cost = %s, commission_paid = %s, purchase_date = %s
+                    WHERE ticker = %s
+                """, (new_qty, new_avg_price, new_total_cost, new_commission_total, date, ticker))
+
                 logger.info(f"✅ Updated {ticker}: Added {quantity} shares @ {buy_price} BDT. New avg: {new_avg_price:.2f}, Total qty: {new_qty}, Purchase date reset to {date}")
             else:
                 # Insert new position
-                cursor.execute('''
+                cursor.execute("""
                     INSERT INTO portfolio (ticker, buy_price, quantity, highest_seen, purchase_date, notes, total_cost, commission_paid)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (ticker, buy_price, quantity, buy_price, date, notes, total_cost, commission))
-                
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """, (ticker, buy_price, quantity, buy_price, date, notes, total_cost, commission))
+
                 logger.info(f"✅ Added {ticker}: {quantity} shares @ {buy_price} BDT on {date}")
-            
+
             # Record in purchase history
-            cursor.execute('''
+            cursor.execute("""
                 INSERT INTO purchase_history (ticker, buy_price, quantity, commission, total_cost, purchase_date, notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (ticker, buy_price, quantity, commission, total_cost, date, notes))
-            
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (ticker, buy_price, quantity, commission, total_cost, date, notes))
+
             conn.commit()
             
             return {
@@ -233,16 +235,18 @@ class PortfolioManager:
         Returns:
             DataFrame with purchase history
         """
-        conn = self.get_db_connection()
-        
+        from sqlalchemy import text
         if ticker:
-            query = "SELECT * FROM purchase_history WHERE ticker = ? ORDER BY purchase_date DESC"
-            df = pd.read_sql(query, conn, params=(ticker,))
+            df = pd.read_sql_query(
+                text("SELECT * FROM purchase_history WHERE ticker = :ticker ORDER BY purchase_date DESC"),
+                self._db.engine,
+                params={"ticker": ticker},
+            )
         else:
-            query = "SELECT * FROM purchase_history ORDER BY purchase_date DESC"
-            df = pd.read_sql(query, conn)
-        
-        conn.close()
+            df = pd.read_sql_query(
+                text("SELECT * FROM purchase_history ORDER BY purchase_date DESC"),
+                self._db.engine,
+            )
         return df
     
     def update_position(self, ticker: str, quantity: int, avg_price: Optional[float] = None):
@@ -256,24 +260,26 @@ class PortfolioManager:
         """
         conn = self.get_db_connection()
         cursor = conn.cursor()
-        
+
         try:
             if avg_price:
-                cursor.execute('''
-                    UPDATE portfolio 
-                    SET quantity = ?, buy_price = ?
-                    WHERE ticker = ?
-                ''', (quantity, avg_price, ticker))
+                cursor.execute("""
+                    UPDATE portfolio
+                    SET quantity = %s, buy_price = %s
+                    WHERE ticker = %s
+                """, (quantity, avg_price, ticker))
             else:
-                cursor.execute('''
-                    UPDATE portfolio 
-                    SET quantity = ?
-                    WHERE ticker = ?
-                ''', (quantity, ticker))
-            
+                cursor.execute("""
+                    UPDATE portfolio
+                    SET quantity = %s
+                    WHERE ticker = %s
+                """, (quantity, ticker))
+
             conn.commit()
             logger.info(f"Updated {ticker}: {quantity} shares")
-            
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
     
@@ -286,24 +292,29 @@ class PortfolioManager:
         """
         conn = self.get_db_connection()
         cursor = conn.cursor()
-        
-        cursor.execute("DELETE FROM portfolio WHERE ticker = ?", (ticker,))
-        conn.commit()
-        conn.close()
-        
+        try:
+            cursor.execute("DELETE FROM portfolio WHERE ticker = %s", (ticker,))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
         logger.info(f"Removed {ticker} from portfolio")
     
     def get_portfolio(self) -> pd.DataFrame:
         """
         Get current portfolio
-        
+
         Returns:
             DataFrame with portfolio positions
         """
-        conn = self.get_db_connection()
-        df = pd.read_sql("SELECT * FROM portfolio ORDER BY ticker", conn)
-        conn.close()
-        return df
+        from sqlalchemy import text
+        return pd.read_sql_query(
+            text("SELECT * FROM portfolio ORDER BY ticker"),
+            self._db.engine,
+        )
     
     def calculate_atr(self, df: pd.DataFrame, period: int = 14) -> float:
         """
@@ -396,12 +407,14 @@ class PortfolioManager:
         Returns:
             List of dictionaries with sell signals
         """
+        from sqlalchemy import text
         conn = self.get_db_connection()
-        
+
         # Load portfolio
-        portfolio = pd.read_sql("SELECT * FROM portfolio", conn)
-        
+        portfolio = pd.read_sql_query(text("SELECT * FROM portfolio"), self._db.engine)
+
         if portfolio.empty:
+            conn.close()
             if verbose:
                 print("\n" + "="*80)
                 print("PORTFOLIO GUARDIAN: Portfolio is empty")
@@ -424,13 +437,16 @@ class PortfolioManager:
             purchase_date = position['purchase_date']
             
             # Get current market data (need more data for ATR calculation)
-            query = f"""
-                SELECT * FROM stock_data 
-                WHERE ticker='{ticker}' 
-                ORDER BY date DESC 
-                LIMIT 30
-            """
-            market_data = pd.read_sql(query, conn)
+            market_data = pd.read_sql_query(
+                text("""
+                    SELECT * FROM stock_data
+                    WHERE ticker = :ticker
+                    ORDER BY date DESC
+                    LIMIT 30
+                """),
+                self._db.engine,
+                params={"ticker": ticker},
+            )
             
             if market_data.empty:
                 logger.warning(f"⚠️  No market data found for {ticker}")
@@ -463,11 +479,15 @@ class PortfolioManager:
             if current_price > highest_seen:
                 new_highest = current_price
                 cursor = conn.cursor()
-                cursor.execute(
-                    "UPDATE portfolio SET highest_seen = ? WHERE ticker = ?",
-                    (new_highest, ticker)
-                )
-                conn.commit()
+                try:
+                    cursor.execute(
+                        "UPDATE portfolio SET highest_seen = %s WHERE ticker = %s",
+                        (new_highest, ticker)
+                    )
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
                 if verbose:
                     print(f"\n📈 {ticker}: NEW HIGH! Ratchet moved: {highest_seen:.2f} → {new_highest:.2f}")
             
@@ -590,13 +610,13 @@ class PortfolioManager:
     def get_portfolio_summary(self) -> Dict:
         """
         Get portfolio summary statistics
-        
+
         Returns:
             Dictionary with portfolio stats
         """
-        conn = self.get_db_connection()
-        portfolio = pd.read_sql("SELECT * FROM portfolio", conn)
-        
+        from sqlalchemy import text
+        portfolio = pd.read_sql_query(text("SELECT * FROM portfolio"), self._db.engine)
+
         if portfolio.empty:
             return {
                 'total_positions': 0,
@@ -605,27 +625,26 @@ class PortfolioManager:
                 'total_profit': 0,
                 'profit_pct': 0
             }
-        
+
         total_invested = 0
         current_value = 0
-        
+
         for _, position in portfolio.iterrows():
             ticker = position['ticker']
             buy_price = position['buy_price']
             quantity = position['quantity']
-            
-            # Get current price
-            latest = pd.read_sql(
-                f"SELECT close FROM stock_data WHERE ticker='{ticker}' ORDER BY date DESC LIMIT 1",
-                conn
+
+            # Get current price (parameterized — never f-string into SQL)
+            latest = pd.read_sql_query(
+                text("SELECT close FROM stock_data WHERE ticker = :ticker ORDER BY date DESC LIMIT 1"),
+                self._db.engine,
+                params={"ticker": ticker},
             )
-            
+
             if not latest.empty:
                 current_price = latest.iloc[0]['close']
                 total_invested += buy_price * quantity
                 current_value += current_price * quantity
-        
-        conn.close()
         
         total_profit = current_value - total_invested
         profit_pct = (total_profit / total_invested * 100) if total_invested > 0 else 0

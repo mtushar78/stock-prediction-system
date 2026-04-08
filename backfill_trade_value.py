@@ -23,8 +23,6 @@ except ImportError:
     print("stocksurferbd not installed. Run: pip install stocksurferbd")
     sys.exit(1)
 
-DB_PATH = str(Path(__file__).parent / "data" / "dse_history.db")
-
 
 def backfill_ticker(ticker: str, price_data: PriceData, db_conn) -> int:
     """Download full history for a ticker and UPDATE trade_count/value_mn.
@@ -78,9 +76,9 @@ def backfill_ticker(ticker: str, price_data: PriceData, db_conn) -> int:
         if trade_count is not None or value_mn is not None:
             cursor.execute("""
                 UPDATE stock_data
-                SET trade_count = COALESCE(?, trade_count),
-                    value_mn = COALESCE(?, value_mn)
-                WHERE ticker = ? AND date = ? AND (trade_count IS NULL OR value_mn IS NULL)
+                SET trade_count = COALESCE(%s, trade_count),
+                    value_mn = COALESCE(%s, value_mn)
+                WHERE ticker = %s AND date = %s AND (trade_count IS NULL OR value_mn IS NULL)
             """, (trade_count, value_mn, ticker, date_str))
             updated += cursor.rowcount
 
@@ -89,7 +87,7 @@ def backfill_ticker(ticker: str, price_data: PriceData, db_conn) -> int:
 
 
 def main():
-    db = DatabaseManager(DB_PATH)
+    db = DatabaseManager()
     price_data = PriceData()
 
     if len(sys.argv) > 1:
@@ -113,6 +111,10 @@ def main():
             total_updated += count
             success += 1
         except Exception as e:
+            try:
+                db.conn.rollback()
+            except Exception:
+                pass
             print(f"FAILED: {e}")
             failed += 1
 

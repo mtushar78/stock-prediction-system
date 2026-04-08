@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 from contextlib import asynccontextmanager
+import os
 import sys
 from pathlib import Path
 import pandas as pd
@@ -36,7 +37,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configuration
-DB_PATH = str(Path(__file__).parent.parent / 'data' / 'dse_history.db')
 BANGLADESH_TZ = pytz.timezone('Asia/Dhaka')
 
 # Global scheduler
@@ -89,7 +89,7 @@ async def scheduled_scraper_and_analysis(is_final: int = 0):
         
         # Run analysis after scraping
         try:
-            db = DatabaseManager(DB_PATH)
+            db = DatabaseManager()
             analyzer = StockAnalyzer(db)
             
             # v6: Load fundamentals for Low Float scoring
@@ -112,15 +112,14 @@ async def scheduled_scraper_and_analysis(is_final: int = 0):
                         lambda x: _json.dumps(x) if isinstance(x, dict) else x
                     )
                 
-                # Save to database
-                df_results_copy.to_sql('signals_today', db.conn, if_exists='replace', index=False)
-                db.conn.commit()
-                
+                # Save to database (pandas requires the SQLAlchemy engine for PG).
+                df_results_copy.to_sql('signals_today', db.engine, if_exists='replace', index=False)
+
                 # Verify save
                 cursor = db.conn.cursor()
                 cursor.execute('SELECT COUNT(*) FROM signals_today')
                 count = cursor.fetchone()[0]
-                
+
                 logger.info(f"✅ [{update_type}] Analysis: {len(df_results)} signals generated")
                 logger.info(f"✅ [{update_type}] Verified: {count} signals saved to signals_today")
                 
@@ -151,13 +150,14 @@ async def lifespan(app: FastAPI):
     """Manage application lifecycle"""
     # Startup
     logger.info("🚀 DSE Sniper API starting up...")
-    logger.info(f"📊 Database: {DB_PATH}")
+    _db_host = os.environ.get('DATABASE_URL', '').split('@')[-1].split('/')[0] or '(unset)'
+    logger.info(f"📊 Database: postgres @ {_db_host}")
     
     # Run initial analysis on startup
     logger.info("📊 Running initial analysis...")
     analysis_success = False
     try:
-        db = DatabaseManager(DB_PATH)
+        db = DatabaseManager()
         analyzer = StockAnalyzer(db)
         
         # v6: Load fundamentals for Low Float scoring
@@ -179,15 +179,14 @@ async def lifespan(app: FastAPI):
                     lambda x: _json.dumps(x) if isinstance(x, dict) else x
                 )
             
-            # Save to database
-            df_results_copy.to_sql('signals_today', db.conn, if_exists='replace', index=False)
-            db.conn.commit()
-            
+            # Save to database (SQLAlchemy engine required for PostgreSQL).
+            df_results_copy.to_sql('signals_today', db.engine, if_exists='replace', index=False)
+
             # Verify save
             cursor = db.conn.cursor()
             cursor.execute('SELECT COUNT(*) FROM signals_today')
             count = cursor.fetchone()[0]
-            
+
             logger.info(f"✅ Initial analysis completed: {len(df_results)} signals generated")
             logger.info(f"✅ Verified: {count} signals saved to signals_today table")
             
@@ -388,7 +387,7 @@ def health_check() -> SystemStatus:
     """System health check and status"""
     try:
         # Get last update time from database
-        db = DatabaseManager(DB_PATH)
+        db = DatabaseManager()
         cursor = db.conn.cursor()
         
         # Try to get last update from stock_data
@@ -442,12 +441,13 @@ def health_check() -> SystemStatus:
 def get_sniper_signals():
     """Get BUY signals from analysis engine"""
     try:
-        db = DatabaseManager(DB_PATH)
+        db = DatabaseManager()
         
-        # Fetch pre-calculated signals
-        df = pd.read_sql(
-            "SELECT * FROM signals_today WHERE signal IN ('BUY', 'WAIT') ORDER BY score DESC",
-            db.conn
+        # Fetch pre-calculated signals (use SQLAlchemy engine).
+        from sqlalchemy import text
+        df = pd.read_sql_query(
+            text("SELECT * FROM signals_today WHERE signal IN ('BUY', 'WAIT') ORDER BY score DESC"),
+            db.engine,
         )
         
         logger.info(f"✅ Fetched {len(df)} signals from signals_today table")
@@ -541,7 +541,7 @@ def get_sniper_signals():
 def get_all_tickers():
     """Return all available tickers in DB for dropdown/autocomplete."""
     try:
-        db = DatabaseManager(DB_PATH)
+        db = DatabaseManager()
         tickers = db.get_all_tickers()
         db.close()
         return tickers
@@ -558,7 +558,7 @@ def analyze_ticker_detailed(request: TickerAnalyzeRequest):
         if not ticker:
             raise HTTPException(status_code=400, detail="ticker is required")
 
-        db = DatabaseManager(DB_PATH)
+        db = DatabaseManager()
         analyzer = StockAnalyzer(db)
 
         # v6: Auto-load paid_up_capital from fundamentals if not provided
@@ -588,14 +588,14 @@ def analyze_ticker_detailed(request: TickerAnalyzeRequest):
 def get_portfolio():
     """Get current portfolio holdings with live P/L and Level 2 sell logic details"""
     try:
-        pm = PortfolioManager(DB_PATH)
+        pm = PortfolioManager()
         portfolio_df = pm.get_portfolio()
         
         if portfolio_df.empty:
             return []
         
         # Get current prices and calculate P/L with Level 2 details
-        db = DatabaseManager(DB_PATH)
+        db = DatabaseManager()
         
         results = []
         for _, position in portfolio_df.iterrows():
@@ -605,7 +605,7 @@ def get_portfolio():
                 # Get market data for ATR calculation
                 cursor = db.conn.cursor()
                 cursor.execute(
-                    "SELECT date, close, high, low, open, volume FROM stock_data WHERE ticker=? ORDER BY date DESC LIMIT 30",
+                    "SELECT date, close, high, low, open, volume FROM stock_data WHERE ticker=%s ORDER BY date DESC LIMIT 30",
                     (ticker,)
                 )
                 market_data = cursor.fetchall()
@@ -743,7 +743,7 @@ def get_portfolio():
 def add_trade(trade: Trade):
     """Add a new trade to portfolio with commission calculation"""
     try:
-        pm = PortfolioManager(DB_PATH)
+        pm = PortfolioManager()
         
         result = pm.add_trade(
             ticker=trade.ticker.upper(),
@@ -775,15 +775,15 @@ def add_trade(trade: Trade):
 def calculate_buy(request: BudgetBuyRequest):
     """Calculate optimal buy quantity based on budget and signal strength"""
     try:
-        pm = PortfolioManager(DB_PATH)
-        db = DatabaseManager(DB_PATH)
+        pm = PortfolioManager()
+        db = DatabaseManager()
         
         # Get current price if not provided
         current_price = request.current_price
         if not current_price:
             cursor = db.conn.cursor()
             cursor.execute(
-                "SELECT close FROM stock_data WHERE ticker=? ORDER BY date DESC LIMIT 1",
+                "SELECT close FROM stock_data WHERE ticker=%s ORDER BY date DESC LIMIT 1",
                 (request.ticker.upper(),)
             )
             result = cursor.fetchone()
@@ -814,7 +814,7 @@ def calculate_buy(request: BudgetBuyRequest):
 def get_purchase_history(ticker: str):
     """Get purchase history for a specific ticker"""
     try:
-        pm = PortfolioManager(DB_PATH)
+        pm = PortfolioManager()
         history_df = pm.get_purchase_history(ticker.upper())
         
         if history_df.empty:
@@ -830,11 +830,11 @@ def get_purchase_history(ticker: str):
 def get_volume_history(ticker: str):
     """Get 20-day volume history for a ticker"""
     try:
-        db = DatabaseManager(DB_PATH)
+        db = DatabaseManager()
         
         cursor = db.conn.cursor()
         cursor.execute(
-            "SELECT date, volume FROM stock_data WHERE ticker=? ORDER BY date DESC LIMIT 20",
+            "SELECT date, volume FROM stock_data WHERE ticker=%s ORDER BY date DESC LIMIT 20",
             (ticker.upper(),)
         )
         rows = cursor.fetchall()
@@ -859,11 +859,11 @@ def get_volume_history(ticker: str):
 def get_price_history(ticker: str):
     """Get 20-day OHLC (open/high/low/close) history for a ticker"""
     try:
-        db = DatabaseManager(DB_PATH)
+        db = DatabaseManager()
 
         cursor = db.conn.cursor()
         cursor.execute(
-            "SELECT date, open, high, low, close FROM stock_data WHERE ticker=? ORDER BY date DESC LIMIT 20",
+            "SELECT date, open, high, low, close FROM stock_data WHERE ticker=%s ORDER BY date DESC LIMIT 20",
             (ticker.upper(),)
         )
         rows = cursor.fetchall()
@@ -895,7 +895,7 @@ def get_price_history(ticker: str):
 def remove_trade(ticker: str):
     """Remove a position from portfolio"""
     try:
-        pm = PortfolioManager(DB_PATH)
+        pm = PortfolioManager()
         pm.remove_position(ticker.upper())
         
         return {
@@ -911,7 +911,7 @@ def remove_trade(ticker: str):
 def get_alerts():
     """Get SELL signals (Stop Loss / Take Profit / Climax)"""
     try:
-        pm = PortfolioManager(DB_PATH)
+        pm = PortfolioManager()
         signals = pm.check_sell_signals(verbose=False)
         
         # Format for frontend
@@ -939,7 +939,7 @@ def get_alerts():
 def get_portfolio_summary():
     """Get portfolio summary statistics"""
     try:
-        pm = PortfolioManager(DB_PATH)
+        pm = PortfolioManager()
         stats = pm.get_portfolio_summary()
         return stats
     
@@ -951,7 +951,7 @@ def get_portfolio_summary():
 def get_fundamentals():
     """Get fundamentals for all tickers"""
     try:
-        db = DatabaseManager(DB_PATH)
+        db = DatabaseManager()
         df = db.get_fundamentals_full()
         db.close()
         if df.empty:
@@ -966,9 +966,9 @@ def get_fundamentals():
 def get_ticker_fundamentals(ticker: str):
     """Get fundamentals for a specific ticker"""
     try:
-        db = DatabaseManager(DB_PATH)
+        db = DatabaseManager()
         cursor = db.conn.cursor()
-        cursor.execute("SELECT * FROM fundamentals WHERE ticker = ?", (ticker.upper(),))
+        cursor.execute("SELECT * FROM fundamentals WHERE ticker = %s", (ticker.upper(),))
         cols = [desc[0] for desc in cursor.description]
         row = cursor.fetchone()
         db.close()

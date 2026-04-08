@@ -39,13 +39,15 @@ venv.bak/
 .DS_Store
 
 # Data folders (exclude large data files)
-data/
 outputs/
+data/
 
 # Database files
 *.db
 *.sqlite
 *.sqlite3
+*.bak
+*.bak_*
 
 # Logs
 *.log
