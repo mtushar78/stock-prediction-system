@@ -70,11 +70,34 @@ class DatabaseManager:
         """Connect to PostgreSQL using DATABASE_URL from the environment."""
         self.database_url = _resolve_database_url()
         self.engine = _get_engine()
-        # Pooled raw psycopg2 connection (returns to pool on close()).
-        self.conn = self.engine.raw_connection()
+        # Pooled raw psycopg2 connection — acquired lazily on first .conn
+        # access so we never hold an idle connection across long-running
+        # operations. Neon closes idle SSL connections after a few minutes,
+        # and the engine pool's pool_pre_ping=True only catches that on
+        # checkout — so we must avoid checking the conn out until we
+        # actually need it.
+        self._conn = None
         if not DatabaseManager._schema_initialized:
             self.init_db()
             DatabaseManager._schema_initialized = True
+            # Release the schema-init connection back to the pool — it
+            # would otherwise sit idle through the next long operation
+            # (e.g. startup analysis) and Neon would drop it on us.
+            if self._conn is not None:
+                try:
+                    self._conn.close()
+                except Exception:
+                    pass
+                self._conn = None
+
+    @property
+    def conn(self):
+        """Lazy raw psycopg2 connection from the engine pool. The pool's
+        pool_pre_ping=True guarantees the connection is alive on checkout,
+        so callers always get a live connection on first access."""
+        if self._conn is None:
+            self._conn = self.engine.raw_connection()
+        return self._conn
 
     # ------------------------------------------------------------------ #
     # Schema bootstrap
@@ -349,12 +372,14 @@ class DatabaseManager:
 
     def close(self):
         """Return the pooled connection back to the engine."""
-        if self.conn is not None:
+        # Read/write _conn directly so we don't accidentally re-acquire a
+        # connection through the .conn property just to close it.
+        if self._conn is not None:
             try:
-                self.conn.close()  # SQLAlchemy returns to pool
+                self._conn.close()  # SQLAlchemy returns to pool
             except Exception:
                 pass
-            self.conn = None
+            self._conn = None
         # Don't dispose the shared engine.
         logger.info("Database connection released")
 
