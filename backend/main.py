@@ -28,6 +28,7 @@ from src.analyzer import StockAnalyzer
 from src.portfolio_manager import PortfolioManager
 from src.stocksurfer_fetcher import StockSurferFetcher
 from src.dse_scraper import run_daily_scraper
+from src.pg_backup import sync_sqlite_to_pg
 
 # Configure logging
 logging.basicConfig(
@@ -150,8 +151,10 @@ async def lifespan(app: FastAPI):
     """Manage application lifecycle"""
     # Startup
     logger.info("🚀 DSE Sniper API starting up...")
-    _db_host = os.environ.get('DATABASE_URL', '').split('@')[-1].split('/')[0] or '(unset)'
-    logger.info(f"📊 Database: postgres @ {_db_host}")
+    from src.db_manager import SQLITE_PATH
+    _pg_host = os.environ.get('DATABASE_URL', '').split('@')[-1].split('/')[0] or '(unset)'
+    logger.info(f"📊 Primary DB: sqlite @ {SQLITE_PATH}")
+    logger.info(f"📦 Backup DB: postgres @ {_pg_host}")
     
     # Run initial analysis on startup
     logger.info("📊 Running initial analysis...")
@@ -318,7 +321,26 @@ async def lifespan(app: FastAPI):
         name='Final Scrape (3:15 PM)',
         replace_existing=True
     )
-    
+
+    # 5. SQLite -> PG backup sync at 4:00 PM BDT (post-EOD, market closed).
+    async def scheduled_pg_backup_sync():
+        try:
+            logger.info("⏰ Starting SQLite -> PG backup sync...")
+            result = await asyncio.to_thread(sync_sqlite_to_pg)
+            logger.info(f"✅ PG backup sync complete: {result}")
+        except Exception as e:
+            logger.error(f"❌ PG backup sync failed: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+
+    scheduler.add_job(
+        scheduled_pg_backup_sync,
+        CronTrigger(hour=16, minute=0, timezone=BANGLADESH_TZ),
+        id='pg_backup_sync_1600',
+        name='PG Backup Sync (4:00 PM)',
+        replace_existing=True
+    )
+
     # v6: Weekly fundamentals scrape — Saturday 8 AM (market closed)
     async def scheduled_fundamentals_scrape():
         try:
@@ -343,6 +365,7 @@ async def lifespan(app: FastAPI):
     logger.info("  - 2:00 PM (intraday)")
     logger.info("  - 3:00 PM (intraday)")
     logger.info("  - 3:15 PM (FINAL)")
+    logger.info("  - 4:00 PM (SQLite -> PG backup sync)")
     logger.info("  - Saturday 8 AM (fundamentals refresh)")
     
     # Get next run times

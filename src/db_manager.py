@@ -1,88 +1,228 @@
 """
-Database Manager for DSE Sniper System
-Handles PostgreSQL database operations for stock data storage.
+Database Manager for DSE Sniper System (SQLite primary).
 
-Migrated from SQLite — public API is preserved so callers that use the
-high-level methods (insert_stock_data, get_stock_data, get_all_tickers, ...)
-do not need to change. Callers that touch ``db.conn`` directly with
-``cursor.execute(...)`` must use ``%s`` placeholders and PostgreSQL syntax
-(``ON CONFLICT`` instead of ``INSERT OR REPLACE``).
+SQLite at ``data/dse_history.db`` is the authoritative operational DB.
+PostgreSQL (``DATABASE_URL``) is kept as a backup only — a scheduled
+job in the backend (see ``src/pg_backup.py``) mirrors today's rows from
+SQLite to PG once per day.
+
+The public API is preserved so the rest of the codebase keeps working:
+ - ``cursor.execute(sql, params)`` accepts PG-style ``%s`` placeholders.
+ - A lightweight SQL translation layer maps PG-isms (``to_char(NOW(),...)``,
+   ``SERIAL PRIMARY KEY``, ``DOUBLE PRECISION``, ``BIGINT``) to SQLite.
+ - ``psycopg2.extras.execute_values`` is monkey-patched at import time to
+   dispatch onto sqlite3 ``executemany`` so existing bulk-insert call
+   sites work unchanged. The original function is preserved under
+   ``pg_execute_values`` for use by the backup sync.
 """
 
 import os
+import re
 import logging
 from pathlib import Path
 from typing import Optional, List
 
 import pandas as pd
-import psycopg2
-import psycopg2.extras
 from sqlalchemy import create_engine, text
+from sqlalchemy.pool import StaticPool
 from dotenv import load_dotenv
 
-# Load .env from project root
 PROJECT_ROOT = Path(__file__).parent.parent
 load_dotenv(PROJECT_ROOT / '.env')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+SQLITE_PATH = PROJECT_ROOT / 'data' / 'dse_history.db'
 
-def _resolve_database_url() -> str:
-    url = os.environ.get('DATABASE_URL')
-    if not url:
-        raise RuntimeError(
-            "DATABASE_URL not set. Create a .env file at project root with: "
-            "DATABASE_URL=postgresql://USER:PASSWORD@HOST/DB?sslmode=require"
-        )
-    return url
 
+# ---------------------------------------------------------------------- #
+# SQL translation layer (PG → SQLite)
+# ---------------------------------------------------------------------- #
+
+_TRANSLATE_RULES = [
+    # to_char(NOW(), 'YYYY-MM-DD HH24:MI:SS') → SQLite equivalent.
+    (re.compile(
+        r"to_char\s*\(\s*NOW\s*\(\s*\)\s*,\s*'YYYY-MM-DD\s+HH24:MI:SS'\s*\)",
+        re.IGNORECASE),
+     "strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')"),
+    # CURRENT_TIMESTAMP style NOW() fallback.
+    (re.compile(r"\bNOW\s*\(\s*\)", re.IGNORECASE),
+     "CURRENT_TIMESTAMP"),
+    # Type mappings — SQLite is typeless but keep the spelling valid.
+    (re.compile(r"\bSERIAL\s+PRIMARY\s+KEY\b", re.IGNORECASE),
+     "INTEGER PRIMARY KEY AUTOINCREMENT"),
+    (re.compile(r"\bSERIAL\b", re.IGNORECASE), "INTEGER"),
+    (re.compile(r"\bDOUBLE\s+PRECISION\b", re.IGNORECASE), "REAL"),
+    (re.compile(r"\bBIGINT\b", re.IGNORECASE), "INTEGER"),
+]
+
+
+def _translate_sql(sql: str) -> str:
+    for pattern, repl in _TRANSLATE_RULES:
+        sql = pattern.sub(repl, sql)
+    # Swap PG positional %s for SQLite qmark ?. Run after the structural
+    # rules above so we don't disturb strftime format specifiers (%Y etc.).
+    sql = sql.replace('%s', '?')
+    return sql
+
+
+class _CompatCursor:
+    """Wraps a sqlite3 Cursor to accept PG-style SQL on execute()."""
+
+    def __init__(self, raw_cursor):
+        self._cur = raw_cursor
+
+    def execute(self, sql, params=None):
+        sql = _translate_sql(sql)
+        if params is None:
+            return self._cur.execute(sql)
+        return self._cur.execute(sql, params)
+
+    def executemany(self, sql, seq_of_params):
+        return self._cur.executemany(_translate_sql(sql), seq_of_params)
+
+    def fetchone(self):
+        return self._cur.fetchone()
+
+    def fetchall(self):
+        return self._cur.fetchall()
+
+    def fetchmany(self, size=-1):
+        if size < 0:
+            return self._cur.fetchmany()
+        return self._cur.fetchmany(size)
+
+    def close(self):
+        return self._cur.close()
+
+    @property
+    def rowcount(self):
+        return self._cur.rowcount
+
+    @property
+    def description(self):
+        return self._cur.description
+
+    @property
+    def lastrowid(self):
+        return self._cur.lastrowid
+
+    def __iter__(self):
+        return iter(self._cur)
+
+
+class _CompatConnection:
+    """Wraps a DB-API connection (SQLAlchemy pool fairy) so cursor()
+    yields a PG-style-accepting cursor. commit/rollback/close pass through
+    to the pool fairy, which returns the underlying sqlite3 connection
+    to the engine pool on close()."""
+
+    def __init__(self, raw):
+        self._raw = raw
+
+    def cursor(self):
+        return _CompatCursor(self._raw.cursor())
+
+    def commit(self):
+        return self._raw.commit()
+
+    def rollback(self):
+        return self._raw.rollback()
+
+    def close(self):
+        return self._raw.close()
+
+
+# ---------------------------------------------------------------------- #
+# psycopg2.extras.execute_values shim
+# ---------------------------------------------------------------------- #
+
+def _execute_values_shim(cur, sql, argslist, template=None,
+                         page_size=100, fetch=False):
+    """SQLite-safe stand-in for ``psycopg2.extras.execute_values``.
+
+    Rewrites ``VALUES %s`` into a row-shaped placeholder block and
+    dispatches to ``executemany``. Other ``%s`` placeholders (usually in
+    ``ON CONFLICT`` subqueries) are left to the cursor's translation
+    layer.
+    """
+    if not argslist:
+        return None
+
+    rows = list(argslist)
+    if not rows:
+        return None
+
+    # Number of columns inferred from first row
+    n = len(rows[0])
+    placeholder = "(" + ", ".join(["?"] * n) + ")"
+
+    new_sql = re.sub(
+        r'VALUES\s+%s', f'VALUES {placeholder}',
+        sql, count=1, flags=re.IGNORECASE,
+    )
+    # The cursor's executemany will translate any remaining PG-isms.
+    cur.executemany(new_sql, rows)
+    return None
+
+
+# Capture the original for the backup sync to talk to real Postgres,
+# then install the SQLite-safe shim globally.
+try:
+    import psycopg2  # noqa: F401
+    import psycopg2.extras as _pg_extras
+    pg_execute_values = _pg_extras.execute_values  # real implementation
+    _pg_extras.execute_values = _execute_values_shim
+except ImportError:
+    pg_execute_values = None
+
+
+# ---------------------------------------------------------------------- #
+# SQLite engine singleton
+# ---------------------------------------------------------------------- #
 
 _engine_singleton = None
 
 
 def _get_engine():
-    """Return a singleton SQLAlchemy engine. Pooled, shared by every
-    ``DatabaseManager`` instance, used for pandas read_sql / to_sql."""
+    """Shared SQLAlchemy engine over SQLite. StaticPool + WAL is the
+    right default for a single-process FastAPI app: one connection
+    shared across threads, writes serialized by SQLite, reads
+    non-blocking thanks to WAL."""
     global _engine_singleton
     if _engine_singleton is None:
-        url = _resolve_database_url()
-        sa_url = url
-        if sa_url.startswith('postgresql://'):
-            sa_url = 'postgresql+psycopg2://' + sa_url[len('postgresql://'):]
+        SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
         _engine_singleton = create_engine(
-            sa_url,
-            pool_pre_ping=True,
-            pool_recycle=300,
-            pool_size=5,
-            max_overflow=10,
+            f'sqlite:///{SQLITE_PATH}',
             future=True,
+            connect_args={'check_same_thread': False, 'timeout': 30},
+            poolclass=StaticPool,
         )
+        with _engine_singleton.begin() as conn:
+            conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+            conn.exec_driver_sql("PRAGMA synchronous=NORMAL")
+            conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+            conn.exec_driver_sql("PRAGMA busy_timeout=30000")
     return _engine_singleton
 
 
+def get_pg_backup_url() -> Optional[str]:
+    """Return DATABASE_URL for the PG backup, or None if not configured."""
+    return os.environ.get('DATABASE_URL') or None
+
+
 class DatabaseManager:
-    """Manages PostgreSQL database operations for stock data."""
+    """SQLite-primary DB manager."""
 
     _schema_initialized = False
 
     def __init__(self):
-        """Connect to PostgreSQL using DATABASE_URL from the environment."""
-        self.database_url = _resolve_database_url()
         self.engine = _get_engine()
-        # Pooled raw psycopg2 connection — acquired lazily on first .conn
-        # access so we never hold an idle connection across long-running
-        # operations. Neon closes idle SSL connections after a few minutes,
-        # and the engine pool's pool_pre_ping=True only catches that on
-        # checkout — so we must avoid checking the conn out until we
-        # actually need it.
-        self._conn = None
+        self._conn: Optional[_CompatConnection] = None
         if not DatabaseManager._schema_initialized:
             self.init_db()
             DatabaseManager._schema_initialized = True
-            # Release the schema-init connection back to the pool — it
-            # would otherwise sit idle through the next long operation
-            # (e.g. startup analysis) and Neon would drop it on us.
             if self._conn is not None:
                 try:
                     self._conn.close()
@@ -92,11 +232,9 @@ class DatabaseManager:
 
     @property
     def conn(self):
-        """Lazy raw psycopg2 connection from the engine pool. The pool's
-        pool_pre_ping=True guarantees the connection is alive on checkout,
-        so callers always get a live connection on first access."""
+        """Lazy pooled connection, wrapped so execute() accepts %s."""
         if self._conn is None:
-            self._conn = self.engine.raw_connection()
+            self._conn = _CompatConnection(self.engine.raw_connection())
         return self._conn
 
     # ------------------------------------------------------------------ #
@@ -104,7 +242,6 @@ class DatabaseManager:
     # ------------------------------------------------------------------ #
 
     def init_db(self):
-        """Create all tables and indexes if they don't exist."""
         try:
             cursor = self.conn.cursor()
 
@@ -124,10 +261,10 @@ class DatabaseManager:
                     PRIMARY KEY (date, ticker)
                 )
             """)
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_ticker_date
-                ON stock_data(ticker, date)
-            """)
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ticker_date "
+                "ON stock_data(ticker, date)"
+            )
 
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS metadata (
@@ -155,7 +292,6 @@ class DatabaseManager:
                 )
             """)
 
-            # Portfolio tables (also created lazily by portfolio_manager.py).
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS portfolio (
                     ticker TEXT PRIMARY KEY,
@@ -180,16 +316,31 @@ class DatabaseManager:
                     notes TEXT
                 )
             """)
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_purchase_history_ticker
-                ON purchase_history(ticker)
-            """)
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_purchase_history_ticker "
+                "ON purchase_history(ticker)"
+            )
+
+            # Older SQLite DBs created portfolio without total_cost /
+            # commission_paid — upgrade in-place.
+            cursor.execute("PRAGMA table_info(portfolio)")
+            cols = {r[1] for r in cursor.fetchall()}
+            if 'total_cost' not in cols:
+                cursor.execute(
+                    "ALTER TABLE portfolio ADD COLUMN total_cost REAL DEFAULT 0"
+                )
+            if 'commission_paid' not in cols:
+                cursor.execute(
+                    "ALTER TABLE portfolio ADD COLUMN commission_paid REAL DEFAULT 0"
+                )
 
             self.conn.commit()
-            host = self.database_url.split('@')[-1].split('/')[0]
-            logger.info(f"Database initialized at {host}")
+            logger.info(f"SQLite database initialized at {SQLITE_PATH}")
         except Exception as e:
-            self.conn.rollback()
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
             logger.error(f"Error initializing database: {e}")
             raise
 
@@ -199,25 +350,16 @@ class DatabaseManager:
 
     def insert_stock_data(self, df: pd.DataFrame, ticker: str,
                           source: str = "adjusted_data", is_final: bool = True):
-        """
-        Insert stock data into database.
-
-        Args:
-            df: DataFrame with columns: Date, Open, High, Low, Close, Volume.
-                Optional columns: TradeCount, ValueMN (mapped to trade_count, value_mn).
-            ticker: Stock ticker symbol.
-            source: Data source identifier.
-            is_final: True for EOD closed candle, False for intraday snapshot.
-        """
         try:
             df = df.copy()
             df['ticker'] = ticker
             df['is_final'] = 1 if is_final else 0
-            df.columns = [col.lower() for col in df.columns]
+            df.columns = [c.lower() for c in df.columns]
 
             df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
 
-            columns = ['date', 'ticker', 'open', 'high', 'low', 'close', 'volume', 'is_final']
+            columns = ['date', 'ticker', 'open', 'high', 'low',
+                       'close', 'volume', 'is_final']
             extra_col_map = {'tradecount': 'trade_count', 'valuemn': 'value_mn'}
             for df_col, db_col in extra_col_map.items():
                 if df_col in df.columns:
@@ -229,10 +371,13 @@ class DatabaseManager:
             cursor = self.conn.cursor()
             col_names = ', '.join(columns)
             update_cols = [c for c in columns if c not in ('date', 'ticker')]
-            update_clause = ', '.join([f'{c}=EXCLUDED.{c}' for c in update_cols])
+            update_clause = ', '.join(
+                [f'{c}=EXCLUDED.{c}' for c in update_cols]
+            )
+            placeholders = '(' + ', '.join(['?'] * len(columns)) + ')'
 
             sql = (
-                f"INSERT INTO stock_data ({col_names}) VALUES %s "
+                f"INSERT INTO stock_data ({col_names}) VALUES {placeholders} "
                 f"ON CONFLICT (date, ticker) DO UPDATE SET {update_clause}"
             )
 
@@ -240,12 +385,12 @@ class DatabaseManager:
                 tuple(_to_python(v) for v in row)
                 for row in df.itertuples(index=False, name=None)
             ]
-            psycopg2.extras.execute_values(cursor, sql, rows, page_size=500)
+            cursor.executemany(sql, rows)
 
             cursor.execute(
                 """
                 INSERT INTO metadata (ticker, last_updated, data_source, record_count)
-                VALUES (%s, to_char(NOW(), 'YYYY-MM-DD HH24:MI:SS'), %s, %s)
+                VALUES (?, strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'), ?, ?)
                 ON CONFLICT (ticker) DO UPDATE SET
                     last_updated = EXCLUDED.last_updated,
                     data_source = EXCLUDED.data_source,
@@ -266,12 +411,11 @@ class DatabaseManager:
     # ------------------------------------------------------------------ #
 
     def get_connection(self):
-        """Return a NEW pooled raw connection. Caller must close() it."""
-        return self.engine.raw_connection()
+        """Return a NEW wrapped pooled connection. Caller must close()."""
+        return _CompatConnection(self.engine.raw_connection())
 
     def get_stock_data(self, ticker: str, start_date: Optional[str] = None,
                        end_date: Optional[str] = None) -> pd.DataFrame:
-        """Retrieve stock data using the pooled SQLAlchemy engine."""
         try:
             query_str = "SELECT * FROM stock_data WHERE ticker = :ticker"
             params = {"ticker": ticker}
@@ -292,7 +436,6 @@ class DatabaseManager:
             return pd.DataFrame()
 
     def get_all_tickers(self) -> List[str]:
-        """Get list of all tickers in database."""
         try:
             cursor = self.conn.cursor()
             cursor.execute("SELECT DISTINCT ticker FROM stock_data ORDER BY ticker")
@@ -303,7 +446,6 @@ class DatabaseManager:
             return []
 
     def get_latest_date(self, ticker: str) -> Optional[str]:
-        """Get the latest date for a ticker."""
         try:
             cursor = self.conn.cursor()
             cursor.execute(
@@ -318,7 +460,6 @@ class DatabaseManager:
             return None
 
     def clear_ticker_data(self, ticker: str):
-        """Clear all data for a specific ticker."""
         try:
             cursor = self.conn.cursor()
             cursor.execute("DELETE FROM stock_data WHERE ticker = %s", (ticker,))
@@ -330,7 +471,6 @@ class DatabaseManager:
             logger.error(f"Error clearing data for {ticker}: {e}")
 
     def get_stats(self) -> dict:
-        """Get database statistics."""
         try:
             cursor = self.conn.cursor()
             cursor.execute("SELECT COUNT(DISTINCT ticker) FROM stock_data")
@@ -342,7 +482,8 @@ class DatabaseManager:
             return {
                 'total_tickers': ticker_count,
                 'total_records': record_count,
-                'date_range': f"{date_range[0]} to {date_range[1]}" if date_range[0] else "No data",
+                'date_range': (f"{date_range[0]} to {date_range[1]}"
+                               if date_range[0] else "No data"),
             }
         except Exception as e:
             self.conn.rollback()
@@ -350,7 +491,6 @@ class DatabaseManager:
             return {}
 
     def get_all_fundamentals(self) -> dict:
-        """Return {ticker: paid_up_capital_cr} dict for Low Float scoring."""
         try:
             cursor = self.conn.cursor()
             cursor.execute("SELECT ticker, paid_up_capital_cr FROM fundamentals")
@@ -360,7 +500,6 @@ class DatabaseManager:
             return {}
 
     def get_fundamentals_full(self) -> pd.DataFrame:
-        """Return full fundamentals table as DataFrame."""
         try:
             return pd.read_sql_query(text("SELECT * FROM fundamentals"), self.engine)
         except Exception:
@@ -371,16 +510,12 @@ class DatabaseManager:
     # ------------------------------------------------------------------ #
 
     def close(self):
-        """Return the pooled connection back to the engine."""
-        # Read/write _conn directly so we don't accidentally re-acquire a
-        # connection through the .conn property just to close it.
         if self._conn is not None:
             try:
-                self._conn.close()  # SQLAlchemy returns to pool
+                self._conn.close()
             except Exception:
                 pass
             self._conn = None
-        # Don't dispose the shared engine.
         logger.info("Database connection released")
 
     def __enter__(self):
@@ -391,7 +526,7 @@ class DatabaseManager:
 
 
 def _to_python(v):
-    """Convert pandas/numpy values to plain Python primitives for psycopg2."""
+    """Convert pandas/numpy values to plain Python primitives."""
     if v is None:
         return None
     try:
