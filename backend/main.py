@@ -12,6 +12,7 @@ import os
 import sys
 from pathlib import Path
 import pandas as pd
+import numpy as np
 import logging
 from datetime import datetime
 import asyncio
@@ -482,9 +483,10 @@ def get_sniper_signals():
             return []
         
         try:
-            # Replace ALL NaN values with None for JSON compatibility
+            # Replace inf/-inf with NaN first, then NaN with None for JSON compatibility
+            df = df.replace([np.inf, -np.inf], np.nan)
             df = df.replace({float('nan'): None})
-            
+
             # Fill numeric columns with 0 (except sma_200 which stays None)
             numeric_columns = ['projected_vol', 'price_change_pct', 'avg_volume_20', 'rvol', 'score', 'volume', 'close']
             for col in numeric_columns:
