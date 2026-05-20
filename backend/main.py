@@ -543,8 +543,23 @@ def get_sniper_signals():
                 df['v5_details'] = [{}] * len(df)
             
             result = df.to_dict(orient="records")
+
+            # Recursively sanitize inf/nan inside nested structures (e.g. v5_details)
+            import math as _math
+            def _sanitize(o):
+                if isinstance(o, float):
+                    if _math.isinf(o) or _math.isnan(o):
+                        return None
+                    return o
+                if isinstance(o, dict):
+                    return {k: _sanitize(v) for k, v in o.items()}
+                if isinstance(o, list):
+                    return [_sanitize(v) for v in o]
+                return o
+            result = _sanitize(result)
+
             logger.info(f"✅ Returning {len(result)} signals to frontend")
-            
+
             return result
             
         except Exception as e:
