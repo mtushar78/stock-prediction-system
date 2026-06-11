@@ -71,6 +71,29 @@ class TickerAnalyzeRequest(BaseModel):
     paid_up_capital: Optional[float] = None  # optional override
 
 # Background task using DSE Scraper
+def _prepare_signals_for_sqlite(df_results):
+    """v7: serialize list and dict columns into strings/JSON so SQLite's
+    bound-parameter layer can accept them. Without this the to_sql call
+    raises `type 'list' is not supported` on early_reasons / early_components.
+    Applies to all known list-typed and dict-typed columns produced by
+    StockAnalyzer.analyze_ticker."""
+    import json as _json
+    df_results_copy = df_results.copy()
+    list_cols = ['reasons', 'early_reasons']
+    dict_cols = ['v5_details', 'early_components']
+    for col in list_cols:
+        if col in df_results_copy.columns:
+            df_results_copy[col] = df_results_copy[col].apply(
+                lambda x: str(x) if isinstance(x, list) else x
+            )
+    for col in dict_cols:
+        if col in df_results_copy.columns:
+            df_results_copy[col] = df_results_copy[col].apply(
+                lambda x: _json.dumps(x) if isinstance(x, dict) else x
+            )
+    return df_results_copy
+
+
 async def scheduled_scraper_and_analysis(is_final: int = 0):
     """
     Run DSE scraper and analysis
@@ -102,18 +125,10 @@ async def scheduled_scraper_and_analysis(is_final: int = 0):
             logger.info(f"[{update_type}] Analysis returned: {len(df_results)} results")
             
             if not df_results.empty:
-                # CRITICAL: Convert reasons list to string for SQL storage
-                df_results_copy = df_results.copy()
-                df_results_copy['reasons'] = df_results_copy['reasons'].apply(
-                    lambda x: str(x) if isinstance(x, list) else x
-                )
-                # Serialize v5_details dict as JSON string
-                import json as _json
-                if 'v5_details' in df_results_copy.columns:
-                    df_results_copy['v5_details'] = df_results_copy['v5_details'].apply(
-                        lambda x: _json.dumps(x) if isinstance(x, dict) else x
-                    )
-                
+                # v7: serialize list/dict columns (reasons, early_reasons,
+                # v5_details, early_components) before SQLite write.
+                df_results_copy = _prepare_signals_for_sqlite(df_results)
+
                 # Save to database (pandas requires the SQLAlchemy engine for PG).
                 df_results_copy.to_sql('signals_today', db.engine, if_exists='replace', index=False)
 
@@ -172,17 +187,10 @@ async def lifespan(app: FastAPI):
         logger.info(f"Analysis complete: {len(df_results)} results returned")
         
         if not df_results.empty:
-            # Save results to signals_today table
-            # Convert reasons list to string for SQL storage
-            df_results_copy = df_results.copy()
-            df_results_copy['reasons'] = df_results_copy['reasons'].apply(lambda x: str(x) if isinstance(x, list) else x)
-            # Serialize v5_details dict as JSON string
-            import json as _json
-            if 'v5_details' in df_results_copy.columns:
-                df_results_copy['v5_details'] = df_results_copy['v5_details'].apply(
-                    lambda x: _json.dumps(x) if isinstance(x, dict) else x
-                )
-            
+            # v7: serialize list/dict columns (reasons, early_reasons,
+            # v5_details, early_components) before SQLite write.
+            df_results_copy = _prepare_signals_for_sqlite(df_results)
+
             # Save to database (SQLAlchemy engine required for PostgreSQL).
             df_results_copy.to_sql('signals_today', db.engine, if_exists='replace', index=False)
 
