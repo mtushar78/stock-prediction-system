@@ -288,3 +288,56 @@ export interface DetailedTickerAnalysis {
     trend_status?: string;
   };
 }
+
+// ----------------------------
+// Chart-pattern analyzer (independent second-opinion engine)
+// ----------------------------
+
+export interface ChartPattern {
+  name: string;
+  type: 'reversal' | 'continuation' | string;
+  bias: 'bullish' | 'bearish' | 'neutral' | string;
+  base_strength: number;
+  final_strength: number;
+  plain: string;
+  multipliers?: Record<string, number>;
+  context_notes?: string[];
+  geometry?: Record<string, number | null>;
+}
+
+export interface ChartContext {
+  trend?: 'uptrend' | 'downtrend' | 'sideways' | 'unknown' | string;
+  trend_slope_pct?: number;
+  sma200?: number;
+  sma200_distance_pct?: number;
+  support?: number;
+  resistance?: number;
+  near_support?: boolean;
+  near_resistance?: boolean;
+  rvol?: number;
+  avg_vol_20d?: number;
+  ret_5d_pct?: number;
+}
+
+export interface ChartSignal {
+  ticker: string;
+  analysis_date: string;
+  overall_score: number;
+  overall_bias: 'bullish' | 'bearish' | 'neutral' | string;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE' | string;
+  pattern_count: number;
+  price?: number | null;
+  patterns: ChartPattern[];
+  context: ChartContext;
+  explanation: string;
+  detected_at?: string;
+}
+
+export interface ChartOhlcvBar {
+  date: string;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number | null;
+  volume: number;
+}

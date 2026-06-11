@@ -321,6 +321,35 @@ class DatabaseManager:
                 "ON purchase_history(ticker)"
             )
 
+            # Chart-analysis output — a second, INDEPENDENT scoring engine.
+            # Each row = one ticker's classical candlestick-pattern verdict for
+            # a given analysis_date. patterns + context are JSON blobs.
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS chart_signals (
+                    id SERIAL PRIMARY KEY,
+                    ticker TEXT NOT NULL,
+                    analysis_date TEXT NOT NULL,
+                    overall_score INTEGER NOT NULL,
+                    overall_bias TEXT NOT NULL,
+                    confidence TEXT NOT NULL,
+                    pattern_count INTEGER NOT NULL,
+                    price DOUBLE PRECISION,
+                    patterns TEXT NOT NULL,
+                    context TEXT NOT NULL,
+                    explanation TEXT NOT NULL,
+                    detected_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(ticker, analysis_date)
+                )
+            """)
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_chart_signals_date "
+                "ON chart_signals(analysis_date DESC)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_chart_signals_date_score "
+                "ON chart_signals(analysis_date DESC, overall_score DESC)"
+            )
+
             # Older SQLite DBs created portfolio without total_cost /
             # commission_paid — upgrade in-place.
             cursor.execute("PRAGMA table_info(portfolio)")
@@ -503,6 +532,131 @@ class DatabaseManager:
         try:
             return pd.read_sql_query(text("SELECT * FROM fundamentals"), self.engine)
         except Exception:
+            return pd.DataFrame()
+
+    # ------------------------------------------------------------------ #
+    # Chart-signal storage (independent of signals_today)
+    # ------------------------------------------------------------------ #
+
+    def save_chart_signals_bulk(self, results: list):
+        """UPSERT a list of chart-analysis results into chart_signals.
+
+        Each entry must look like ChartAnalyzer.analyze_ticker output.
+        UNIQUE(ticker, analysis_date) means re-running on the same day is
+        idempotent — existing rows get refreshed."""
+        import json as _json
+        if not results:
+            return
+        try:
+            cursor = self.conn.cursor()
+            sql = (
+                "INSERT INTO chart_signals "
+                "(ticker, analysis_date, overall_score, overall_bias, "
+                " confidence, pattern_count, price, patterns, context, explanation) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (ticker, analysis_date) DO UPDATE SET "
+                "  overall_score = EXCLUDED.overall_score, "
+                "  overall_bias  = EXCLUDED.overall_bias, "
+                "  confidence    = EXCLUDED.confidence, "
+                "  pattern_count = EXCLUDED.pattern_count, "
+                "  price         = EXCLUDED.price, "
+                "  patterns      = EXCLUDED.patterns, "
+                "  context       = EXCLUDED.context, "
+                "  explanation   = EXCLUDED.explanation, "
+                "  detected_at   = CURRENT_TIMESTAMP"
+            )
+            rows = []
+            for r in results:
+                rows.append((
+                    r['ticker'],
+                    r['analysis_date'],
+                    int(r['overall_score']),
+                    r['overall_bias'],
+                    r['confidence'],
+                    int(r['pattern_count']),
+                    float(r.get('price') or 0),
+                    _json.dumps(r.get('patterns', []), default=str),
+                    _json.dumps(r.get('context', {}), default=str),
+                    r.get('explanation', ''),
+                ))
+            cursor.executemany(sql, rows)
+            self.conn.commit()
+            logger.info(f"Saved {len(rows)} chart-signal rows")
+        except Exception as e:
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            logger.error(f"save_chart_signals_bulk failed: {e}")
+            raise
+
+    def get_chart_signals_today(self) -> pd.DataFrame:
+        """Return the most recent analysis_date's chart signals."""
+        try:
+            return pd.read_sql_query(text(
+                "SELECT * FROM chart_signals "
+                "WHERE analysis_date = (SELECT MAX(analysis_date) FROM chart_signals) "
+                "ORDER BY overall_score DESC, ticker ASC"
+            ), self.engine)
+        except Exception as e:
+            logger.error(f"get_chart_signals_today failed: {e}")
+            return pd.DataFrame()
+
+    def get_chart_signal(self, ticker: str) -> Optional[dict]:
+        """Return the most recent chart signal for one ticker, or None."""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT ticker, analysis_date, overall_score, overall_bias, "
+                "       confidence, pattern_count, price, patterns, context, "
+                "       explanation, detected_at "
+                "FROM chart_signals WHERE ticker = %s "
+                "ORDER BY analysis_date DESC LIMIT 1",
+                (ticker,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            import json as _json
+            return {
+                'ticker': row[0],
+                'analysis_date': row[1],
+                'overall_score': row[2],
+                'overall_bias': row[3],
+                'confidence': row[4],
+                'pattern_count': row[5],
+                'price': row[6],
+                'patterns': _json.loads(row[7]) if row[7] else [],
+                'context': _json.loads(row[8]) if row[8] else {},
+                'explanation': row[9] or '',
+                'detected_at': row[10],
+            }
+        except Exception as e:
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            logger.error(f"get_chart_signal({ticker}) failed: {e}")
+            return None
+
+    def get_ohlcv_for_chart(self, ticker: str, days: int = 60) -> pd.DataFrame:
+        """Return last N days of OHLCV for chart rendering, oldest-first."""
+        try:
+            query = text(
+                "SELECT date, open, high, low, close, volume "
+                "FROM stock_data WHERE ticker = :ticker "
+                "ORDER BY date DESC LIMIT :n"
+            )
+            df = pd.read_sql_query(query, self.engine,
+                                   params={'ticker': ticker, 'n': int(days)})
+            if df.empty:
+                return df
+            # Re-sort oldest → newest for the chart
+            df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
+            df = df.sort_values('date').reset_index(drop=True)
+            return df
+        except Exception as e:
+            logger.error(f"get_ohlcv_for_chart({ticker}) failed: {e}")
             return pd.DataFrame()
 
     # ------------------------------------------------------------------ #

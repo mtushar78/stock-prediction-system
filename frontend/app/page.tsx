@@ -17,6 +17,8 @@ import SignalDetailModal from './components/SignalDetailModal';
 import PortfolioDetailModal from './components/PortfolioDetailModal';
 import PurchaseHistoryModal from './components/PurchaseHistoryModal';
 import PriceHistoryModal from './components/PriceHistoryModal';
+import ChartScope from './components/ChartScope';
+import ChartDetailModal from './components/ChartDetailModal';
 import { Signal, PortfolioItem, Alert, SystemStatus, PurchaseHistory } from './types';
 
 // API Base URL
@@ -48,6 +50,7 @@ export default function Dashboard() {
   const [purchaseHistory, setPurchaseHistory] = useState<PurchaseHistory[]>([]);
 
   const [priceHistoryModal, setPriceHistoryModal] = useState<{ ticker: string; currentPrice?: number } | null>(null);
+  const [chartAnalystTicker, setChartAnalystTicker] = useState<string | null>(null);
 
   // Keyboard shortcut handler
   useEffect(() => {
@@ -257,7 +260,7 @@ export default function Dashboard() {
             activeTicker={activeModal !== null && activeModal < signals.length ? signals[activeModal]?.Ticker ?? null : null}
           />
           
-          <PortfolioTable 
+          <PortfolioTable
             portfolio={portfolio}
             onVolumeClick={(ticker, volume) => setPortfolioVolumeModal({ ticker, volume })}
             onHistoryClick={handlePurchaseHistoryClick}
@@ -265,6 +268,12 @@ export default function Dashboard() {
             onPriceInfoClick={(ticker, currentPrice) => setPriceHistoryModal({ ticker, currentPrice })}
             onRemove={handleRemovePosition}
             activeModalIndex={activeModal !== null && activeModal >= signals.length ? activeModal - signals.length : null}
+          />
+
+          {/* Independent second-opinion engine — classical candlestick patterns */}
+          <ChartScope
+            apiUrl={API_URL}
+            onRowClick={(ticker) => setChartAnalystTicker(ticker)}
           />
         </div>
 
@@ -327,9 +336,17 @@ export default function Dashboard() {
       )}
 
       {activeModal !== null && activeModal >= signals.length && portfolio[activeModal - signals.length] && (
-        <PortfolioDetailModal 
+        <PortfolioDetailModal
           item={portfolio[activeModal - signals.length]}
           onClose={() => setActiveModal(null)}
+        />
+      )}
+
+      {chartAnalystTicker && (
+        <ChartDetailModal
+          apiUrl={API_URL}
+          ticker={chartAnalystTicker}
+          onClose={() => setChartAnalystTicker(null)}
         />
       )}
 

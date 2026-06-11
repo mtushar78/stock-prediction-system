@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 from src.db_manager import DatabaseManager
 from src.analyzer import StockAnalyzer
+from src.chart_analyzer import ChartAnalyzer
 from src.portfolio_manager import PortfolioManager
 from src.stocksurfer_fetcher import StockSurferFetcher
 from src.dse_scraper import run_daily_scraper
@@ -116,6 +117,24 @@ def _prepare_signals_for_sqlite(df_results):
     return df_results_copy
 
 
+def run_chart_analysis(label: str = "") -> int:
+    """Run the independent chart-pattern engine and persist its output.
+    Returns the number of tickers with detected patterns (0 on failure)."""
+    try:
+        db = DatabaseManager()
+        analyzer = ChartAnalyzer(db)
+        results = analyzer.analyze_all_tickers()
+        analyzer.save_results(results)
+        logger.info(f"📈 [{label}] Chart analysis: {len(results)} tickers with patterns")
+        db.close()
+        return len(results)
+    except Exception as e:
+        logger.error(f"❌ [{label}] Chart analysis FAILED: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return 0
+
+
 async def scheduled_scraper_and_analysis(is_final: int = 0):
     """
     Run DSE scraper and analysis
@@ -169,8 +188,13 @@ async def scheduled_scraper_and_analysis(is_final: int = 0):
             else:
                 logger.warning(f"⚠️  [{update_type}] No signals generated - DataFrame empty")
                 logger.warning(f"   Possible reasons: All stocks below 200 SMA or insufficient data")
-            
+
             db.close()
+
+            # Independent chart-pattern engine runs after every scrape — its
+            # own pipeline, own table. Failures here do NOT affect the quant
+            # signals; they're logged and swallowed.
+            await asyncio.to_thread(run_chart_analysis, update_type)
             
         except Exception as e:
             logger.error(f"❌ [{update_type}] Analysis FAILED: {e}")
@@ -237,8 +261,15 @@ async def lifespan(app: FastAPI):
             logger.warning("  1. No stocks meet v4 criteria (all in downtrends)")
             logger.warning("  2. Insufficient historical data (need 200 days)")
             logger.warning("  3. Analysis logic error")
-        
+
         db.close()
+
+        # Run the chart-pattern engine on startup too so the dashboard has
+        # data immediately, even before the first scrape fires.
+        try:
+            await asyncio.to_thread(run_chart_analysis, "STARTUP")
+        except Exception as _e:
+            logger.error(f"Startup chart analysis errored (non-fatal): {_e}")
         
     except Exception as e:
         logger.error(f"❌ Initial analysis FAILED: {e}")
@@ -660,6 +691,115 @@ def get_sniper_signals():
         import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
+# ====================================================================== #
+# Chart-Pattern Analysis Engine — INDEPENDENT second opinion
+#
+# This is a separate scoring pipeline based on classical Japanese
+# candlestick analysis. It reads from the same `stock_data` table as the
+# quant scorer but writes to its own `chart_signals` table and has its
+# own API surface. The two engines are intentionally NOT mixed — they
+# exist to provide cross-confirmation.
+# ====================================================================== #
+
+@app.get("/api/chart-analysis/signals")
+def get_chart_signals():
+    """Today's chart-pattern signals (one row per ticker, latest analysis_date).
+    Returns a JSON-friendly list with patterns + context parsed back to objects."""
+    try:
+        db = DatabaseManager()
+        df = db.get_chart_signals_today()
+        db.close()
+        if df.empty:
+            return []
+        import json as _json
+        import math as _math
+        out = []
+        for _, r in df.iterrows():
+            try:
+                patterns = _json.loads(r['patterns']) if r['patterns'] else []
+            except Exception:
+                patterns = []
+            try:
+                context = _json.loads(r['context']) if r['context'] else {}
+            except Exception:
+                context = {}
+
+            def _scrub(o):
+                if isinstance(o, float):
+                    if _math.isinf(o) or _math.isnan(o):
+                        return None
+                    return o
+                if isinstance(o, dict):
+                    return {k: _scrub(v) for k, v in o.items()}
+                if isinstance(o, list):
+                    return [_scrub(v) for v in o]
+                return o
+
+            out.append({
+                'ticker': r['ticker'],
+                'analysis_date': r['analysis_date'],
+                'overall_score': int(r['overall_score']),
+                'overall_bias': r['overall_bias'],
+                'confidence': r['confidence'],
+                'pattern_count': int(r['pattern_count']),
+                'price': float(r['price']) if r['price'] is not None else None,
+                'patterns': _scrub(patterns),
+                'context': _scrub(context),
+                'explanation': r['explanation'] or '',
+            })
+        return out
+    except Exception as e:
+        logger.error(f"get_chart_signals failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/chart-analysis/{ticker}")
+def get_chart_signal_detail(ticker: str):
+    """Full chart-analysis breakdown for one ticker (latest analysis_date)."""
+    try:
+        db = DatabaseManager()
+        sig = db.get_chart_signal(ticker.upper())
+        db.close()
+        if not sig:
+            raise HTTPException(status_code=404, detail=f"No chart signal for {ticker}")
+        return sig
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"get_chart_signal_detail({ticker}) failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/chart-analysis/{ticker}/ohlcv")
+def get_chart_ohlcv(ticker: str, days: int = 60):
+    """OHLCV history for chart rendering. Oldest-first.
+    Used by ChartDetailModal to draw the candlestick chart."""
+    try:
+        days = max(20, min(int(days), 365))  # clamp
+        db = DatabaseManager()
+        df = db.get_ohlcv_for_chart(ticker.upper(), days=days)
+        db.close()
+        if df.empty:
+            return []
+        # Convert NaNs and ints for clean JSON
+        df = df.replace([np.inf, -np.inf], np.nan)
+        df = df.where(pd.notna(df), None)
+        rows = []
+        for _, r in df.iterrows():
+            rows.append({
+                'date': r['date'],
+                'open': float(r['open']) if r['open'] is not None else None,
+                'high': float(r['high']) if r['high'] is not None else None,
+                'low': float(r['low']) if r['low'] is not None else None,
+                'close': float(r['close']) if r['close'] is not None else None,
+                'volume': int(r['volume']) if r['volume'] is not None else 0,
+            })
+        return rows
+    except Exception as e:
+        logger.error(f"get_chart_ohlcv({ticker}) failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/tickers")
