@@ -112,7 +112,7 @@ export default function SignalsTable({
           <div><span className="text-green-400 font-bold">SCORE</span> — main multi-factor score (0–100). ≥ 50 = <b className="text-green-300">BUY</b>, ≥ 28 = <b className="text-yellow-300">WAIT</b>, &lt; 28 = IGNORE. Late-entry penalty automatically reduces this for stocks that already moved.</div>
           <div><span className="text-orange-400 font-bold">EARLY</span> — pre-breakout score (0–100). ≥ 60 = <b className="text-orange-300">EARLY</b> (act now), ≥ 40 = <b className="text-amber-200">WATCH</b> (setting up). Built from <i>tight base + volume tell + closing tell + near 10d high + not extended</i>.</div>
           <div><span className="text-yellow-300 font-bold">FRESH</span> badge — first day this signal fired (yesterday was not BUY/EARLY). Fresh signals are the highest-quality entries.</div>
-          <div className="text-gray-500">Click any column header to sort. Click <Info className="inline w-3 h-3" /> in the REASON column for the full breakdown.</div>
+          <div className="text-gray-500">Click any column header to sort. Click <Info className="inline w-3 h-3" /> in the INFO column for the full breakdown (reasons shown in tooltip on hover).</div>
         </div>
       )}
 
@@ -120,7 +120,7 @@ export default function SignalsTable({
         {/* min-w on the table forces horizontal scroll on small screens instead
             of letting columns collapse — important for mobile where REASON
             could otherwise lose its width entirely under table-fixed. */}
-        <table className="text-left text-sm table-fixed min-w-[1180px] w-full">
+        <table className="text-left text-sm table-fixed min-w-[930px] w-full">
           <colgroup>
             <col style={{ width: '120px' }} />  {/* TICKER */}
             <col style={{ width: '90px' }} />   {/* PRICE */}
@@ -131,7 +131,7 @@ export default function SignalsTable({
             <col style={{ width: '70px' }} />   {/* RVOL */}
             <col style={{ width: '100px' }} />  {/* EARLY */}
             <col style={{ width: '80px' }} />   {/* SCORE */}
-            <col style={{ width: '310px' }} />  {/* REASON — explicit width so cell + icon are always visible */}
+            <col style={{ width: '60px' }} />   {/* INFO — icon-only column */}
           </colgroup>
           <thead>
             <tr className="text-gray-500 text-xs border-b border-gray-700">
@@ -144,7 +144,7 @@ export default function SignalsTable({
               {sortableHeader('RVOL', 'RVOL')}
               {sortableHeader('EarlyScore', 'EARLY', 'Pre-breakout score 0–100. ≥60=EARLY, ≥40=WATCH')}
               {sortableHeader('Score', 'SCORE', 'Main confirmation score 0–100. ≥50=BUY, ≥28=WAIT')}
-              <th className="pb-3 whitespace-nowrap">REASON</th>
+              <th className="pb-3 whitespace-nowrap text-center" title="Open full score breakdown">INFO</th>
             </tr>
           </thead>
           <tbody>
@@ -246,30 +246,19 @@ export default function SignalsTable({
                     {sig.Score}
                   </span>
                 </td>
-                <td className="py-2 pr-2 text-xs text-gray-400 overflow-hidden">
-                  <div className="flex items-center gap-2 min-w-0">
-                    {/* Always-visible Info button so the user can open the
-                        full breakdown even when the truncated reason text
-                        is empty or the column is narrow. */}
-                    <button
-                      onClick={() => onInfoClick(sig)}
-                      className={`shrink-0 inline-flex items-center justify-center w-6 h-6 rounded border transition-colors ${
-                        activeTicker === sig.Ticker
-                          ? 'border-green-500 bg-green-900/30 text-green-300'
-                          : 'border-gray-600 bg-gray-800 text-emerald-400 hover:border-emerald-400 hover:bg-emerald-900/20'
-                      }`}
-                      title="Open full breakdown"
-                      aria-label="Open full breakdown"
-                    >
-                      <Info className="w-3.5 h-3.5" />
-                    </button>
-                    <span
-                      className="truncate flex-1 min-w-0"
-                      title={reasonText}
-                    >
-                      {reasonText || <span className="text-gray-600 italic">no reasons fired</span>}
-                    </span>
-                  </div>
+                <td className="py-2 pr-2 text-center">
+                  <button
+                    onClick={() => onInfoClick(sig)}
+                    className={`inline-flex items-center justify-center w-7 h-7 rounded border transition-colors ${
+                      activeTicker === sig.Ticker
+                        ? 'border-green-500 bg-green-900/30 text-green-300'
+                        : 'border-gray-600 bg-gray-800 text-emerald-400 hover:border-emerald-400 hover:bg-emerald-900/20'
+                    }`}
+                    title={reasonText ? `Full breakdown — ${reasonText}` : 'Open full breakdown'}
+                    aria-label="Open full breakdown"
+                  >
+                    <Info className="w-4 h-4" />
+                  </button>
                 </td>
               </tr>
             );})}

@@ -11,7 +11,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import axios from 'axios';
-import { Activity, RefreshCw, TrendingUp } from 'lucide-react';
+import { Activity, RefreshCw, TrendingUp, Search } from 'lucide-react';
 import ChartScope from '../components/ChartScope';
 import ChartDetailModal from '../components/ChartDetailModal';
 import { SystemStatus } from '../types';
@@ -22,6 +22,9 @@ export default function ChartAnalysisPage() {
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [activeTicker, setActiveTicker] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [tickers, setTickers] = useState<string[]>([]);
+  const [searchInput, setSearchInput] = useState('');
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -40,6 +43,31 @@ export default function ChartAnalysisPage() {
       clearInterval(id);
     };
   }, []);
+
+  // Load the autocomplete ticker list once
+  useEffect(() => {
+    let cancelled = false;
+    axios
+      .get<string[]>(`${API_URL}/api/tickers`)
+      .then((res) => {
+        if (!cancelled) setTickers(res.data || []);
+      })
+      .catch(() => {
+        /* non-fatal */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const submitSearch = () => {
+    const t = (searchInput || '').trim().toUpperCase();
+    if (!t) return;
+    // Open the modal — the modal itself fetches the chart analysis and
+    // will surface a 404 if the ticker truly has no usable history.
+    setSearchError(null);
+    setActiveTicker(t);
+  };
 
   return (
     <main className="min-h-screen bg-gray-900 text-white p-4 sm:p-6 lg:p-8">
@@ -92,6 +120,47 @@ export default function ChartAnalysisPage() {
           </button>
         </div>
       </header>
+
+      <section className="mb-4 bg-gray-800 border border-gray-700 rounded-lg p-4">
+        <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
+          <div className="flex items-center gap-2 text-sm text-gray-400">
+            <Search className="w-4 h-4 text-purple-300" />
+            <span>Search any ticker:</span>
+          </div>
+          <input
+            list="chart-analysis-tickers"
+            value={searchInput}
+            onChange={(e) => {
+              setSearchInput(e.target.value);
+              setSearchError(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') submitSearch();
+            }}
+            placeholder="e.g. SHAHJABANK"
+            className="bg-gray-900 border border-gray-700 focus:border-purple-500 outline-none rounded px-3 py-1.5 text-sm text-white w-full sm:w-72 placeholder-gray-600"
+          />
+          <datalist id="chart-analysis-tickers">
+            {tickers.map((t) => (
+              <option key={t} value={t} />
+            ))}
+          </datalist>
+          <button
+            onClick={submitSearch}
+            disabled={!searchInput.trim()}
+            className="px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-600 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm transition"
+          >
+            Analyze chart
+          </button>
+          {searchInput && tickers.length > 0 && !tickers.includes(searchInput.trim().toUpperCase()) && (
+            <span className="text-xs text-yellow-400">Unknown ticker — will still try</span>
+          )}
+          {searchError && <span className="text-xs text-red-300">{searchError}</span>}
+          <div className="text-[11px] text-gray-500 sm:ml-auto">
+            Search works even for tickers not in today&apos;s pattern list.
+          </div>
+        </div>
+      </section>
 
       <ChartScope
         key={refreshKey}

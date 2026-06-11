@@ -757,14 +757,37 @@ def get_chart_signals():
 
 @app.get("/api/chart-analysis/{ticker}")
 def get_chart_signal_detail(ticker: str):
-    """Full chart-analysis breakdown for one ticker (latest analysis_date)."""
+    """Full chart-analysis breakdown for one ticker.
+
+    Lookup order:
+      1. Cached row in chart_signals (latest analysis_date)
+      2. If not found, run ChartAnalyzer.analyze_ticker() on demand.
+         This supports user-initiated search for tickers that didn't
+         fire any patterns today (they're filtered out of the stored
+         signals list) but still have valid OHLCV history.
+      3. If even on-demand analysis can't produce a result (no data /
+         insufficient history / broken OHLC) → 404."""
+    ticker_u = ticker.upper()
     try:
         db = DatabaseManager()
-        sig = db.get_chart_signal(ticker.upper())
+        sig = db.get_chart_signal(ticker_u)
+        if sig:
+            db.close()
+            return sig
+
+        # Fall through: try on-demand analysis
+        from src.chart_analyzer import ChartAnalyzer
+        analyzer = ChartAnalyzer(db)
+        result = analyzer.analyze_ticker(ticker_u)
         db.close()
-        if not sig:
-            raise HTTPException(status_code=404, detail=f"No chart signal for {ticker}")
-        return sig
+
+        if not result:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Cannot analyse {ticker_u}: ticker not found, insufficient history, or stale data."
+            )
+        # On-demand result has same shape as cached signal — just return it
+        return result
     except HTTPException:
         raise
     except Exception as e:
