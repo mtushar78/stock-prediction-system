@@ -116,10 +116,12 @@ export default function Dashboard() {
     const handle = setTimeout(() => {
       setPriceLoading(true);
       setPriceFetchError(null);
-      axios.get<Array<{ close: number }>>(`${API_URL}/api/price-history/${ticker}`)
+      axios.get<Array<{ close: number; date: string }>>(`${API_URL}/api/price-history/${ticker}`)
         .then((res) => {
           if (cancelled) return;
-          const lastClose = res.data?.[0]?.close;
+          // The endpoint returns oldest-first (last element = most recent close).
+          const arr = res.data || [];
+          const lastClose = arr.length > 0 ? arr[arr.length - 1].close : undefined;
           if (typeof lastClose === 'number' && lastClose > 0) {
             setNewPrice(String(lastClose));
             setPriceSource('auto');
