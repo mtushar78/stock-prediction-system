@@ -65,8 +65,32 @@ BANGLADESH_TZ = pytz.timezone('Asia/Dhaka')
 MIN_HISTORY_DAYS = 30
 
 # Candle-shape micro-thresholds.
-MIN_BODY_PCT = 0.001   # 0.1% of price — anything below is a flat candle, skip
+MIN_BODY_PCT = 0.005   # 0.5% of price — below this is noise on penny stocks
 EPS = 1e-9
+
+
+def _valid_ohlc(row: dict) -> bool:
+    """OHLC sanity: open and close must lie within [low, high], and
+    high >= low. Some intraday DSE rows arrive with inconsistencies
+    (e.g. open below low) — those rows are noise and must be rejected
+    before pattern detection."""
+    try:
+        o = float(row.get('open'))
+        h = float(row.get('high'))
+        l = float(row.get('low'))
+        c = float(row.get('close'))
+    except (TypeError, ValueError):
+        return False
+    for v in (o, h, l, c):
+        if not np.isfinite(v) or v <= 0:
+            return False
+    if h < l:
+        return False
+    if o < l - EPS or o > h + EPS:
+        return False
+    if c < l - EPS or c > h + EPS:
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------- #
@@ -213,8 +237,8 @@ def detect_hammer(today: dict, df_tail: pd.DataFrame) -> Optional[dict]:
         ),
         'geometry': {
             'body': round(body, 4),
-            'lower_wick': round(lower, 4),
-            'upper_wick': round(upper, 4),
+            'lower_wick': round(max(0.0, lower), 4),
+            'upper_wick': round(max(0.0, upper), 4),
             'wick_to_body': round(lower / body, 2) if body > 0 else None,
         },
     }
@@ -268,8 +292,8 @@ def detect_inverted_hammer(today: dict, df_tail: pd.DataFrame) -> Optional[dict]
         ),
         'geometry': {
             'body': round(body, 4),
-            'upper_wick': round(upper, 4),
-            'lower_wick': round(lower, 4),
+            'upper_wick': round(max(0.0, upper), 4),
+            'lower_wick': round(max(0.0, lower), 4),
             'wick_to_body': round(upper / body, 2) if body > 0 else None,
         },
     }
@@ -446,7 +470,8 @@ def detect_piercing_line(today: dict, prev: dict) -> Optional[dict]:
 
 def detect_bullish_marubozu(today: dict) -> Optional[dict]:
     """Pure momentum candle: solid green body with no/minimal wicks.
-    Sellers had no influence at any point. Body must be ≥ 95% of range."""
+    Sellers had no influence at any point. Body must be ≥ 95% of range
+    AND ≥ 2% of price (filters out micro-candles on penny stocks)."""
     o, h, l, c = today['open'], today['high'], today['low'], today['close']
     if not _is_green(o, c):
         return None
@@ -456,8 +481,10 @@ def detect_bullish_marubozu(today: dict) -> Optional[dict]:
         return None
     if body / rng < 0.95:
         return None
-    if body < 0.01 * c:  # 1% body min
+    if body < 0.02 * c:  # 2% of price min — filters micro-candles
         return None
+    upper = max(0.0, _upper_wick(o, h, c))
+    lower = max(0.0, _lower_wick(o, l, c))
     return {
         'name': 'Bullish Marubozu',
         'type': 'continuation',
@@ -469,10 +496,10 @@ def detect_bullish_marubozu(today: dict) -> Optional[dict]:
             "all day. Pure momentum signal."
         ),
         'geometry': {
-            'body_pct_of_range': round(body / rng * 100, 1),
+            'body_pct_of_range': round(min(100.0, body / rng * 100), 1),
             'body': round(body, 4),
-            'upper_wick': round(_upper_wick(o, h, c), 4),
-            'lower_wick': round(_lower_wick(o, l, c), 4),
+            'upper_wick': round(upper, 4),
+            'lower_wick': round(lower, 4),
         },
     }
 
@@ -799,13 +826,13 @@ class ChartAnalyzer:
         prev1_row = df.iloc[-2].to_dict()
         prev2_row = df.iloc[-3].to_dict()
 
-        # Guard against NaN OHLC
+        # Sanity-check OHLC integrity for the 3 most recent bars. Reject
+        # tickers with broken candles (open/close outside [low, high]) —
+        # otherwise pattern detection produces nonsense (negative wicks,
+        # body% > 100%) on noisy intraday data.
         for r in (today_row, prev1_row, prev2_row):
-            for k in ('open', 'high', 'low', 'close'):
-                v = r.get(k)
-                if v is None or (isinstance(v, float) and (np.isnan(v) or np.isinf(v))):
-                    return None
-            # Volume can be NaN, treat as 0
+            if not _valid_ohlc(r):
+                return None
             if pd.isna(r.get('volume')):
                 r['volume'] = 0
 
