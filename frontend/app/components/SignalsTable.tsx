@@ -117,18 +117,21 @@ export default function SignalsTable({
       )}
 
       <div className="overflow-x-auto">
-        <table className="w-full text-left text-sm table-fixed">
+        {/* min-w on the table forces horizontal scroll on small screens instead
+            of letting columns collapse — important for mobile where REASON
+            could otherwise lose its width entirely under table-fixed. */}
+        <table className="text-left text-sm table-fixed min-w-[1180px] w-full">
           <colgroup>
-            <col style={{ width: '120px' }} />
-            <col style={{ width: '90px' }} />
-            <col style={{ width: '60px' }} />
-            <col style={{ width: '130px' }} />
-            <col style={{ width: '110px' }} />
-            <col style={{ width: '110px' }} />
-            <col style={{ width: '70px' }} />
-            <col style={{ width: '90px' }} />
-            <col style={{ width: '80px' }} />
-            <col />
+            <col style={{ width: '120px' }} />  {/* TICKER */}
+            <col style={{ width: '90px' }} />   {/* PRICE */}
+            <col style={{ width: '60px' }} />   {/* TREND */}
+            <col style={{ width: '130px' }} />  {/* LAST CLOSING VOL */}
+            <col style={{ width: '110px' }} />  {/* CURRENT VOL */}
+            <col style={{ width: '110px' }} />  {/* PROJECTED VOL */}
+            <col style={{ width: '70px' }} />   {/* RVOL */}
+            <col style={{ width: '100px' }} />  {/* EARLY */}
+            <col style={{ width: '80px' }} />   {/* SCORE */}
+            <col style={{ width: '310px' }} />  {/* REASON — explicit width so cell + icon are always visible */}
           </colgroup>
           <thead>
             <tr className="text-gray-500 text-xs border-b border-gray-700">
@@ -227,8 +230,7 @@ export default function SignalsTable({
                         'bg-gray-700 text-gray-500'
                       }`}>
                       {sig.EarlyScore}
-                      {sig.EarlySignal === 'EARLY' && <span className="ml-1 text-[10px]">EARLY</span>}
-                      {sig.EarlySignal === 'WATCH' && <span className="ml-1 text-[10px]">WATCH</span>}
+                      <span className="ml-1 text-[10px]">{sig.EarlySignal}</span>
                     </span>
                   ) : <span className="text-gray-600">-</span>}
                 </td>
@@ -243,21 +245,29 @@ export default function SignalsTable({
                     {sig.Score}
                   </span>
                 </td>
-                <td className="py-2 text-xs text-gray-400 overflow-hidden">
+                <td className="py-2 pr-2 text-xs text-gray-400 overflow-hidden">
                   <div className="flex items-center gap-2 min-w-0">
+                    {/* Always-visible Info button so the user can open the
+                        full breakdown even when the truncated reason text
+                        is empty or the column is narrow. */}
+                    <button
+                      onClick={() => onInfoClick(i)}
+                      className={`shrink-0 inline-flex items-center justify-center w-6 h-6 rounded border transition-colors ${
+                        activeModalIndex === i
+                          ? 'border-green-500 bg-green-900/30 text-green-300'
+                          : 'border-gray-600 bg-gray-800 text-emerald-400 hover:border-emerald-400 hover:bg-emerald-900/20'
+                      }`}
+                      title="Open full breakdown"
+                      aria-label="Open full breakdown"
+                    >
+                      <Info className="w-3.5 h-3.5" />
+                    </button>
                     <span
                       className="truncate flex-1 min-w-0"
                       title={reasonText}
                     >
-                      {reasonText || '-'}
+                      {reasonText || <span className="text-gray-600 italic">no reasons fired</span>}
                     </span>
-                    <button
-                      onClick={() => onInfoClick(i)}
-                      className="inline-flex items-center justify-center w-4 h-4 rounded-full hover:bg-gray-700 transition-colors shrink-0"
-                      title="Show full breakdown"
-                    >
-                      <Info className={`w-3.5 h-3.5 transition-colors ${activeModalIndex === i ? 'text-green-400' : 'text-gray-500'}`} />
-                    </button>
                   </div>
                 </td>
               </tr>
