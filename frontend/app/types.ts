@@ -56,6 +56,9 @@ export interface Signal {
     smart_money?: { score: number; divergence_value?: number };
     vwap_proximity?: { score: number; distance_pct?: number; near_vwap?: boolean; vwap_5d?: number };
     rr?: { ratio?: number };
+    // v7
+    pre_breakout_coil?: { score: number; range_pct?: number; atr_contracting?: boolean; atr_now?: number; atr_prior?: number };
+    late_entry?: { score: number; return_5d_pct?: number | null; sma_distance_pct?: number | null; flags?: string[] };
   };
 }
 
@@ -257,6 +260,21 @@ export interface DetailedTickerAnalysis {
     signal: string;
     breakdown: ScoreBreakdownItem[];
     official_reasons?: string[] | null;
+  };
+
+  // v7: parallel EarlyScore breakdown
+  early?: {
+    score: number;
+    raw_points?: number;
+    signal: 'EARLY' | 'WATCH' | 'NONE' | string;
+    reasons: string[];
+    components: {
+      tight_base?: { points: number; range_pct_10d?: number | null };
+      goldilocks_volume?: { points: number; rvol?: number };
+      closing_tell?: { points: number; green?: boolean; cpr?: number; above_prev?: boolean };
+      near_resistance?: { points: number; high_10d?: number; distance_pct?: number | null };
+      not_extended?: { points: number; return_5d_pct?: number | null };
+    };
   };
 
   official?: {

@@ -415,6 +415,62 @@ export default function AnalyzeTickerPage() {
               </div>
             </div>
 
+            {/* v7: EarlyScore breakdown */}
+            {result.early && (
+              <div className="bg-gray-950 border border-orange-700/60 rounded p-4">
+                <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+                  <h3 className="font-bold text-orange-300">🔥 EarlyScore — Pre-Breakout Detector (v7)</h3>
+                  <div className="flex items-center gap-2">
+                    <Badge label={`Score: ${result.early.score}/100`}
+                           variant={result.early.signal === 'EARLY' ? 'green' : result.early.signal === 'WATCH' ? 'yellow' : 'gray'} />
+                    <Badge label={result.early.signal}
+                           variant={result.early.signal === 'EARLY' ? 'green' : result.early.signal === 'WATCH' ? 'yellow' : 'gray'} />
+                  </div>
+                </div>
+                <div className="text-xs text-gray-400 mb-3 italic">
+                  {result.early.signal === 'EARLY' && 'Tight base + volume tell + not extended — best entry window.'}
+                  {result.early.signal === 'WATCH' && 'Setting up but missing a volume tell or testing the high — watch closely.'}
+                  {result.early.signal === 'NONE' && 'No pre-breakout setup. Either already extended or no volume tell yet.'}
+                </div>
+                <div>
+                  {([
+                    ['tight_base', 'Tight Base (10d range)', '25', (c?: { range_pct_10d?: number | null }) => `${c?.range_pct_10d ?? '-'}% — <4% best, <6% good, <8% ok`],
+                    ['goldilocks_volume', 'Goldilocks Volume', '25', (c?: { rvol?: number }) => `RVOL ${c?.rvol ?? '-'}x — sweet spot 1.8–3.0x (NOT 5x+)`],
+                    ['closing_tell', 'Closing Tell', '20', (c?: { green?: boolean; cpr?: number; above_prev?: boolean }) =>
+                      `green=${c?.green ? 'yes' : 'no'}, CPR=${c?.cpr ?? '-'}, above prev=${c?.above_prev ? 'yes' : 'no'}`],
+                    ['near_resistance', 'Near 10d High', '15', (c?: { high_10d?: number; distance_pct?: number | null }) =>
+                      `${c?.distance_pct ?? '-'}% from 10d high (${c?.high_10d ?? '-'})`],
+                    ['not_extended', 'Not Extended', '15', (c?: { return_5d_pct?: number | null }) =>
+                      `5d return ${c?.return_5d_pct ?? '-'}% — <8% rewarded, >25% penalised`],
+                  ] as const).map(([k, label, max, fmtDetail]) => {
+                    const c = (result.early!.components as Record<string, { points?: number } & Record<string, unknown> | undefined>)[k];
+                    const pts = c?.points ?? 0;
+                    return (
+                      <div key={k} className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 border-b border-gray-800 py-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-sm font-bold ${pts > 0 ? 'text-green-400' : pts < 0 ? 'text-red-400' : 'text-gray-300'}`}>
+                            {pts > 0 ? '✅' : pts < 0 ? '❌' : '⬜'}
+                          </span>
+                          <div>
+                            <div className="text-sm text-gray-200">{label}</div>
+                            <div className="text-xs text-gray-500">{fmtDetail(c as never)}</div>
+                          </div>
+                        </div>
+                        <div className={`text-sm font-bold ${pts > 0 ? 'text-green-400' : pts < 0 ? 'text-red-400' : 'text-gray-400'}`}>
+                          {pts > 0 ? `+${pts}` : pts} <span className="text-gray-600">/ {max}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {result.early.reasons.length > 0 && (
+                  <div className="mt-3 text-xs text-gray-500">
+                    <span className="text-gray-400 font-bold">Reasons:</span> {result.early.reasons.join(', ')}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Score breakdown */}
             <div className="bg-gray-950 border border-gray-700 rounded p-4">
               <div className="flex items-center justify-between flex-wrap gap-3 mb-3">

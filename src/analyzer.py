@@ -1645,7 +1645,35 @@ class StockAnalyzer:
                 'details': f"Distance={vwap_d.get('distance_pct', 'N/A')}% from 5D VWAP (< 1% + RVOL > 1.5)",
             })
 
-            # 14. RR Ratio
+            # 14. Pre-Breakout Coil (v7) — LEADING indicator
+            coil_d = v5d.get('pre_breakout_coil', {})
+            breakdown.append({
+                'name': 'Pre-Breakout Coil',
+                'passed': coil_d.get('score', 0) > 0,
+                'points': coil_d.get('score', 0),
+                'details': (
+                    f"10d range={coil_d.get('range_pct', 'N/A')}%, ATR contracting="
+                    f"{'YES' if coil_d.get('atr_contracting') else 'no'} "
+                    f"(strong coil: range<5% + ATR shrinking → +25)"
+                ),
+            })
+
+            # 15. Late-Entry Penalty (v7) — penalises already-extended stocks
+            le_d = v5d.get('late_entry', {})
+            le_pts = le_d.get('score', 0)
+            le_flags = le_d.get('flags', [])
+            breakdown.append({
+                'name': 'Late-Entry Penalty',
+                'passed': le_pts == 0,  # 0 means no penalty = good
+                'points': le_pts,
+                'details': (
+                    f"5d return={le_d.get('return_5d_pct', 'N/A')}%, "
+                    f"SMA dist={le_d.get('sma_distance_pct', 'N/A')}%"
+                    f"{' — ' + '; '.join(le_flags) if le_flags else ' — no penalty'}"
+                ),
+            })
+
+            # 16. RR Ratio
             rr_d = v5d.get('rr', {})
             rr_ratio_val = rr_d.get('ratio')
             rr_pts = 0
@@ -1747,6 +1775,9 @@ class StockAnalyzer:
                     'breakdown': breakdown,
                     'official_reasons': official.get('reasons') if isinstance(official, dict) else None,
                 },
+
+                # v7: parallel EarlyScore breakdown
+                'early': self._sanitize_for_json(self.calculate_early_score(row, df)),
             }
 
             # If official analysis exists, include official computed trading levels for easy comparison

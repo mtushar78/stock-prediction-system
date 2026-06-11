@@ -85,30 +85,51 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, []);
 
+  // Trade form error message (inline, not alert)
+  const [tradeError, setTradeError] = useState<string | null>(null);
+
   // Handle New Trade
   const handleAddTrade = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTicker || !newPrice || !newQty) {
-      alert("Please fill all fields");
-      return;
+    setTradeError(null);
+
+    const ticker = newTicker.trim().toUpperCase();
+    const price = parseFloat(newPrice);
+    const qty = parseInt(newQty, 10);
+
+    if (!ticker) { setTradeError('Ticker is required.'); return; }
+    if (Number.isNaN(price) || price <= 0) {
+      setTradeError('Buy price must be a number greater than 0.'); return;
     }
-    
+    if (Number.isNaN(qty) || qty <= 0) {
+      setTradeError('Quantity must be a positive whole number (not 0).'); return;
+    }
+
     setSubmitting(true);
     try {
       await axios.post(`${API_URL}/api/trade`, {
-        ticker: newTicker,
-        buy_price: parseFloat(newPrice),
-        quantity: parseInt(newQty)
+        ticker, buy_price: price, quantity: qty,
       });
-      
-      alert(`✅ ${newTicker} added to portfolio!`);
-      setNewTicker('');
-      setNewPrice('');
-      setNewQty('');
+      setNewTicker(''); setNewPrice(''); setNewQty('');
+      setTradeError(null);
       fetchData();
     } catch (err: unknown) {
-      const maybeAxiosError = err as { response?: { data?: { detail?: string } }; message?: string };
-      alert(`❌ Error: ${maybeAxiosError.response?.data?.detail || maybeAxiosError.message || 'Unknown error'}`);
+      const e = err as {
+        response?: { status?: number; data?: { detail?: unknown } };
+        message?: string;
+      };
+      // FastAPI 422 returns detail as a list of validator errors — flatten cleanly
+      let msg = '';
+      const detail = e.response?.data?.detail;
+      if (Array.isArray(detail)) {
+        msg = detail.map((d: { msg?: string; loc?: unknown[] }) =>
+          `${(d.loc || []).join('.')}: ${d.msg}`).join('; ');
+      } else if (typeof detail === 'string') {
+        msg = detail;
+      } else {
+        msg = e.message || 'Unknown error';
+      }
+      setTradeError(msg);
     } finally {
       setSubmitting(false);
     }
@@ -196,14 +217,15 @@ export default function Dashboard() {
 
         {/* SIDEBAR (RIGHT - 1 COL) */}
         <div className="space-y-6">
-          <TradeForm 
+          <TradeForm
             ticker={newTicker}
             price={newPrice}
             qty={newQty}
             submitting={submitting}
-            onTickerChange={setNewTicker}
-            onPriceChange={setNewPrice}
-            onQtyChange={setNewQty}
+            error={tradeError}
+            onTickerChange={(v) => { setNewTicker(v); setTradeError(null); }}
+            onPriceChange={(v) => { setNewPrice(v); setTradeError(null); }}
+            onQtyChange={(v) => { setNewQty(v); setTradeError(null); }}
             onSubmit={handleAddTrade}
           />
           

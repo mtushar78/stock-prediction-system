@@ -5,7 +5,7 @@ Professional full-stack architecture for stock analysis and portfolio management
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import List, Optional, Dict
 from contextlib import asynccontextmanager
 import os
@@ -51,6 +51,28 @@ class Trade(BaseModel):
     quantity: int
     date: Optional[str] = None
     notes: Optional[str] = ""
+
+    @field_validator('ticker')
+    @classmethod
+    def _ticker_nonempty(cls, v: str) -> str:
+        v = (v or "").strip().upper()
+        if not v or not v.replace("_", "").isalnum():
+            raise ValueError("ticker must be non-empty alphanumeric")
+        return v
+
+    @field_validator('buy_price')
+    @classmethod
+    def _price_positive(cls, v: float) -> float:
+        if v is None or v <= 0:
+            raise ValueError("buy_price must be greater than 0")
+        return float(v)
+
+    @field_validator('quantity')
+    @classmethod
+    def _qty_positive(cls, v: int) -> int:
+        if v is None or v <= 0:
+            raise ValueError("quantity must be a positive integer")
+        return int(v)
 
 class BudgetBuyRequest(BaseModel):
     ticker: str

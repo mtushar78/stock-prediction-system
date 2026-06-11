@@ -48,13 +48,15 @@ function getV6Breakdown(signal: Signal): V6Component[] {
   const sm = d.smart_money;
   const vwap = d.vwap_proximity;
   const rr = d.rr;
+  const coil = d.pre_breakout_coil;
+  const le = d.late_entry;
 
   return [
     {
       name: 'Graduated RVOL',
       points: rvol?.points ?? 0,
-      maxPts: '60',
-      detail: `RVOL = ${rvol?.value ?? 0}x (≥4→60, ≥2.5→50, ≥2→30, ≥1.5→15)`,
+      maxPts: '40',
+      detail: `RVOL = ${rvol?.value ?? 0}x (v7 caps: ≥4→40, ≥2.5→32, ≥2→22, ≥1.5→12)`,
     },
     {
       name: 'Quiet Accumulation (5D)',
@@ -101,26 +103,44 @@ function getV6Breakdown(signal: Signal): V6Component[] {
     {
       name: 'Price Squeeze (BB)',
       points: pt?.score ?? 0,
-      maxPts: '15',
+      maxPts: '20',
       detail: pt?.ratio != null ? `BB width ${(pt.ratio * 100).toFixed(0)}% of avg${pt.squeeze ? ' — SQUEEZE' : ''}` : 'N/A',
     },
     {
       name: 'Buying Streak',
       points: cg?.score ?? 0,
-      maxPts: '20',
-      detail: `${cg?.consecutive_days ?? 0} consecutive green candles with above-avg volume`,
+      maxPts: '10',
+      detail: `${cg?.consecutive_days ?? 0} consecutive green candles with above-avg volume (v7 cap: lagging indicator)`,
     },
     {
       name: 'Smart Money',
       points: sm?.score ?? 0,
-      maxPts: '15',
-      detail: `Divergence = ${sm?.divergence_value?.toFixed(3) ?? '0'} (big vol up, small vol down)`,
+      maxPts: '10',
+      detail: `Divergence = ${sm?.divergence_value?.toFixed(3) ?? '0'} (v7 cap: high-vol-up vs low-vol-down)`,
     },
     {
       name: 'VWAP Proximity',
       points: vwap?.score ?? 0,
       maxPts: '10',
       detail: vwap?.distance_pct != null ? `${vwap.distance_pct.toFixed(1)}% from 5D VWAP${vwap.near_vwap ? ' — NEAR' : ''}` : 'N/A',
+    },
+    {
+      name: 'Pre-Breakout Coil (v7)',
+      points: coil?.score ?? 0,
+      maxPts: '25',
+      detail: coil
+        ? `10d range ${coil.range_pct?.toFixed(1) ?? '-'}%, ATR ${coil.atr_contracting ? 'contracting' : 'stable'} — leading indicator`
+        : 'N/A',
+    },
+    {
+      name: 'Late-Entry Penalty (v7)',
+      points: le?.score ?? 0,
+      maxPts: '0',
+      detail: le
+        ? (le.flags && le.flags.length > 0
+            ? `Already extended: ${le.flags.join('; ')}`
+            : `5d ret ${le.return_5d_pct ?? '-'}%, SMA dist ${le.sma_distance_pct ?? '-'}% — no penalty`)
+        : 'N/A',
     },
     {
       name: 'Reward:Risk Ratio',
@@ -145,7 +165,7 @@ export default function SignalDetailModal({ signal, onClose }: SignalDetailModal
         <div className="flex items-center justify-between mb-4 border-b border-gray-700 pb-3">
           <div>
             <h3 className="text-lg font-bold text-green-400">{signal.Ticker}</h3>
-            <div className="text-xs text-gray-500">v6 Scoring Engine</div>
+            <div className="text-xs text-gray-500">v7 Scoring Engine</div>
           </div>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-2xl font-bold">
             ×
@@ -233,7 +253,7 @@ export default function SignalDetailModal({ signal, onClose }: SignalDetailModal
 
           {/* v5 Score Breakdown */}
           <div className="bg-purple-900/20 border border-purple-700 p-4 rounded">
-            <div className="text-xs font-bold text-purple-400 mb-3">🧮 v6 Score Breakdown ({breakdown.length} Components)</div>
+            <div className="text-xs font-bold text-purple-400 mb-3">🧮 v7 Score Breakdown ({breakdown.length} Components)</div>
             {hasBreakdown ? (
               <div className="space-y-1 text-xs">
                 {breakdown.map((comp, i) => (
@@ -348,10 +368,10 @@ export default function SignalDetailModal({ signal, onClose }: SignalDetailModal
                 <span className="text-white">{(signal.AvgVolume20 || 0).toLocaleString()}</span>
               </div>
               <div className="text-gray-600 mt-2 italic text-xs">
-                {signal.RVOL >= 4.0 ? '🔥 Extreme volume — highest tier (+60 pts)' :
-                 signal.RVOL >= 2.5 ? '⚡ Very high volume (+50 pts)' :
-                 signal.RVOL >= 2.0 ? '📈 High volume (+30 pts)' :
-                 signal.RVOL >= 1.5 ? '📊 Elevated volume (+15 pts)' :
+                {signal.RVOL >= 4.0 ? '🔥 Extreme volume — v7 cap (+40 pts) — often LATE' :
+                 signal.RVOL >= 2.5 ? '⚡ Very high volume (+32 pts)' :
+                 signal.RVOL >= 2.0 ? '📈 High volume (+22 pts)' :
+                 signal.RVOL >= 1.5 ? '📊 Elevated volume (+12 pts)' :
                  '💤 Normal volume (0 pts)'}
               </div>
             </div>
