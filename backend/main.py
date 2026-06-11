@@ -542,6 +542,15 @@ def get_sniper_signals():
             for col in numeric_columns:
                 if col in df.columns:
                     df[col] = df[col].fillna(0)
+
+            # v7.1.2: SQLite stores Python bools as ints — round-trip them
+            # back to True/False so the frontend JSX conditionals
+            # (`{sig.IsFreshEarly && ...}`) don't render a literal "0".
+            for col in ('is_fresh_buy', 'is_fresh_early'):
+                if col in df.columns:
+                    df[col] = df[col].apply(
+                        lambda x: bool(x) if x is not None and not (isinstance(x, float) and pd.isna(x)) else False
+                    )
             
             logger.info(f"✅ Processed NaN values successfully")
             

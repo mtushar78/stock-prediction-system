@@ -35,6 +35,10 @@ export default function Dashboard() {
   const [newPrice, setNewPrice] = useState('');
   const [newQty, setNewQty] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [tickers, setTickers] = useState<string[]>([]);
+  const [priceLoading, setPriceLoading] = useState(false);
+  const [priceSource, setPriceSource] = useState<'auto' | 'manual' | null>(null);
+  const [priceFetchError, setPriceFetchError] = useState<string | null>(null);
   
   // Modal State
   const [activeModal, setActiveModal] = useState<number | null>(null);
@@ -88,6 +92,52 @@ export default function Dashboard() {
   // Trade form error message (inline, not alert)
   const [tradeError, setTradeError] = useState<string | null>(null);
 
+  // Load the full ticker list once for autocomplete
+  useEffect(() => {
+    let cancelled = false;
+    axios.get<string[]>(`${API_URL}/api/tickers`)
+      .then((res) => { if (!cancelled) setTickers(res.data || []); })
+      .catch(() => { /* non-fatal */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Auto-fetch last close when ticker is set to a valid symbol.
+  // Debounced 250 ms so typing doesn't fire a request per keystroke.
+  useEffect(() => {
+    const ticker = newTicker.trim().toUpperCase();
+    if (!ticker) { setPriceSource(null); setPriceFetchError(null); return; }
+    // Only auto-fetch if the symbol exists in the loaded list
+    // (so typing partial chars doesn't fire requests).
+    if (tickers.length > 0 && !tickers.includes(ticker)) return;
+    // If user is in the middle of manually editing the price, don't overwrite
+    if (priceSource === 'manual') return;
+
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      setPriceLoading(true);
+      setPriceFetchError(null);
+      axios.get<Array<{ close: number }>>(`${API_URL}/api/price-history/${ticker}`)
+        .then((res) => {
+          if (cancelled) return;
+          const lastClose = res.data?.[0]?.close;
+          if (typeof lastClose === 'number' && lastClose > 0) {
+            setNewPrice(String(lastClose));
+            setPriceSource('auto');
+          } else {
+            setPriceFetchError('no recent close');
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setPriceFetchError('fetch failed');
+        })
+        .finally(() => { if (!cancelled) setPriceLoading(false); });
+    }, 250);
+
+    return () => { cancelled = true; clearTimeout(handle); };
+    // priceSource intentionally excluded — we only re-fetch on ticker / list change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newTicker, tickers]);
+
   // Handle New Trade
   const handleAddTrade = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -111,6 +161,7 @@ export default function Dashboard() {
         ticker, buy_price: price, quantity: qty,
       });
       setNewTicker(''); setNewPrice(''); setNewQty('');
+      setPriceSource(null); setPriceFetchError(null);
       setTradeError(null);
       fetchData();
     } catch (err: unknown) {
@@ -223,8 +274,23 @@ export default function Dashboard() {
             qty={newQty}
             submitting={submitting}
             error={tradeError}
-            onTickerChange={(v) => { setNewTicker(v); setTradeError(null); }}
-            onPriceChange={(v) => { setNewPrice(v); setTradeError(null); }}
+            tickers={tickers}
+            priceLoading={priceLoading}
+            priceSource={priceSource}
+            priceFetchError={priceFetchError}
+            onTickerChange={(v) => {
+              setNewTicker(v);
+              // Clear any pending error and reset the price source so a fresh
+              // auto-fetch can run when the user picks a new symbol.
+              setTradeError(null);
+              setPriceSource(null);
+              setNewPrice('');
+            }}
+            onPriceChange={(v) => {
+              setNewPrice(v);
+              setTradeError(null);
+              setPriceSource('manual'); // user is overriding; don't auto-overwrite
+            }}
             onQtyChange={(v) => { setNewQty(v); setTradeError(null); }}
             onSubmit={handleAddTrade}
           />

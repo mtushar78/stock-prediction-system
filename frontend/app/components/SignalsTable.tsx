@@ -160,13 +160,14 @@ export default function SignalsTable({
                 <td className="py-2 pr-4 font-bold text-green-400 whitespace-nowrap overflow-hidden">
                   <div className="flex items-center gap-1.5">
                     <span className="truncate">{sig.Ticker}</span>
-                    {sig.IsFreshEarly && (
+                    {/* !! coerces (so an int 0 from the API never renders as text "0") */}
+                    {!!sig.IsFreshEarly && (
                       <span title="FRESH — first day this EARLY signal fired (yesterday was not EARLY). Highest quality entry."
                             className="text-[9px] bg-orange-600 text-white px-1 py-0.5 rounded font-bold shrink-0">
                         FRESH
                       </span>
                     )}
-                    {sig.IsFreshBuy && !sig.IsFreshEarly && (
+                    {!!sig.IsFreshBuy && !sig.IsFreshEarly && (
                       <span title="FRESH — first day this BUY signal fired (yesterday was below BUY threshold)."
                             className="text-[9px] bg-green-600 text-white px-1 py-0.5 rounded font-bold shrink-0">
                         FRESH

@@ -341,7 +341,7 @@ export default function SignalDetailModal({ signal, onClose }: SignalDetailModal
                   <span className="text-gray-500">Reasons: </span>{signal.EarlyReasons.join(', ')}
                 </div>
               )}
-              {(signal.IsFreshEarly || signal.IsFreshBuy) && (
+              {(!!signal.IsFreshEarly || !!signal.IsFreshBuy) && (
                 <div className="mt-2 text-xs text-orange-300 font-bold">
                   ⭐ FRESH — first day this signal fired (yesterday was {signal.PrevEarlySignal || signal.PrevSignal || 'lower'})
                 </div>
