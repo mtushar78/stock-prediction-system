@@ -1,5 +1,6 @@
 import { Signal } from '../types';
-import { AlertCircle, Info } from 'lucide-react';
+import { AlertCircle, Info, Flame, Eye } from 'lucide-react';
+import { useState } from 'react';
 
 interface SignalsTableProps {
   signals: Signal[];
@@ -10,17 +11,62 @@ interface SignalsTableProps {
   activeModalIndex: number | null;
 }
 
-export default function SignalsTable({ 
-  signals, 
-  loading, 
-  onVolumeClick, 
+type ViewTab = 'ALL' | 'EARLY' | 'BUY' | 'FRESH';
+
+export default function SignalsTable({
+  signals,
+  loading,
+  onVolumeClick,
   onInfoClick,
   onPriceInfoClick,
-  activeModalIndex 
+  activeModalIndex,
 }: SignalsTableProps) {
+  const [tab, setTab] = useState<ViewTab>('ALL');
+
+  // v7: filter by tab
+  const filtered = signals.filter((s) => {
+    if (tab === 'EARLY') return s.EarlySignal === 'EARLY' || s.EarlySignal === 'WATCH';
+    if (tab === 'BUY') return s.Signal === 'BUY';
+    if (tab === 'FRESH') return s.IsFreshBuy || s.IsFreshEarly;
+    return true;
+  });
+
+  // v7: sort by SignalStrength desc when available, else Score desc
+  const sorted = [...filtered].sort((a, b) => {
+    const av = a.SignalStrength ?? a.Score ?? 0;
+    const bv = b.SignalStrength ?? b.Score ?? 0;
+    return bv - av;
+  });
+
+  const countEarly = signals.filter((s) => s.EarlySignal === 'EARLY' || s.EarlySignal === 'WATCH').length;
+  const countBuy = signals.filter((s) => s.Signal === 'BUY').length;
+  const countFresh = signals.filter((s) => s.IsFreshBuy || s.IsFreshEarly).length;
+
   return (
     <section className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-      <h2 className="text-xl font-bold mb-4 text-green-300">🔭 Sniper Scope (Buy Signals)</h2>
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <h2 className="text-xl font-bold text-green-300">🔭 Sniper Scope (v7)</h2>
+        <div className="flex gap-1 text-xs">
+          <button
+            onClick={() => setTab('ALL')}
+            className={`px-3 py-1 rounded ${tab === 'ALL' ? 'bg-emerald-700 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+          >ALL ({signals.length})</button>
+          <button
+            onClick={() => setTab('EARLY')}
+            className={`px-3 py-1 rounded flex items-center gap-1 ${tab === 'EARLY' ? 'bg-orange-700 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+            title="Pre-breakout setups detected before the move"
+          ><Flame className="w-3 h-3" /> EARLY ({countEarly})</button>
+          <button
+            onClick={() => setTab('BUY')}
+            className={`px-3 py-1 rounded ${tab === 'BUY' ? 'bg-green-700 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+          >BUY ({countBuy})</button>
+          <button
+            onClick={() => setTab('FRESH')}
+            className={`px-3 py-1 rounded flex items-center gap-1 ${tab === 'FRESH' ? 'bg-yellow-700 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+            title="Day-1 signals (yesterday was NOT BUY/EARLY)"
+          ><Eye className="w-3 h-3" /> FRESH ({countFresh})</button>
+        </div>
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead>
@@ -32,14 +78,33 @@ export default function SignalsTable({
               <th className="pb-3 pr-4">CURRENT VOL</th>
               <th className="pb-3 pr-4">PROJECTED VOL</th>
               <th className="pb-3 pr-4">RVOL</th>
+              <th className="pb-3 pr-4">EARLY</th>
               <th className="pb-3 pr-4">SCORE</th>
               <th className="pb-3">REASON</th>
             </tr>
           </thead>
           <tbody>
-            {signals.map((sig, i) => (
-              <tr key={i} className="border-b border-gray-700/50 hover:bg-gray-700/30 transition">
-                <td className="py-3 pr-4 font-bold text-green-400">{sig.Ticker}</td>
+            {sorted.map((sig, i) => (
+              <tr key={i} className={`border-b border-gray-700/50 hover:bg-gray-700/30 transition ${
+                sig.IsFreshEarly ? 'bg-orange-900/10' : sig.IsFreshBuy ? 'bg-green-900/10' : ''
+              }`}>
+                <td className="py-3 pr-4 font-bold text-green-400">
+                  <div className="flex items-center gap-1">
+                    <span>{sig.Ticker}</span>
+                    {sig.IsFreshEarly && (
+                      <span title="Fresh EARLY signal — first-day pre-breakout setup"
+                            className="text-[10px] bg-orange-700 text-white px-1.5 py-0.5 rounded font-bold">
+                        FRESH
+                      </span>
+                    )}
+                    {sig.IsFreshBuy && !sig.IsFreshEarly && (
+                      <span title="Fresh BUY signal — first day above BUY threshold"
+                            className="text-[10px] bg-green-700 text-white px-1.5 py-0.5 rounded font-bold">
+                        NEW
+                      </span>
+                    )}
+                  </div>
+                </td>
                 <td className="py-3 pr-4">
                   <div className="flex items-center gap-2">
                     <span>{sig.Price}</span>
@@ -84,9 +149,23 @@ export default function SignalsTable({
                 </td>
                 <td className="py-3 pr-4 font-bold text-yellow-400">{sig.RVOL}x</td>
                 <td className="py-3 pr-4">
+                  {typeof sig.EarlyScore === 'number' ? (
+                    <span
+                      title={sig.EarlyReasons && sig.EarlyReasons.length > 0 ? sig.EarlyReasons.join(', ') : ''}
+                      className={`px-2 py-1 rounded text-xs font-bold ${
+                        sig.EarlySignal === 'EARLY' ? 'bg-orange-700 text-white' :
+                        sig.EarlySignal === 'WATCH' ? 'bg-amber-900 text-amber-200' :
+                        'bg-gray-700 text-gray-500'
+                      }`}>
+                      {sig.EarlyScore}
+                      {sig.EarlySignal === 'EARLY' && <span className="ml-1">FIRE</span>}
+                    </span>
+                  ) : <span className="text-gray-600">-</span>}
+                </td>
+                <td className="py-3 pr-4">
                   <span className={`px-2 py-1 rounded text-xs font-bold ${
-                    sig.Score >= 55 ? 'bg-green-900 text-green-300' :
-                    sig.Score >= 30 ? 'bg-yellow-900 text-yellow-300' :
+                    sig.Score >= 50 ? 'bg-green-900 text-green-300' :
+                    sig.Score >= 28 ? 'bg-yellow-900 text-yellow-300' :
                     'bg-gray-700 text-gray-300'
                   }`}>
                     {sig.Score}
@@ -105,9 +184,13 @@ export default function SignalsTable({
                 </td>
               </tr>
             ))}
-            {signals.length === 0 && (
-              <tr><td colSpan={9} className="py-6 text-center text-gray-600">
-                {loading ? 'Loading signals...' : 'No signals today. Market is sleeping.'}
+            {sorted.length === 0 && (
+              <tr><td colSpan={10} className="py-6 text-center text-gray-600">
+                {loading ? 'Loading signals...' :
+                  tab === 'EARLY' ? 'No EARLY/WATCH setups right now.' :
+                  tab === 'BUY'   ? 'No BUY signals today.' :
+                  tab === 'FRESH' ? 'No fresh (day-1) signals today.' :
+                                    'No signals today. Market is sleeping.'}
               </td></tr>
             )}
           </tbody>

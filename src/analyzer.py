@@ -7,6 +7,16 @@ v5: Graduated scoring, multi-day accumulation, OBV divergence,
 v6: Enhanced syndicate detection — price tightening, consecutive green
     buying, smart money divergence, VWAP proximity, improved volume
     projection (U-shaped model), extended accumulation window
+v7: Early-detection overhaul
+    - NEW: EarlyScore (parallel 5-component score for pre-breakout entries)
+    - NEW: Late-entry penalty (penalises stocks already extended)
+    - NEW: Pre-Breakout Coil component (tight range + ATR contraction)
+    - Capped RVOL ceiling (prevents breakout-day dominance)
+    - Softened SMA penalty band, added over-extension penalty
+    - Demoted lagging confirmation components (consec_green, smart_money)
+    - Loosened thresholds on leading indicators (BB squeeze, OBV, quiet accum)
+    - BUY threshold lowered to 50 (with new rebalanced weights)
+    - is_fresh_buy / is_fresh_early flags to distinguish day-1 signals
 """
 
 import pandas as pd
@@ -39,12 +49,14 @@ class StockAnalyzer:
         self.low_cap_threshold = 50  # Paid-up capital < 50 Cr
         self.high_cap_threshold = 500  # Paid-up capital > 500 Cr (Penny trap)
 
-        # v5: Graduated RVOL thresholds (replaces hard 2.5x cliff)
+        # v7: Capped RVOL tiers — extreme volume usually means the move
+        # has ALREADY happened. We want to detect setups, not chase spikes.
+        # The late-entry penalty + EarlyScore handle the timing edge.
         self.rvol_tiers = [
-            (4.0, 60),   # Extreme volume
-            (2.5, 50),   # Strong accumulation
-            (2.0, 30),   # Significant interest
-            (1.5, 15),   # Elevated interest
+            (4.0, 40),   # Extreme — capped (was 60)
+            (2.5, 32),   # Strong accumulation (was 50)
+            (2.0, 22),   # Significant interest (was 30)
+            (1.5, 12),   # Elevated interest (was 15)
         ]
         # Legacy threshold kept for compatibility
         self.rvol_threshold = 1.5  # v5: lowered from 2.5 (graduated scoring handles tiers)
@@ -484,14 +496,20 @@ class StockAnalyzer:
         cum_rvol = float(recent['rvol'].sum())
 
         pts = 0
-        if price_range_pct < 5.0 and cum_rvol > 10.0:
-            pts = 20   # Very quiet + very high volume — textbook accumulation
-        elif price_range_pct < 8.0 and cum_rvol > 12.0:
-            pts = 15   # Moderate range but extremely high volume — likely accumulation
-        elif price_range_pct < 5.0 and cum_rvol > 7.0:
-            pts = 10   # Quiet with moderate volume
+        # v7: Loosened — true stealth accumulation has RVOL ≈ 0.8–1.4, not 2.0+.
+        # New tiers reward TIGHT price with AT-LEAST-AVERAGE volume.
+        if price_range_pct < 4.0 and cum_rvol > 4.0:
+            pts = 20   # Very tight + at-least-average volume (stealth)
+        elif price_range_pct < 5.0 and cum_rvol > 10.0:
+            pts = 20   # Original: very quiet + very high volume
+        elif price_range_pct < 5.0 and cum_rvol > 4.0:
+            pts = 15   # NEW: tight + average volume
+        elif price_range_pct < 6.0 and cum_rvol > 5.0:
+            pts = 12   # NEW: somewhat tight + above-avg volume
+        elif price_range_pct < 8.0 and cum_rvol > 8.0:
+            pts = 10   # Moderate range + decent volume
         elif price_range_pct < 10.0 and cum_rvol > 10.0:
-            pts = 5    # Somewhat contained range with strong volume
+            pts = 5    # Loose range + strong volume
 
         return {'score': pts, 'price_range_pct': round(price_range_pct, 2), 'cum_rvol': round(cum_rvol, 2)}
 
@@ -507,12 +525,17 @@ class StockAnalyzer:
         return {'score': 10 if passed else 0, 'cpr': round(float(cpr), 2), 'passed': passed}
 
     def _obv_divergence(self, row: pd.Series) -> Dict:
-        """v5: Bullish OBV divergence — OBV rising while price flat/falling."""
+        """v5/v7: Bullish OBV divergence — OBV rising while price flat/falling.
+
+        v7: Allow a tiny positive price slope to count as "flat" so accumulation
+        with subtle upward drift (very common on DSE) still fires.
+        """
         obv_slope = row.get('obv_slope_20', 0)
         price_slope = row.get('price_slope_20', 0)
         if pd.isna(obv_slope) or pd.isna(price_slope):
             return {'score': 0, 'divergence': False, 'obv_slope': 0, 'price_slope': 0}
-        divergence = obv_slope > 0 and price_slope <= 0
+        # v7: price_slope <= 0.05 treated as flat-ish
+        divergence = obv_slope > 0 and price_slope <= 0.05
         return {
             'score': 15 if divergence else 0,
             'divergence': divergence,
@@ -535,14 +558,15 @@ class StockAnalyzer:
             return {'score': 0, 'squeeze': False, 'bb_width': 0, 'bb_avg': 0}
 
         ratio = float(bb_width / bb_avg)
-        squeeze = ratio < 0.6
-        tight = ratio < 0.8
+        # v7: Loosened thresholds. Real coils on DSE rarely compress below 0.6.
+        squeeze = ratio < 0.75
+        tight = ratio < 0.90
 
         pts = 0
         if squeeze:
-            pts = 15  # Strong squeeze — breakout imminent
+            pts = 20  # Strong squeeze — breakout imminent (was 15)
         elif tight:
-            pts = 5   # Moderate tightening
+            pts = 8   # Moderate tightening (was 5)
 
         return {
             'score': pts,
@@ -563,10 +587,12 @@ class StockAnalyzer:
             consec = 0
 
         pts = 0
+        # v7: Capped — this is a LAGGING confirmation indicator. By the time
+        # we have 5+ consecutive green volume days, the move is well underway.
         if consec >= 5:
-            pts = 20  # Very strong sustained buying
+            pts = 10  # was 20
         elif consec >= 3:
-            pts = 10  # Confirmed buying pattern
+            pts = 6   # was 10
 
         return {'score': pts, 'consecutive_days': consec}
 
@@ -581,11 +607,14 @@ class StockAnalyzer:
         if pd.isna(sm_score):
             sm_score = 0
 
+        # v7: Capped — this indicator mechanically reads "buying" after any
+        # multi-day breakout because the up-days ARE the high-vol days.
+        # Lagging confirmation; smaller weight.
         pts = 0
         if sm_score > 0.05:
-            pts = 15  # Clear smart money accumulation
+            pts = 10  # was 15
         elif sm_score > 0.02:
-            pts = 8   # Moderate signal
+            pts = 5   # was 8
 
         return {'score': pts, 'divergence_value': round(sm_score, 4)}
 
@@ -630,18 +659,27 @@ class StockAnalyzer:
                         if pd.notna(recent.iloc[i].get('sma_200')))):
                 crossover = True
 
+        # v7: Softened the penalty band (real accumulation often happens just
+        # below SMA) and added an over-extension band (the SMA bonus shouldn't
+        # be the same for +5% above and +50% above).
         pts = 0
-        if distance_pct > 0:       # Above SMA
-            pts = 10
-        elif distance_pct >= -3:    # 0-3% below — near crossover
+        if distance_pct > 35:        # Wildly over-extended — late entry
+            pts = -10
+        elif distance_pct > 25:      # Over-extended
             pts = -5
-        elif distance_pct >= -10:   # 3-10% below
-            pts = -25
-        else:                       # >10% below
+        elif distance_pct > 15:      # Mildly extended — no bonus, no penalty
+            pts = 0
+        elif distance_pct > 0:       # Healthy above SMA
+            pts = 10
+        elif distance_pct >= -3:     # Reclaim setup — slight BONUS (was -5)
+            pts = 5
+        elif distance_pct >= -10:    # 3-10% below — softer penalty (was -25)
+            pts = -10
+        else:                        # >10% below — unchanged hard penalty
             pts = -50
 
         if crossover:
-            pts += 15  # Fresh trend reversal bonus
+            pts += 20  # Fresh trend reversal bonus (was 15)
 
         return {'score': pts, 'crossover': crossover, 'distance_pct': round(distance_pct, 2)}
 
@@ -663,25 +701,283 @@ class StockAnalyzer:
 
         return {'score': pts, 'ratio': round(institutional_ratio * 100, 1), 'available': True}
 
+    # ===== v7 NEW SCORING COMPONENTS =====
+
+    def _late_entry_penalty(self, row: pd.Series, df: pd.DataFrame) -> Dict:
+        """v7: Penalise stocks that have already extended.
+
+        The single biggest gap in v6 was no penalty for late entries —
+        a stock that had rallied 35% in a week scored the same as one
+        that was just emerging from a base.
+        """
+        pts = 0
+        flags = []
+
+        # 5-day return penalty
+        ret_5d = None
+        if len(df) >= 6:
+            close_5d_ago = df.iloc[-6]['close']
+            if pd.notna(close_5d_ago) and close_5d_ago > 0:
+                ret_5d = float((row['close'] - close_5d_ago) / close_5d_ago * 100)
+                if ret_5d > 25:
+                    pts -= 25; flags.append(f"+{ret_5d:.0f}% in 5d (extreme)")
+                elif ret_5d > 15:
+                    pts -= 15; flags.append(f"+{ret_5d:.0f}% in 5d")
+                elif ret_5d > 10:
+                    pts -= 8;  flags.append(f"+{ret_5d:.0f}% in 5d (mild)")
+
+        # SMA over-extension penalty (separate from SMA bonus tier)
+        sma = row.get('sma_200')
+        dist_sma = None
+        if pd.notna(sma) and sma > 0:
+            dist_sma = float((row['close'] - sma) / sma * 100)
+            if dist_sma > 40:
+                pts -= 15; flags.append(f"{dist_sma:.0f}% above SMA (extreme)")
+            elif dist_sma > 30:
+                pts -= 8;  flags.append(f"{dist_sma:.0f}% above SMA")
+
+        # Runaway candle: today's range > 2.5x ATR-14 AND today closed up >5%
+        atr = row.get('ATR')
+        if pd.notna(atr) and atr > 0:
+            today_range = float(row['high'] - row['low'])
+            pc = row.get('price_change_pct')
+            if pd.notna(pc) and pc > 5 and today_range > 2.5 * atr:
+                pts -= 8; flags.append("Runaway candle (range > 2.5x ATR)")
+
+        return {
+            'score': pts,
+            'return_5d_pct': round(ret_5d, 2) if ret_5d is not None else None,
+            'sma_distance_pct': round(dist_sma, 2) if dist_sma is not None else None,
+            'flags': flags,
+        }
+
+    def _pre_breakout_coil(self, row: pd.Series, df: pd.DataFrame) -> Dict:
+        """v7: Tight 10-day base + ATR contraction = setup ready to break.
+
+        This is the *leading* indicator the old engine lacked. Fires during
+        the coil — before the volume spike — so the BUY signal arrives BEFORE
+        the move, not after.
+        """
+        if len(df) < 20:
+            return {'score': 0, 'range_pct': None, 'atr_contracting': False}
+
+        recent_10 = df.tail(10)
+        avg_close = float(recent_10['close'].mean())
+        if avg_close == 0:
+            return {'score': 0, 'range_pct': None, 'atr_contracting': False}
+
+        range_pct = float((recent_10['close'].max() - recent_10['close'].min()) / avg_close * 100)
+
+        atr_now = row.get('ATR')
+        atr_prior = df.iloc[-20].get('ATR') if 'ATR' in df.columns else None
+        atr_contracting = (pd.notna(atr_now) and pd.notna(atr_prior)
+                          and atr_prior > 0 and atr_now < 0.8 * atr_prior)
+
+        pts = 0
+        if range_pct < 5 and atr_contracting:
+            pts = 25  # Strong coil
+        elif range_pct < 6 and atr_contracting:
+            pts = 20
+        elif range_pct < 8 and atr_contracting:
+            pts = 15
+        elif range_pct < 6:
+            pts = 12  # Tight without explicit contraction
+        elif range_pct < 8:
+            pts = 8
+
+        return {
+            'score': pts,
+            'range_pct': round(range_pct, 2),
+            'atr_contracting': bool(atr_contracting),
+            'atr_now': round(float(atr_now), 3) if pd.notna(atr_now) else None,
+            'atr_prior': round(float(atr_prior), 3) if pd.notna(atr_prior) else None,
+        }
+
+    # ===== v7 EARLY SCORE — parallel pre-breakout detector =====
+
+    def calculate_early_score(self, row: pd.Series, df: pd.DataFrame) -> Dict:
+        """v7: 5-factor pre-breakout score (0-100).
+
+        Designed for one job: identify stocks about to break out of a tight
+        base on the FIRST tell day, BEFORE the explosive move. Independent of
+        the main score (which is a confirmation engine).
+
+        Components (max 100):
+          Tight Base       0-25  — 10d close range as % of price
+          Goldilocks Vol   0-25  — RVOL 1.8–3.0x sweet spot (NOT 5x+)
+          Closing Tell     0-20  — Green close + upper-70% CPR + > prev close
+          Near Resistance  0-15  — Within 2% of 10-day high
+          Not Extended    -10–15 — 5-day return < 8% rewarded, > 25% penalised
+
+        Signal tiers:
+          score >= 60 → EARLY  (act now)
+          score >= 40 → WATCH  (setting up, don't buy yet)
+          else        → NONE
+        """
+        if len(df) < 11:
+            return {'score': 0, 'raw_points': 0, 'signal': 'NONE',
+                    'reasons': [], 'components': {}}
+
+        components = {}
+        reasons = []
+        pts = 0
+
+        recent_10 = df.tail(10)
+        avg_close = float(recent_10['close'].mean()) if len(recent_10) > 0 else 0
+
+        # 1. Tight Base
+        tight_pts = 0
+        range_pct_10d = None
+        if avg_close > 0:
+            range_pct_10d = float(
+                (recent_10['close'].max() - recent_10['close'].min()) / avg_close * 100
+            )
+            if range_pct_10d < 4:
+                tight_pts = 25
+            elif range_pct_10d < 6:
+                tight_pts = 18
+            elif range_pct_10d < 8:
+                tight_pts = 10
+        pts += tight_pts
+        if tight_pts > 0:
+            reasons.append(f"Tight Base ({range_pct_10d:.1f}%/10d)")
+        components['tight_base'] = {
+            'points': tight_pts,
+            'range_pct_10d': round(range_pct_10d, 2) if range_pct_10d is not None else None,
+        }
+
+        # 2. Goldilocks Volume — sweet spot RVOL, NOT extreme
+        rvol = float(row.get('rvol', 0)) if pd.notna(row.get('rvol', 0)) else 0
+        if 1.8 <= rvol <= 3.0:
+            vol_pts = 25
+        elif 1.5 <= rvol < 1.8:
+            vol_pts = 18
+        elif 3.0 < rvol <= 4.0:
+            vol_pts = 12  # Borderline-late
+        elif 1.2 <= rvol < 1.5:
+            vol_pts = 8   # Mild interest
+        else:
+            vol_pts = 0   # Dead, or already exploded
+        pts += vol_pts
+        if vol_pts > 0:
+            reasons.append(f"Goldilocks Vol ({rvol:.1f}x)")
+        components['goldilocks_volume'] = {'points': vol_pts, 'rvol': round(rvol, 2)}
+
+        # 3. Closing Tell
+        close = float(row['close'])
+        open_p = float(row.get('open', close))
+        high = float(row.get('high', close))
+        low = float(row.get('low', close))
+        prev_close = float(df.iloc[-2]['close']) if len(df) >= 2 else close
+
+        is_green = close > open_p
+        day_range = high - low
+        cpr = (close - low) / day_range if day_range > 0 else 0.5
+        above_prev = close > prev_close
+
+        if is_green and cpr > 0.6 and above_prev:
+            tell_pts = 20
+        elif is_green and above_prev:
+            tell_pts = 10
+        elif above_prev:
+            tell_pts = 5
+        else:
+            tell_pts = 0
+        pts += tell_pts
+        if tell_pts >= 10:
+            reasons.append("Strong Close")
+        components['closing_tell'] = {
+            'points': tell_pts, 'green': bool(is_green),
+            'cpr': round(float(cpr), 2), 'above_prev': bool(above_prev),
+        }
+
+        # 4. Near Resistance (testing the lid of the base)
+        high_10d = float(recent_10['high'].max()) if len(recent_10) > 0 else 0
+        res_pts = 0
+        dist_to_high = None
+        if high_10d > 0:
+            dist_to_high = float((high_10d - close) / high_10d * 100)
+            if dist_to_high <= 2:
+                res_pts = 15
+            elif dist_to_high <= 4:
+                res_pts = 8
+        pts += res_pts
+        if res_pts > 0:
+            reasons.append("Testing 10d High")
+        components['near_resistance'] = {
+            'points': res_pts,
+            'high_10d': round(high_10d, 2),
+            'distance_pct': round(dist_to_high, 2) if dist_to_high is not None else None,
+        }
+
+        # 5. Not Extended (negative if already up big)
+        ret_5d = None
+        if len(df) >= 6:
+            close_5d_ago = float(df.iloc[-6]['close'])
+            if close_5d_ago > 0:
+                ret_5d = (close - close_5d_ago) / close_5d_ago * 100
+
+        if ret_5d is None:
+            ext_pts = 0
+        elif ret_5d < 8:
+            ext_pts = 15
+        elif ret_5d < 15:
+            ext_pts = 8
+        elif ret_5d < 25:
+            ext_pts = 0
+        else:
+            ext_pts = -10
+        pts += ext_pts
+        if ext_pts > 0:
+            reasons.append("Not Extended")
+        elif ext_pts < 0:
+            reasons.append(f"Already +{ret_5d:.0f}% in 5d")
+        components['not_extended'] = {
+            'points': ext_pts,
+            'return_5d_pct': round(ret_5d, 2) if ret_5d is not None else None,
+        }
+
+        # Score & signal tier
+        final_score = max(0, min(100, pts))
+        # v7: EARLY tier requires an actual volume tell (vol_pts >= 12, i.e.
+        # RVOL >= 1.5x). Without a volume signal, a tight base is just a
+        # quiet stock — it can still WATCH, but it shouldn't say "buy now".
+        if final_score >= 60 and vol_pts >= 12:
+            signal = 'EARLY'
+        elif final_score >= 40:
+            signal = 'WATCH'
+        else:
+            signal = 'NONE'
+
+        return {
+            'score': final_score,
+            'raw_points': pts,
+            'signal': signal,
+            'reasons': reasons,
+            'components': components,
+        }
+
     def calculate_score(self, row: pd.Series, df: pd.DataFrame,
                        paid_up_capital: Optional[float] = None) -> Dict:
         """
-        v6 SCORING ENGINE — Enhanced multi-factor syndicate detection.
+        v7 SCORING ENGINE — Re-weighted multi-factor with late-entry penalty.
 
-        Components (max raw = 275, normalized to 0-100%):
-        - Graduated RVOL:           0-60 pts
+        Positive components (max raw = 280 with low-float, 260 without):
+        - Graduated RVOL:           0-40 pts   (capped from 60)
         - Quiet Accumulation (5D):  0-20 pts
-        - Multi-Day Accumulation:   0-45 pts  (extended 10-day window)
+        - Multi-Day Accumulation:   0-45 pts
         - Volume Acceleration:      0-10 pts
-        - SMA Position (graduated): -50 to +25 pts
+        - SMA Position:             -50 to +30 pts  (softened band, +20 crossover)
         - OBV Divergence:           0-15 pts
         - Close Position Ratio:     0-10 pts
         - Low Float:                0-20 pts
-        - RR Ratio (softened):      -10 to +10 pts
-        - Price Tightening (BB):    0-15 pts
-        - Consecutive Green+Vol:    0-20 pts
-        - Smart Money Divergence:   0-15 pts
+        - RR Ratio:                 -10 to +10 pts
+        - Price Tightening (BB):    0-20 pts   (was 15)
+        - Consecutive Green+Vol:    0-10 pts   (capped, lagging)
+        - Smart Money Divergence:   0-10 pts   (capped, lagging)
         - VWAP Proximity:           0-10 pts
+        - Pre-Breakout Coil (v7):   0-25 pts   (NEW — leading)
+        - Late-Entry Penalty (v7): -48 to 0    (NEW — applied to raw_score, not max)
         """
         raw_score = 0
         reasons = []
@@ -788,6 +1084,24 @@ class StockAnalyzer:
 
         # ===== END v6 =====
 
+        # ===== v7 NEW COMPONENTS =====
+
+        # 14. Pre-Breakout Coil (LEADING indicator)
+        coil = self._pre_breakout_coil(row, df)
+        raw_score += coil['score']
+        if coil['score'] > 0:
+            reasons.append(f"Pre-Breakout Coil ({coil['range_pct']}%/10d)")
+        details['pre_breakout_coil'] = coil
+
+        # 15. Late-Entry Penalty (suppress already-extended chases)
+        le = self._late_entry_penalty(row, df)
+        raw_score += le['score']  # negative or zero
+        if le['score'] < 0:
+            reasons.append(f"Late entry ({le['score']} pts: {', '.join(le['flags'])})")
+        details['late_entry'] = le
+
+        # ===== END v7 =====
+
         # 14. Support / Resistance / RR (softened penalty)
         sr_levels = self.find_support_resistance(df, current_price)
         nearest_support = sr_levels['nearest_support']
@@ -818,9 +1132,14 @@ class StockAnalyzer:
 
         details['rr'] = {'ratio': rr_ratio}
 
-        # Dynamic denominator: reduce max when data-unavailable components can't fire
-        # v6 base max = 60+20+45+10+25+15+10+20+10 + 15+20+15+10 = 275
-        # (Institutional Flow removed — no data source on DSE)
+        # v7 denominator. Positive-only components:
+        #   40 (rvol cap) + 20 (quiet) + 45 (mda) + 10 (vol_accel) + 30 (sma+xover)
+        # + 15 (obv) + 10 (cpr) + 20 (low_float) + 10 (rr)
+        # + 20 (bb cap) + 10 (consec_green cap) + 10 (smart_money cap) + 10 (vwap)
+        # + 25 (pre_breakout_coil)
+        # = 275 with low_float, 255 without
+        # Late-entry penalty is negative-only and subtracts from raw_score
+        # without inflating the denominator.
         max_possible = 275
         if not low_float_available:
             max_possible -= 20   # Paid-up capital data not provided
@@ -840,16 +1159,20 @@ class StockAnalyzer:
     
     def generate_signal(self, score: int) -> str:
         """
-        Generate trading signal based on score
+        Generate trading signal based on score (v7 thresholds).
 
-        v6 thresholds (score is 0-100, percentage of max 290 raw):
-          >= 55: BUY  (multi-factor confirmation with v6 syndicate signals)
-          >= 30: WAIT (developing pattern worth watching)
-          <  30: IGNORE
+        v7 re-tuning: pre-breakout coil now contributes, RVOL is capped,
+        and the late-entry penalty actively suppresses already-extended
+        stocks. The BUY threshold drops slightly so legitimate early-stage
+        setups (which v6 buried at WAIT) surface as BUY.
+
+          >= 50: BUY     (was 55)
+          >= 28: WAIT    (was 30)
+          <  28: IGNORE
         """
-        if score >= 55:
+        if score >= 50:
             return 'BUY'
-        elif score >= 30:
+        elif score >= 28:
             return 'WAIT'
         else:
             return 'IGNORE'
@@ -869,17 +1192,17 @@ class StockAnalyzer:
         """
         try:
             # Get stock data
-            df = self.db.get_stock_data(ticker)
-            
-            if df.empty:
+            raw_df = self.db.get_stock_data(ticker)
+
+            if raw_df.empty:
                 return {
                     'ticker': ticker,
                     'status': 'error',
                     'message': 'No data available'
                 }
-            
-            # Calculate indicators
-            df = self.calculate_indicators(df)
+
+            # Calculate indicators (keep raw_df around for yesterday recompute)
+            df = self.calculate_indicators(raw_df)
             
             # Apply survival filters
             filter_result = self.apply_survival_filters(df, ticker)
@@ -923,9 +1246,32 @@ class StockAnalyzer:
             
             # Calculate score (pass df for support/resistance calculation)
             score_result = self.calculate_score(row, df, paid_up_capital)
-            
+
             # Generate signal
             signal = self.generate_signal(score_result['score'])
+
+            # v7: Parallel EarlyScore (leading pre-breakout detector)
+            early_result = self.calculate_early_score(row, df)
+
+            # v7: Yesterday's perspective for fresh-signal detection.
+            # Recompute indicators on history excluding today so the OBV/BB
+            # slopes are calculated as of yesterday.
+            prev_signal = None
+            prev_early_signal = None
+            if not analysis_date and len(raw_df) >= 21:
+                try:
+                    df_y = self.calculate_indicators(raw_df.iloc[:-1])
+                    if len(df_y) > 0:
+                        prev_row_y = df_y.iloc[-1]
+                        prev_score = self.calculate_score(prev_row_y, df_y, paid_up_capital)
+                        prev_signal = self.generate_signal(prev_score['score'])
+                        prev_early = self.calculate_early_score(prev_row_y, df_y)
+                        prev_early_signal = prev_early['signal']
+                except Exception as e:
+                    logger.debug(f"Fresh-signal recompute failed for {ticker}: {e}")
+
+            is_fresh_buy = bool(signal == 'BUY' and prev_signal != 'BUY')
+            is_fresh_early = bool(early_result['signal'] == 'EARLY' and prev_early_signal != 'EARLY')
             
             # Determine market status
             current_time = datetime.now(pytz.timezone('Asia/Dhaka'))
@@ -982,6 +1328,18 @@ class StockAnalyzer:
                 'trend_status': 'UPTREND' if (pd.notna(row['sma_200']) and row['close'] > row['sma_200']) else 'NEAR_SMA',
                 'raw_score': score_result.get('raw_score', 0),
                 'v5_details': self._sanitize_for_json(score_result.get('v5_details', {})),
+
+                # ===== v7 NEW FIELDS =====
+                'early_score': early_result['score'],
+                'early_signal': early_result['signal'],
+                'early_reasons': early_result['reasons'],
+                'early_components': self._sanitize_for_json(early_result.get('components', {})),
+                'is_fresh_buy': is_fresh_buy,
+                'is_fresh_early': is_fresh_early,
+                'prev_signal': prev_signal,
+                'prev_early_signal': prev_early_signal,
+                # Combined "best" score for sorting on the front-end
+                'signal_strength': max(score_result['score'], early_result['score']),
             }
             
             return result

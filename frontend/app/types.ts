@@ -24,6 +24,22 @@ export interface Signal {
   ATR?: number;
   TrendStatus?: string;  // 'UPTREND', 'NEAR_SMA', or 'DOWNTREND'
   RawScore?: number;  // v5: raw score before scaling
+  // v7 NEW FIELDS — EarlyScore (parallel pre-breakout detector)
+  EarlyScore?: number;
+  EarlySignal?: 'EARLY' | 'WATCH' | 'NONE' | string;
+  EarlyReasons?: string[];
+  EarlyComponents?: {
+    tight_base?: { points: number; range_pct_10d?: number };
+    goldilocks_volume?: { points: number; rvol?: number };
+    closing_tell?: { points: number; green?: boolean; cpr?: number; above_prev?: boolean };
+    near_resistance?: { points: number; high_10d?: number; distance_pct?: number };
+    not_extended?: { points: number; return_5d_pct?: number };
+  };
+  IsFreshBuy?: boolean;
+  IsFreshEarly?: boolean;
+  PrevSignal?: string | null;
+  PrevEarlySignal?: string | null;
+  SignalStrength?: number;  // max(Score, EarlyScore) for sorting
   // v6: per-component score breakdown
   v5_details?: {
     rvol?: { points: number; value: number };

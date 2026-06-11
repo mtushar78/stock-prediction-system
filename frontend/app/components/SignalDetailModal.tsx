@@ -6,9 +6,17 @@ interface SignalDetailModalProps {
 }
 
 function scoreColor(score: number) {
-  if (score >= 55) return 'text-green-400';
-  if (score >= 30) return 'text-yellow-400';
+  // v7 thresholds: BUY ≥ 50, WAIT ≥ 28
+  if (score >= 50) return 'text-green-400';
+  if (score >= 28) return 'text-yellow-400';
   return 'text-red-400';
+}
+
+function earlyColor(score?: number) {
+  if (score == null) return 'text-gray-500';
+  if (score >= 60) return 'text-orange-400';
+  if (score >= 40) return 'text-amber-300';
+  return 'text-gray-500';
 }
 
 function pts(n: number) {
@@ -258,15 +266,68 @@ export default function SignalDetailModal({ signal, onClose }: SignalDetailModal
                 </div>
 
                 <div className="text-gray-500 text-xs italic mt-2">
-                  {signal.Score >= 55 && '✅ BUY — Strong multi-factor confirmation'}
-                  {signal.Score >= 30 && signal.Score < 55 && '⏳ WAIT — Developing pattern, monitor'}
-                  {signal.Score < 30 && '❌ IGNORE — Insufficient evidence'}
+                  {signal.Score >= 50 && '✅ BUY — Strong multi-factor confirmation'}
+                  {signal.Score >= 28 && signal.Score < 50 && '⏳ WAIT — Developing pattern, monitor'}
+                  {signal.Score < 28 && '❌ IGNORE — Insufficient evidence'}
                 </div>
               </div>
             ) : (
               <div className="text-xs text-gray-500 italic">Breakdown data not available — regenerate signals to populate.</div>
             )}
           </div>
+
+          {/* v7: EarlyScore panel — leading pre-breakout detector */}
+          {typeof signal.EarlyScore === 'number' && (
+            <div className="bg-gray-900 p-4 rounded border border-orange-900/40">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-bold text-orange-300">🔥 EARLY SCORE (Pre-Breakout Detector)</div>
+                <span className={`text-xl font-bold ${earlyColor(signal.EarlyScore)}`}>
+                  {signal.EarlyScore}/100 — {signal.EarlySignal}
+                </span>
+              </div>
+              <div className="text-xs text-gray-400 mb-2 italic">
+                {signal.EarlySignal === 'EARLY' && 'Tight base + first volume tell + not extended. Best entry window.'}
+                {signal.EarlySignal === 'WATCH' && 'Setup forming, but missing volume tell or testing high. Watch closely.'}
+                {signal.EarlySignal === 'NONE' && 'No pre-breakout setup detected here.'}
+              </div>
+              {signal.EarlyComponents && (
+                <div className="space-y-1 text-xs">
+                  {Object.entries(signal.EarlyComponents).map(([k, v]) => {
+                    const points = (v as { points?: number })?.points ?? 0;
+                    const niceName: Record<string, string> = {
+                      tight_base: 'Tight Base',
+                      goldilocks_volume: 'Goldilocks Volume',
+                      closing_tell: 'Closing Tell',
+                      near_resistance: 'Near 10d High',
+                      not_extended: 'Not Extended',
+                    };
+                    const max: Record<string, string> = {
+                      tight_base: '25', goldilocks_volume: '25',
+                      closing_tell: '20', near_resistance: '15', not_extended: '15',
+                    };
+                    return (
+                      <div key={k} className="flex items-center justify-between border-b border-gray-800 last:border-0 py-1">
+                        <span className="text-gray-300">{niceName[k] || k}</span>
+                        <span className={`font-bold ${points > 0 ? 'text-green-400' : points < 0 ? 'text-red-400' : 'text-gray-600'}`}>
+                          {pts(points)} <span className="text-gray-700">/{max[k] || '-'}</span>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {signal.EarlyReasons && signal.EarlyReasons.length > 0 && (
+                <div className="mt-2 text-xs text-gray-400">
+                  <span className="text-gray-500">Reasons: </span>{signal.EarlyReasons.join(', ')}
+                </div>
+              )}
+              {(signal.IsFreshEarly || signal.IsFreshBuy) && (
+                <div className="mt-2 text-xs text-orange-300 font-bold">
+                  ⭐ FRESH — first day this signal fired (yesterday was {signal.PrevEarlySignal || signal.PrevSignal || 'lower'})
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Volume Analysis */}
           <div className="bg-gray-900 p-4 rounded">

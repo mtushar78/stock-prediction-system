@@ -468,11 +468,31 @@ def get_sniper_signals():
         db = DatabaseManager()
         
         # Fetch pre-calculated signals (use SQLAlchemy engine).
+        # v7: Include EARLY/WATCH from the parallel EarlyScore engine as well.
+        # Sort by signal_strength = max(score, early_score) so the best entries
+        # (whether confirmed BUY or fresh EARLY) surface at the top.
         from sqlalchemy import text
-        df = pd.read_sql_query(
-            text("SELECT * FROM signals_today WHERE signal IN ('BUY', 'WAIT') ORDER BY score DESC"),
-            db.engine,
-        )
+        # Detect whether v7 columns exist (graceful fallback for older snapshots)
+        try:
+            cols = pd.read_sql_query(text("SELECT * FROM signals_today LIMIT 1"), db.engine).columns.tolist()
+        except Exception:
+            cols = []
+        has_v7 = 'early_signal' in cols and 'signal_strength' in cols
+
+        if has_v7:
+            df = pd.read_sql_query(
+                text(
+                    "SELECT * FROM signals_today "
+                    "WHERE signal IN ('BUY', 'WAIT') OR early_signal IN ('EARLY', 'WATCH') "
+                    "ORDER BY signal_strength DESC"
+                ),
+                db.engine,
+            )
+        else:
+            df = pd.read_sql_query(
+                text("SELECT * FROM signals_today WHERE signal IN ('BUY', 'WAIT') ORDER BY score DESC"),
+                db.engine,
+            )
         
         logger.info(f"✅ Fetched {len(df)} signals from signals_today table")
         
@@ -519,8 +539,34 @@ def get_sniper_signals():
                 'reward_risk_ratio': 'RewardRiskRatio',
                 'atr': 'ATR',
                 'trend_status': 'TrendStatus',
-                'raw_score': 'RawScore'
+                'raw_score': 'RawScore',
+                # v7 NEW FIELDS
+                'early_score': 'EarlyScore',
+                'early_signal': 'EarlySignal',
+                'early_reasons': 'EarlyReasons',
+                'early_components': 'EarlyComponents',
+                'is_fresh_buy': 'IsFreshBuy',
+                'is_fresh_early': 'IsFreshEarly',
+                'prev_signal': 'PrevSignal',
+                'prev_early_signal': 'PrevEarlySignal',
+                'signal_strength': 'SignalStrength',
             })
+
+            # v7: deserialize EarlyReasons (stored as repr-list) and components (JSON)
+            if 'EarlyReasons' in df.columns:
+                df['EarlyReasons'] = df['EarlyReasons'].apply(
+                    lambda x: eval(x) if isinstance(x, str) and x.startswith('[') else (x or [])
+                )
+            if 'EarlyComponents' in df.columns:
+                def _parse_components(x):
+                    if isinstance(x, str):
+                        try:
+                            import json as _j
+                            return _j.loads(x)
+                        except Exception:
+                            return {}
+                    return x if isinstance(x, dict) else {}
+                df['EarlyComponents'] = df['EarlyComponents'].apply(_parse_components)
             
             # Format Reason (convert list to string)
             if 'Reason' in df.columns:
