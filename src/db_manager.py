@@ -543,12 +543,33 @@ class DatabaseManager:
 
         Each entry must look like ChartAnalyzer.analyze_ticker output.
         UNIQUE(ticker, analysis_date) means re-running on the same day is
-        idempotent — existing rows get refreshed."""
+        idempotent — existing rows get refreshed.
+
+        Important: rows for analysis_dates in the new results that are NOT
+        in the new ticker set are DELETED first. This prevents stale rows
+        from a previous (buggy) run from lingering after newer code
+        legitimately rejects those tickers (e.g. broken OHLC)."""
         import json as _json
         if not results:
             return
         try:
             cursor = self.conn.cursor()
+
+            # Group new results by analysis_date and known tickers
+            from collections import defaultdict
+            tickers_by_date: dict = defaultdict(set)
+            for r in results:
+                tickers_by_date[r['analysis_date']].add(r['ticker'])
+            # For each (date, tickers) pair: delete rows for that date
+            # that are NOT in the new ticker set.
+            for adate, tset in tickers_by_date.items():
+                placeholders = ','.join(['?'] * len(tset))
+                cursor.execute(
+                    f"DELETE FROM chart_signals "
+                    f"WHERE analysis_date = ? AND ticker NOT IN ({placeholders})",
+                    (adate, *sorted(tset))
+                )
+
             sql = (
                 "INSERT INTO chart_signals "
                 "(ticker, analysis_date, overall_score, overall_bias, "
