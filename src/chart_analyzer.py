@@ -813,12 +813,20 @@ class ChartAnalyzer:
         history. If `df` is provided, use it directly (no DB hit); else load."""
         if df is None:
             df = self.db.get_stock_data(ticker)
-        if df is None or df.empty or len(df) < MIN_HISTORY_DAYS:
+        if df is None or df.empty:
             return None
 
         df = df.sort_values('date').reset_index(drop=True)
 
-        # Last 3 rows for pattern detection
+        # Filter out broken-OHLC rows BEFORE picking the recent window.
+        # DSE scraper sometimes leaves stub rows for non-trading days
+        # (e.g. low=0, or open below low). Reject those rows globally so
+        # the "last 3 bars" we look at are all real candles, not stubs.
+        df = df[df.apply(lambda r: _valid_ohlc(r.to_dict()), axis=1)]
+        df = df.reset_index(drop=True)
+
+        if len(df) < MIN_HISTORY_DAYS:
+            return None
         if len(df) < 3:
             return None
 
@@ -826,10 +834,7 @@ class ChartAnalyzer:
         prev1_row = df.iloc[-2].to_dict()
         prev2_row = df.iloc[-3].to_dict()
 
-        # Sanity-check OHLC integrity for the 3 most recent bars. Reject
-        # tickers with broken candles (open/close outside [low, high]) —
-        # otherwise pattern detection produces nonsense (negative wicks,
-        # body% > 100%) on noisy intraday data.
+        # Defensive: should now always pass since df is pre-filtered
         for r in (today_row, prev1_row, prev2_row):
             if not _valid_ohlc(r):
                 return None
