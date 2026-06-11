@@ -788,12 +788,24 @@ def get_chart_ohlcv(ticker: str, days: int = 60):
         df = df.where(pd.notna(df), None)
         rows = []
         for _, r in df.iterrows():
+            o = float(r['open']) if r['open'] is not None else None
+            h = float(r['high']) if r['high'] is not None else None
+            l = float(r['low']) if r['low'] is not None else None
+            c = float(r['close']) if r['close'] is not None else None
+            # Skip stub rows from non-trading days — DSE scraper sometimes
+            # writes a row with open set but high/low/close = 0, which
+            # makes the chart auto-scale to absurd ranges.
+            if not all(v is not None and v > 0 for v in (o, h, l, c)):
+                continue
+            # Also skip rows where OHLC integrity is broken
+            if h < l or o < l or o > h or c < l or c > h:
+                continue
             rows.append({
                 'date': r['date'],
-                'open': float(r['open']) if r['open'] is not None else None,
-                'high': float(r['high']) if r['high'] is not None else None,
-                'low': float(r['low']) if r['low'] is not None else None,
-                'close': float(r['close']) if r['close'] is not None else None,
+                'open': o,
+                'high': h,
+                'low': l,
+                'close': c,
                 'volume': int(r['volume']) if r['volume'] is not None else 0,
             })
         return rows
