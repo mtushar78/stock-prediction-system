@@ -1,4 +1,5 @@
-import { TrendingUp, RefreshCw } from 'lucide-react';
+import Link from 'next/link';
+import { TrendingUp, RefreshCw, Activity } from 'lucide-react';
 import { SystemStatus } from '../types';
 
 interface HeaderProps {
@@ -16,23 +17,43 @@ export default function Header({ systemStatus, loading, onRefresh }: HeaderProps
         </h1>
         <p className="text-gray-500 text-sm">Algorithmic Volume Analysis Terminal</p>
       </div>
-      <div className="flex gap-4 flex-wrap">
-        <div className="bg-gray-800 px-4 py-2 rounded">
-          <span className="text-gray-400 text-xs block">SYSTEM STATUS</span>
-          <span className={`font-bold ${systemStatus?.status === 'ONLINE' ? 'text-green-500' : 'text-red-500'}`}>
+      <div className="flex gap-2 flex-wrap items-center">
+        <nav className="flex gap-1 text-sm">
+          <Link
+            href="/"
+            className="px-3 py-1.5 rounded bg-emerald-700 text-white border border-emerald-600 flex items-center gap-1.5"
+          >
+            <TrendingUp className="w-4 h-4" /> Dashboard
+          </Link>
+          <Link
+            href="/chart-analysis"
+            className="px-3 py-1.5 rounded bg-gray-800 text-gray-300 border border-gray-700 hover:bg-purple-900/40 hover:text-purple-200 transition flex items-center gap-1.5"
+          >
+            <Activity className="w-4 h-4" /> Chart Analyst
+          </Link>
+          <Link
+            href="/analyze"
+            className="px-3 py-1.5 rounded bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700 hover:text-white transition"
+          >
+            Manual Analyze
+          </Link>
+        </nav>
+        <div className="bg-gray-800 px-3 py-1.5 rounded border border-gray-700">
+          <span className="text-gray-400 text-[10px] block">SYSTEM</span>
+          <span className={`font-bold text-sm ${systemStatus?.status === 'ONLINE' ? 'text-green-500' : 'text-red-500'}`}>
             ● {systemStatus?.status || 'LOADING'}
           </span>
         </div>
-        <div className="bg-gray-800 px-4 py-2 rounded">
-          <span className="text-gray-400 text-xs block">MARKET</span>
-          <span className={`font-bold ${systemStatus?.market_status === 'OPEN' ? 'text-green-500' : 'text-yellow-500'}`}>
+        <div className="bg-gray-800 px-3 py-1.5 rounded border border-gray-700">
+          <span className="text-gray-400 text-[10px] block">MARKET</span>
+          <span className={`font-bold text-sm ${systemStatus?.market_status === 'OPEN' ? 'text-green-500' : 'text-yellow-500'}`}>
             {systemStatus?.market_status || 'UNKNOWN'}
           </span>
         </div>
-        <button 
+        <button
           onClick={onRefresh}
           disabled={loading}
-          className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 px-4 py-2 rounded flex items-center gap-2 transition"
+          className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 px-3 py-1.5 rounded flex items-center gap-2 transition text-sm"
         >
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           Refresh
