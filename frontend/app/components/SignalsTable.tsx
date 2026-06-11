@@ -6,9 +6,9 @@ interface SignalsTableProps {
   signals: Signal[];
   loading: boolean;
   onVolumeClick: (signal: Signal) => void;
-  onInfoClick: (index: number) => void;
+  onInfoClick: (signal: Signal) => void;
   onPriceInfoClick: (signal: Signal) => void;
-  activeModalIndex: number | null;
+  activeTicker: string | null;
 }
 
 type ViewTab = 'ALL' | 'EARLY' | 'BUY' | 'FRESH';
@@ -27,7 +27,7 @@ export default function SignalsTable({
   onVolumeClick,
   onInfoClick,
   onPriceInfoClick,
-  activeModalIndex,
+  activeTicker,
 }: SignalsTableProps) {
   const [tab, setTab] = useState<ViewTab>('ALL');
   const [sortKey, setSortKey] = useState<SortKey>('Score');
@@ -252,9 +252,9 @@ export default function SignalsTable({
                         full breakdown even when the truncated reason text
                         is empty or the column is narrow. */}
                     <button
-                      onClick={() => onInfoClick(i)}
+                      onClick={() => onInfoClick(sig)}
                       className={`shrink-0 inline-flex items-center justify-center w-6 h-6 rounded border transition-colors ${
-                        activeModalIndex === i
+                        activeTicker === sig.Ticker
                           ? 'border-green-500 bg-green-900/30 text-green-300'
                           : 'border-gray-600 bg-gray-800 text-emerald-400 hover:border-emerald-400 hover:bg-emerald-900/20'
                       }`}

@@ -252,9 +252,9 @@ export default function Dashboard() {
             signals={signals}
             loading={loading}
             onVolumeClick={(signal) => setVolumeModalSignal(signal)}
-            onInfoClick={(index) => setActiveModal(index)}
+            onInfoClick={(signal) => setActiveModal(signals.indexOf(signal))}
             onPriceInfoClick={(signal) => setPriceHistoryModal({ ticker: signal.Ticker, currentPrice: signal.Price })}
-            activeModalIndex={activeModal}
+            activeTicker={activeModal !== null && activeModal < signals.length ? signals[activeModal]?.Ticker ?? null : null}
           />
           
           <PortfolioTable 
