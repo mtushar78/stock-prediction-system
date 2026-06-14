@@ -15,6 +15,7 @@ import time
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.db_manager import DatabaseManager
+from src.dse_tls import dse_get
 
 # Proxy configuration
 PROXY_SERVER = "http://geo.iproyal.com:12321"
@@ -47,7 +48,7 @@ def scrape_dse_data():
                           '(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
 
-        response = requests.get(DSE_URL, proxies=PROXIES, headers=headers, timeout=30)
+        response = dse_get(DSE_URL, proxies=PROXIES, headers=headers, timeout=30)
         response.raise_for_status()
 
         soup = BeautifulSoup(response.content, 'html.parser')

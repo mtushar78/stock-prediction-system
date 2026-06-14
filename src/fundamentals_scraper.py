@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.db_manager import DatabaseManager
+from src.dse_tls import dse_get
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -61,7 +62,7 @@ def scrape_ticker_fundamentals(ticker: str) -> dict:
     last_err = None
     for attempt in range(3):
         try:
-            response = requests.get(url, proxies=PROXIES, headers=headers, timeout=45)
+            response = dse_get(url, proxies=PROXIES, headers=headers, timeout=45)
             response.raise_for_status()
             break
         except Exception as e:
