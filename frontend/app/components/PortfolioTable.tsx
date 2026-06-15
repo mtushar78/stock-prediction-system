@@ -48,6 +48,7 @@ export default function PortfolioTable({
               <th className="pb-3 pr-4">VOLUME</th>
               <th className="pb-3 pr-4">QTY</th>
               <th className="pb-3 pr-4">TOTAL COST</th>
+              <th className="pb-3 pr-4">TOTAL GAINS</th>
               <th className="pb-3 pr-4">PROFIT</th>
               <th className="pb-3 pr-4">STATUS</th>
               <th className="pb-3">ACTION</th>
@@ -96,12 +97,14 @@ export default function PortfolioTable({
                   </div>
                 </td>
                 <td className="py-3 pr-4">
+                  <span className={`font-semibold ${item.profit_amount >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {item.profit_amount >= 0 ? '+' : ''}{item.profit_amount.toFixed(2)} BDT
+                  </span>
+                </td>
+                <td className="py-3 pr-4">
                   <span className={item.profit_pct >= 0 ? 'text-green-400' : 'text-red-400'}>
                     {item.profit_pct >= 0 ? '+' : ''}{item.profit_pct.toFixed(2)}%
                   </span>
-                  <div className="text-xs text-gray-500">
-                    {item.profit_amount >= 0 ? '+' : ''}{item.profit_amount.toFixed(0)} BDT
-                  </div>
                 </td>
                 <td className="py-3 pr-4 relative">
                   <div className="flex items-center gap-2">
@@ -130,7 +133,7 @@ export default function PortfolioTable({
               </tr>
             ))}
             {portfolio.length === 0 && (
-              <tr><td colSpan={9} className="py-6 text-center text-gray-600">
+              <tr><td colSpan={10} className="py-6 text-center text-gray-600">
                 Portfolio is empty. Add your first trade →
               </td></tr>
             )}
@@ -144,11 +147,13 @@ export default function PortfolioTable({
                 <td className="py-3 pr-4 text-orange-400">{totalCost.toFixed(2)}</td>
                 <td className="py-3 pr-4">
                   <span className={gainPositive ? 'text-green-400' : 'text-red-400'}>
+                    {gainPositive ? '+' : ''}{totalProfit.toFixed(2)} BDT
+                  </span>
+                </td>
+                <td className="py-3 pr-4">
+                  <span className={gainPositive ? 'text-green-400' : 'text-red-400'}>
                     {gainPositive ? '+' : ''}{totalProfitPct.toFixed(2)}%
                   </span>
-                  <div className={`text-xs ${gainPositive ? 'text-green-500/80' : 'text-red-500/80'}`}>
-                    {gainPositive ? '+' : ''}{totalProfit.toFixed(0)} BDT
-                  </div>
                 </td>
                 <td className="py-3 pr-4" colSpan={2}></td>
               </tr>
