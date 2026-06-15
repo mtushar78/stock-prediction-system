@@ -23,6 +23,7 @@ export default function PortfolioTable({
   // Aggregate P&L across all holdings.
   const totalInvested = portfolio.reduce((s, it) => s + it.buy_price * it.quantity, 0);
   const totalCost = portfolio.reduce((s, it) => s + (it.total_cost ?? it.buy_price * it.quantity), 0);
+  const totalCurrentValue = portfolio.reduce((s, it) => s + it.current_price * it.quantity, 0);
   const totalProfit = portfolio.reduce((s, it) => s + it.profit_amount, 0);
   const totalProfitPct = totalInvested > 0 ? (totalProfit / totalInvested) * 100 : 0;
   const gainPositive = totalProfit >= 0;
@@ -48,7 +49,7 @@ export default function PortfolioTable({
               <th className="pb-3 pr-4">VOLUME</th>
               <th className="pb-3 pr-4">QTY</th>
               <th className="pb-3 pr-4">TOTAL COST</th>
-              <th className="pb-3 pr-4">TOTAL GAINS</th>
+              <th className="pb-3 pr-4">CURRENT VALUE</th>
               <th className="pb-3 pr-4">PROFIT</th>
               <th className="pb-3 pr-4">STATUS</th>
               <th className="pb-3">ACTION</th>
@@ -97,8 +98,8 @@ export default function PortfolioTable({
                   </div>
                 </td>
                 <td className="py-3 pr-4">
-                  <span className={`font-semibold ${item.profit_amount >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                    {item.profit_amount >= 0 ? '+' : ''}{item.profit_amount.toFixed(2)} BDT
+                  <span className="text-emerald-400 font-semibold">
+                    {(item.current_price * item.quantity).toFixed(2)} BDT
                   </span>
                 </td>
                 <td className="py-3 pr-4">
@@ -145,11 +146,7 @@ export default function PortfolioTable({
                   TOTAL <span className="text-gray-500 font-normal">({portfolio.length} holdings)</span>
                 </td>
                 <td className="py-3 pr-4 text-orange-400">{totalCost.toFixed(2)}</td>
-                <td className="py-3 pr-4">
-                  <span className={gainPositive ? 'text-green-400' : 'text-red-400'}>
-                    {gainPositive ? '+' : ''}{totalProfit.toFixed(2)} BDT
-                  </span>
-                </td>
+                <td className="py-3 pr-4 text-emerald-400">{totalCurrentValue.toFixed(2)}</td>
                 <td className="py-3 pr-4">
                   <span className={gainPositive ? 'text-green-400' : 'text-red-400'}>
                     {gainPositive ? '+' : ''}{totalProfitPct.toFixed(2)}%
