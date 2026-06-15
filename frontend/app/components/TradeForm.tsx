@@ -1,4 +1,5 @@
 import { PlusCircle, AlertTriangle, Loader2, CheckCircle2 } from 'lucide-react';
+import { EntryGuidance } from '../types';
 
 interface TradeFormProps {
   ticker: string;
@@ -10,6 +11,7 @@ interface TradeFormProps {
   priceLoading?: boolean;
   priceSource?: 'auto' | 'manual' | null;
   priceFetchError?: string | null;
+  guidance?: EntryGuidance | null;
   onTickerChange: (value: string) => void;
   onPriceChange: (value: string) => void;
   onQtyChange: (value: string) => void;
@@ -26,6 +28,7 @@ export default function TradeForm({
   priceLoading = false,
   priceSource = null,
   priceFetchError = null,
+  guidance = null,
   onTickerChange,
   onPriceChange,
   onQtyChange,
@@ -39,6 +42,23 @@ export default function TradeForm({
   const tickerValid = tickerNorm.length > 0;
   const tickerInList = tickers.length === 0 || tickers.includes(tickerNorm);
   const canSubmit = priceValid && qtyValid && tickerValid && !submitting;
+
+  // Live entry-quality note: where does the price you're about to enter sit
+  // inside today's range? Warn (never block) when it isn't near the low.
+  let entryNote: { tone: 'good' | 'fair' | 'high'; text: string } | null = null;
+  if (guidance && guidance.day_high > guidance.day_low && priceValid) {
+    const { day_low: lo, day_high: hi, recommended_entry: rec } = guidance;
+    const pos = Math.max(0, Math.min(1, (priceNum - lo) / (hi - lo)));
+    const pct = Math.round(pos * 100);
+    const range = `৳${lo.toFixed(2)}–৳${hi.toFixed(2)}`;
+    if (pos <= 0.33) {
+      entryNote = { tone: 'good', text: `Good entry — ৳${priceNum.toFixed(2)} is near today's low (~${pct}% up the ${range} range).` };
+    } else if (pos <= 0.55) {
+      entryNote = { tone: 'fair', text: `Mid-range — ৳${priceNum.toFixed(2)} sits ~${pct}% up today's range (${range}). A dip toward ৳${rec.toFixed(2)} would be a safer entry.` };
+    } else {
+      entryNote = { tone: 'high', text: `Not near the day's low — ৳${priceNum.toFixed(2)} is ~${pct}% up today's range (${range}). Buying here may give a short-term loss; consider a limit near ৳${rec.toFixed(2)}.` };
+    }
+  }
 
   return (
     <section className="bg-gray-800 rounded-lg p-6 border border-gray-700">
@@ -135,6 +155,48 @@ export default function TradeForm({
             )}
           </div>
         </div>
+        {guidance && (
+          <div className="text-xs bg-gray-900 border border-gray-700 rounded p-2 space-y-1">
+            <div className="flex justify-between">
+              <span className="text-gray-500">Prev close</span>
+              <span className="text-gray-300">{guidance.prev_close != null ? `৳${guidance.prev_close.toFixed(2)}` : '—'}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Current price</span>
+              <span className="text-gray-300">৳{guidance.current_price.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Today&rsquo;s range</span>
+              <span className="text-gray-300">৳{guidance.day_low.toFixed(2)} – ৳{guidance.day_high.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-500">Recommended buy</span>
+              <span className="flex items-center gap-2">
+                <span className="text-emerald-400 font-bold">≤ ৳{guidance.recommended_entry.toFixed(2)}</span>
+                <button
+                  type="button"
+                  onClick={() => onPriceChange(String(guidance.recommended_entry))}
+                  disabled={submitting}
+                  className="text-[10px] uppercase tracking-wide text-emerald-500 hover:text-emerald-300 border border-emerald-800 rounded px-1.5 py-0.5"
+                >
+                  use
+                </button>
+              </span>
+            </div>
+          </div>
+        )}
+        {entryNote && (
+          <div className={`flex items-start gap-2 rounded p-2 text-xs border ${
+            entryNote.tone === 'high' ? 'bg-red-900/30 border-red-700 text-red-300' :
+            entryNote.tone === 'fair' ? 'bg-yellow-900/20 border-yellow-700 text-yellow-300' :
+            'bg-emerald-900/20 border-emerald-700 text-emerald-300'
+          }`}>
+            {entryNote.tone === 'good'
+              ? <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
+              : <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />}
+            <span>{entryNote.text}</span>
+          </div>
+        )}
         {priceValid && qtyValid && (
           <div className="text-xs text-gray-500 bg-gray-900 border border-gray-700 rounded p-2">
             Trade value: <span className="text-white font-bold">৳{(priceNum * qtyNum).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>

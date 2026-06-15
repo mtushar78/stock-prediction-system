@@ -17,7 +17,7 @@ import SignalDetailModal from './components/SignalDetailModal';
 import PortfolioDetailModal from './components/PortfolioDetailModal';
 import PurchaseHistoryModal from './components/PurchaseHistoryModal';
 import PriceHistoryModal from './components/PriceHistoryModal';
-import { Signal, PortfolioItem, Alert, SystemStatus, PurchaseHistory } from './types';
+import { Signal, PortfolioItem, Alert, SystemStatus, PurchaseHistory, EntryGuidance } from './types';
 
 // API Base URL
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -39,6 +39,7 @@ export default function Dashboard() {
   const [priceLoading, setPriceLoading] = useState(false);
   const [priceSource, setPriceSource] = useState<'auto' | 'manual' | null>(null);
   const [priceFetchError, setPriceFetchError] = useState<string | null>(null);
+  const [entryGuidance, setEntryGuidance] = useState<EntryGuidance | null>(null);
   
   // Modal State
   const [activeModal, setActiveModal] = useState<number | null>(null);
@@ -105,7 +106,7 @@ export default function Dashboard() {
   // Debounced 250 ms so typing doesn't fire a request per keystroke.
   useEffect(() => {
     const ticker = newTicker.trim().toUpperCase();
-    if (!ticker) { setPriceSource(null); setPriceFetchError(null); return; }
+    if (!ticker) { setPriceSource(null); setPriceFetchError(null); setEntryGuidance(null); return; }
     // Only auto-fetch if the symbol exists in the loaded list
     // (so typing partial chars doesn't fire requests).
     if (tickers.length > 0 && !tickers.includes(ticker)) return;
@@ -129,6 +130,11 @@ export default function Dashboard() {
             setPriceFetchError('no recent close');
           }
         })
+        .then(() =>
+          axios.get<EntryGuidance>(`${API_URL}/api/entry-guidance/${ticker}`)
+            .then((res) => { if (!cancelled) setEntryGuidance(res.data); })
+            .catch(() => { if (!cancelled) setEntryGuidance(null); })
+        )
         .catch(() => {
           if (!cancelled) setPriceFetchError('fetch failed');
         })
@@ -280,6 +286,7 @@ export default function Dashboard() {
             priceLoading={priceLoading}
             priceSource={priceSource}
             priceFetchError={priceFetchError}
+            guidance={entryGuidance}
             onTickerChange={(v) => {
               setNewTicker(v);
               // Clear any pending error and reset the price source so a fresh
@@ -287,6 +294,7 @@ export default function Dashboard() {
               setTradeError(null);
               setPriceSource(null);
               setNewPrice('');
+              setEntryGuidance(null);
             }}
             onPriceChange={(v) => {
               setNewPrice(v);

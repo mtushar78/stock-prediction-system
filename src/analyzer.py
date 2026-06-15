@@ -31,6 +31,69 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def compute_entry_guidance(current_price, day_low, day_high, prev_close,
+                           vwap=None, support=None):
+    """Advisory intraday buy-price guidance (v8).
+
+    The system never blocks a trade — it WARNS when the price you'd pay isn't
+    near the day's low, since chasing the high of a move tends to hand you a
+    short-term loss. Returns the previous close, the current price, a
+    recommended limit, a quality label and a human-readable warning.
+
+    Quality is driven by where the price sits in today's range:
+        range_position = (price - low) / (high - low)   # 0 = at low, 1 = at high
+        <= 0.33  -> GOOD   (near the day's low)
+        <= 0.55  -> FAIR   (mid-range)
+        >  0.55  -> HIGH   (chasing — warn)
+
+    The recommended limit aims for the lower of 5-day VWAP / prior close, but
+    never below today's low (unfillable) nor above the current price (no edge).
+    """
+    cp = float(current_price)
+    lo = float(day_low) if day_low not in (None,) else cp
+    hi = float(day_high) if day_high not in (None,) else cp
+    rng = hi - lo
+    pos = (cp - lo) / rng if rng > 0 else 0.0
+
+    anchors = [float(a) for a in (vwap, prev_close) if a and float(a) > 0]
+    target = min(anchors) if anchors else cp
+    rec = round(max(lo, min(target, cp)), 2)
+
+    if rng <= 0:
+        quality = 'FAIR'
+    elif pos <= 0.33:
+        quality = 'GOOD'
+    elif pos <= 0.55:
+        quality = 'FAIR'
+    else:
+        quality = 'HIGH'
+
+    pct = round(pos * 100)
+    warning = None
+    if quality == 'HIGH':
+        warning = (
+            f"Price ৳{cp:.2f} is ~{pct}% up today's range "
+            f"(low ৳{lo:.2f} / high ৳{hi:.2f}) — not near the day's low. "
+            f"Buying here risks a short-term pullback; consider a limit near ৳{rec:.2f}."
+        )
+    elif quality == 'FAIR' and rng > 0:
+        warning = (
+            f"Price ৳{cp:.2f} is mid-range (~{pct}% up today's range). "
+            f"A dip toward ৳{rec:.2f} would be a safer entry."
+        )
+
+    return {
+        'prev_close': round(float(prev_close), 2) if prev_close else None,
+        'current_price': round(cp, 2),
+        'day_low': round(lo, 2),
+        'day_high': round(hi, 2),
+        'range_position': round(pos, 2),
+        'recommended_entry': rec,
+        'entry_quality': quality,
+        'entry_warning': warning,
+    }
+
+
 class StockAnalyzer:
     """Analyzes stock data and generates trading signals"""
     
@@ -1272,6 +1335,18 @@ class StockAnalyzer:
 
             is_fresh_buy = bool(signal == 'BUY' and prev_signal != 'BUY')
             is_fresh_early = bool(early_result['signal'] == 'EARLY' and prev_early_signal != 'EARLY')
+
+            # v8: intraday entry-price guidance (advisory — warn, don't block).
+            prev_close_val = (float(df.iloc[-2]['close']) if len(df) >= 2
+                              else float(row.get('open', row['close'])))
+            entry_guidance = compute_entry_guidance(
+                current_price=float(row['close']),
+                day_low=float(row['low']) if pd.notna(row.get('low')) else None,
+                day_high=float(row['high']) if pd.notna(row.get('high')) else None,
+                prev_close=prev_close_val,
+                vwap=float(row['vwap_5d']) if pd.notna(row.get('vwap_5d')) else None,
+                support=score_result.get('support'),
+            )
             
             # Determine market status
             current_time = datetime.now(pytz.timezone('Asia/Dhaka'))
@@ -1340,6 +1415,15 @@ class StockAnalyzer:
                 'prev_early_signal': prev_early_signal,
                 # Combined "best" score for sorting on the front-end
                 'signal_strength': max(score_result['score'], early_result['score']),
+
+                # ===== v8 ENTRY-PRICE GUIDANCE =====
+                'prev_close': entry_guidance['prev_close'],
+                'day_low': entry_guidance['day_low'],
+                'day_high': entry_guidance['day_high'],
+                'range_position': entry_guidance['range_position'],
+                'recommended_entry': entry_guidance['recommended_entry'],
+                'entry_quality': entry_guidance['entry_quality'],
+                'entry_warning': entry_guidance['entry_warning'],
             }
             
             return result

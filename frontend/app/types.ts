@@ -40,6 +40,14 @@ export interface Signal {
   PrevSignal?: string | null;
   PrevEarlySignal?: string | null;
   SignalStrength?: number;  // max(Score, EarlyScore) for sorting
+  // v8 ENTRY-PRICE GUIDANCE
+  PrevClose?: number;
+  DayLow?: number;
+  DayHigh?: number;
+  RangePosition?: number;
+  RecommendedEntry?: number;
+  EntryQuality?: 'GOOD' | 'FAIR' | 'HIGH' | string;
+  EntryWarning?: string | null;
   // v6: per-component score breakdown
   v5_details?: {
     rvol?: { points: number; value: number };
@@ -60,6 +68,19 @@ export interface Signal {
     pre_breakout_coil?: { score: number; range_pct?: number; atr_contracting?: boolean; atr_now?: number; atr_prior?: number };
     late_entry?: { score: number; return_5d_pct?: number | null; sma_distance_pct?: number | null; flags?: string[] };
   };
+}
+
+export interface EntryGuidance {
+  ticker?: string;
+  date?: string;
+  prev_close: number | null;
+  current_price: number;
+  day_low: number;
+  day_high: number;
+  range_position: number;
+  recommended_entry: number;
+  entry_quality: 'GOOD' | 'FAIR' | 'HIGH' | string;
+  entry_warning: string | null;
 }
 
 export interface PortfolioItem {

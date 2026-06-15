@@ -620,6 +620,14 @@ def get_sniper_signals():
                 'prev_signal': 'PrevSignal',
                 'prev_early_signal': 'PrevEarlySignal',
                 'signal_strength': 'SignalStrength',
+                # v8 ENTRY-PRICE GUIDANCE
+                'prev_close': 'PrevClose',
+                'day_low': 'DayLow',
+                'day_high': 'DayHigh',
+                'range_position': 'RangePosition',
+                'recommended_entry': 'RecommendedEntry',
+                'entry_quality': 'EntryQuality',
+                'entry_warning': 'EntryWarning',
             })
 
             # v7: deserialize EarlyReasons (stored as repr-list) and components (JSON)
@@ -1108,6 +1116,50 @@ def calculate_buy(request: BudgetBuyRequest):
         raise
     except Exception as e:
         logger.error(f"Error calculating buy: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/entry-guidance/{ticker}")
+def get_entry_guidance(ticker: str):
+    """Advisory buy-price guidance for the trade form.
+
+    Returns the previous close, the current/live price, today's range, a
+    recommended buy-limit and a warning when the price isn't near the day's
+    low. Purely advisory — it never blocks a trade.
+    """
+    try:
+        from src.analyzer import compute_entry_guidance
+        db = DatabaseManager()
+        cursor = db.conn.cursor()
+        cursor.execute(
+            "SELECT date, open, high, low, close, volume FROM stock_data "
+            "WHERE ticker=%s ORDER BY date DESC LIMIT 5",
+            (ticker.upper(),)
+        )
+        rows = cursor.fetchall()
+        db.close()
+        if not rows:
+            raise HTTPException(status_code=404, detail=f"No market data for {ticker}")
+
+        latest = rows[0]
+        d_open, d_high, d_low, d_close = latest[1], latest[2], latest[3], latest[4]
+        prev_close = rows[1][4] if len(rows) >= 2 else d_open
+        # 5-day VWAP from the latest rows (descending order, so just take all).
+        num = sum((r[4] or 0) * (r[5] or 0) for r in rows)
+        den = sum((r[5] or 0) for r in rows)
+        vwap = (num / den) if den else d_close
+
+        guidance = compute_entry_guidance(
+            current_price=d_close, day_low=d_low, day_high=d_high,
+            prev_close=prev_close, vwap=vwap,
+        )
+        guidance['ticker'] = ticker.upper()
+        guidance['date'] = latest[0]
+        return guidance
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error computing entry guidance for {ticker}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/purchase-history/{ticker}")
