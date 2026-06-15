@@ -20,10 +20,23 @@ export default function PortfolioTable({
   onRemove,
   activeModalIndex
 }: PortfolioTableProps) {
+  // Aggregate P&L across all holdings.
+  const totalInvested = portfolio.reduce((s, it) => s + it.buy_price * it.quantity, 0);
+  const totalCost = portfolio.reduce((s, it) => s + (it.total_cost ?? it.buy_price * it.quantity), 0);
+  const totalProfit = portfolio.reduce((s, it) => s + it.profit_amount, 0);
+  const totalProfitPct = totalInvested > 0 ? (totalProfit / totalInvested) * 100 : 0;
+  const gainPositive = totalProfit >= 0;
+
   return (
     <section className="bg-gray-800 rounded-lg p-6 border border-gray-700">
       <h2 className="text-xl font-bold mb-4 text-blue-300 flex items-center gap-2">
         <Wallet className="w-6 h-6" /> Current Holdings
+        {portfolio.length > 0 && (
+          <span className={`ml-auto text-sm font-bold ${gainPositive ? 'text-green-400' : 'text-red-400'}`}>
+            {gainPositive ? '+' : ''}{totalProfit.toFixed(0)} BDT
+            <span className="text-xs font-normal ml-1">({gainPositive ? '+' : ''}{totalProfitPct.toFixed(2)}%)</span>
+          </span>
+        )}
       </h2>
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
@@ -122,6 +135,25 @@ export default function PortfolioTable({
               </td></tr>
             )}
           </tbody>
+          {portfolio.length > 0 && (
+            <tfoot>
+              <tr className="border-t-2 border-gray-600 font-bold">
+                <td className="py-3 pr-4 text-gray-300" colSpan={5}>
+                  TOTAL <span className="text-gray-500 font-normal">({portfolio.length} holdings)</span>
+                </td>
+                <td className="py-3 pr-4 text-orange-400">{totalCost.toFixed(2)}</td>
+                <td className="py-3 pr-4">
+                  <span className={gainPositive ? 'text-green-400' : 'text-red-400'}>
+                    {gainPositive ? '+' : ''}{totalProfitPct.toFixed(2)}%
+                  </span>
+                  <div className={`text-xs ${gainPositive ? 'text-green-500/80' : 'text-red-500/80'}`}>
+                    {gainPositive ? '+' : ''}{totalProfit.toFixed(0)} BDT
+                  </div>
+                </td>
+                <td className="py-3 pr-4" colSpan={2}></td>
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
     </section>
