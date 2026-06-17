@@ -892,6 +892,33 @@ def analyze_ticker_detailed(request: TickerAnalyzeRequest):
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/score-history/{ticker}")
+def get_score_history(ticker: str, days: int = 20):
+    """Replay the analyzer day-by-day to show how a ticker's MAIN score and
+    EarlyScore evolved over the last `days` trading days."""
+    try:
+        ticker_u = (ticker or '').upper().strip()
+        if not ticker_u:
+            raise HTTPException(status_code=400, detail="ticker is required")
+
+        db = DatabaseManager()
+        analyzer = StockAnalyzer(db)
+
+        paid_up_capital = db.get_all_fundamentals().get(ticker_u)
+        result = analyzer.score_history(
+            ticker=ticker_u,
+            days=days,
+            paid_up_capital=paid_up_capital,
+        )
+        db.close()
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in get_score_history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/portfolio")
 def get_portfolio():
     """Get current portfolio holdings with live P/L and Level 2 sell logic details"""

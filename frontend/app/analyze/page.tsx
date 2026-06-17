@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import axios from 'axios';
-import { DetailedTickerAnalysis, ScoreBreakdownItem } from '../types';
+import { DetailedTickerAnalysis, ScoreBreakdownItem, ScoreHistory } from '../types';
 
 // API Base URL
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -53,6 +53,93 @@ function BreakdownRow({ item }: { item: ScoreBreakdownItem }) {
   );
 }
 
+function signalPill(sig: string) {
+  const s = (sig || '').toUpperCase();
+  const cls =
+    s === 'BUY' || s === 'EARLY'
+      ? 'bg-green-900/40 text-green-300 border-green-700'
+      : s === 'WAIT' || s === 'WATCH'
+        ? 'bg-yellow-900/30 text-yellow-300 border-yellow-700'
+        : 'bg-gray-800 text-gray-400 border-gray-700';
+  return <span className={`inline-block px-1.5 py-0.5 rounded border text-[11px] font-bold ${cls}`}>{s || '-'}</span>;
+}
+
+function ScoreHistoryTable({ history, loading }: { history: ScoreHistory | null; loading: boolean }) {
+  return (
+    <div className="bg-gray-950 border border-gray-700 rounded p-4">
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
+        <h3 className="font-bold text-indigo-300">📅 20-Day Score History (settled replay)</h3>
+        {history?.history?.length ? (
+          <span className="text-xs text-gray-600">{history.history.length} days · newest first</span>
+        ) : null}
+      </div>
+      <p className="text-xs text-gray-500 mb-3 italic">
+        Day-by-day replay of MAIN score &amp; EarlyScore. Past days use settled volume; today&apos;s row
+        reflects live/projected volume during market hours.
+      </p>
+
+      {loading && <div className="text-sm text-gray-500 py-4">Loading history…</div>}
+
+      {!loading && (!history || !history.history?.length) && (
+        <div className="text-sm text-gray-600 py-4">No history available.</div>
+      )}
+
+      {!loading && history && history.history?.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs whitespace-nowrap">
+            <thead>
+              <tr className="text-gray-500 border-b border-gray-700">
+                <th className="py-2 pr-3">DATE</th>
+                <th className="py-2 pr-3 text-right">CLOSE</th>
+                <th className="py-2 pr-3 text-right">%CHG</th>
+                <th className="py-2 pr-3 text-right">RVOL</th>
+                <th className="py-2 pr-3 text-right">SCORE</th>
+                <th className="py-2 pr-3">SIGNAL</th>
+                <th className="py-2 pr-3 text-right">EARLY</th>
+                <th className="py-2 pr-3">E-SIG</th>
+                <th className="py-2 pr-3 text-right">LATE</th>
+                <th className="py-2 pr-3 text-right">5D%</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...history.history].reverse().map((r) => (
+                <tr key={r.date} className="border-b border-gray-800/70 hover:bg-gray-800/40">
+                  <td className="py-1.5 pr-3 text-gray-300">
+                    {r.date}{r.is_intraday ? <span className="text-yellow-500 ml-1" title="Intraday / projected">●</span> : null}
+                  </td>
+                  <td className="py-1.5 pr-3 text-right text-gray-200">{fmt(r.close, 2)}</td>
+                  <td className={`py-1.5 pr-3 text-right ${(r.price_change_pct ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {(r.price_change_pct ?? 0) >= 0 ? '+' : ''}{fmt(r.price_change_pct, 2)}
+                  </td>
+                  <td className={`py-1.5 pr-3 text-right ${(r.rvol ?? 0) >= 2 ? 'text-yellow-300 font-bold' : 'text-gray-300'}`}>
+                    {fmt(r.rvol, 2)}x
+                  </td>
+                  <td className="py-1.5 pr-3 text-right font-bold text-gray-100">
+                    {r.score}<span className="text-gray-600 font-normal"> ({r.raw_score})</span>
+                  </td>
+                  <td className="py-1.5 pr-3">{signalPill(r.signal)}</td>
+                  <td className="py-1.5 pr-3 text-right font-bold text-gray-100">{r.early_score}</td>
+                  <td className="py-1.5 pr-3">{signalPill(r.early_signal)}</td>
+                  <td className={`py-1.5 pr-3 text-right ${r.late_entry_pts < 0 ? 'text-red-400' : 'text-gray-600'}`}>
+                    {r.late_entry_pts < 0 ? r.late_entry_pts : '0'}
+                  </td>
+                  <td className={`py-1.5 pr-3 text-right ${(r.return_5d_pct ?? 0) >= 0 ? 'text-gray-400' : 'text-red-400'}`}>
+                    {r.return_5d_pct == null ? '-' : `${r.return_5d_pct >= 0 ? '+' : ''}${fmt(r.return_5d_pct, 1)}`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="text-[11px] text-gray-600 mt-2">
+            SCORE = MAIN score (raw in parens); BUY ≥ 50. EARLY ≥ 60 = pre-breakout window.
+            LATE = late-entry penalty. <span className="text-yellow-500">●</span> = intraday/projected row.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AnalyzeTickerPage() {
   const [tickers, setTickers] = useState<string[]>([]);
   const [tickerInput, setTickerInput] = useState('');
@@ -60,6 +147,8 @@ export default function AnalyzeTickerPage() {
   const [loadingAnalyze, setLoadingAnalyze] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<DetailedTickerAnalysis | null>(null);
+  const [history, setHistory] = useState<ScoreHistory | null>(null);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   // Fetch tickers for datalist
   useEffect(() => {
@@ -83,22 +172,30 @@ export default function AnalyzeTickerPage() {
   const analyze = async () => {
     setError(null);
     setResult(null);
+    setHistory(null);
     if (!normalizedTicker) {
       setError('Please select / type a ticker first.');
       return;
     }
-    try {
-      setLoadingAnalyze(true);
-      const res = await axios.post<DetailedTickerAnalysis>(`${API_URL}/api/analyze-ticker`, {
-        ticker: normalizedTicker,
-      });
-      setResult(res.data);
-    } catch (err: unknown) {
-      const maybeAxiosError = err as { response?: { data?: { detail?: string } }; message?: string };
-      setError(maybeAxiosError.response?.data?.detail || maybeAxiosError.message || 'Analyze failed');
-    } finally {
-      setLoadingAnalyze(false);
-    }
+    setLoadingAnalyze(true);
+    setLoadingHistory(true);
+    // Detailed analysis (current snapshot) + 20-day score history in parallel.
+    const analyzePromise = axios
+      .post<DetailedTickerAnalysis>(`${API_URL}/api/analyze-ticker`, { ticker: normalizedTicker })
+      .then((res) => setResult(res.data))
+      .catch((err: unknown) => {
+        const e = err as { response?: { data?: { detail?: string } }; message?: string };
+        setError(e.response?.data?.detail || e.message || 'Analyze failed');
+      })
+      .finally(() => setLoadingAnalyze(false));
+
+    const historyPromise = axios
+      .get<ScoreHistory>(`${API_URL}/api/score-history/${normalizedTicker}?days=20`)
+      .then((res) => setHistory(res.data))
+      .catch(() => setHistory(null))
+      .finally(() => setLoadingHistory(false));
+
+    await Promise.allSettled([analyzePromise, historyPromise]);
   };
 
   const statusBadge = useMemo(() => {
@@ -212,6 +309,9 @@ export default function AnalyzeTickerPage() {
                 </div>
               )}
             </div>
+
+            {/* 20-day score history */}
+            <ScoreHistoryTable history={history} loading={loadingHistory} />
 
             {/* Filters */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

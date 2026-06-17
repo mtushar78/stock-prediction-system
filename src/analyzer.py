@@ -1524,6 +1524,84 @@ class StockAnalyzer:
             return float(obj)
         return obj
 
+    def score_history(
+        self,
+        ticker: str,
+        days: int = 20,
+        paid_up_capital: Optional[float] = None,
+    ) -> Dict:
+        """Replay the analyzer day-by-day over the last `days` trading days.
+
+        For each day we slice the raw history to that date and recompute
+        indicators, so per-row indicators (OBV slope, smart-money, etc.,
+        which calculate_indicators only fills for the LAST row) are correct
+        AS-OF that day — exactly how the engine would have scored it on the
+        settled bar. This is the diagnostic that shows how a stock's MAIN
+        score and EarlyScore evolved into (or out of) a BUY.
+
+        Returns rows oldest-first. The latest row reflects today's live state
+        (projected volume during market hours); earlier rows are settled.
+        """
+        try:
+            ticker = (ticker or '').upper().strip()
+            if not ticker:
+                return {'ticker': ticker, 'status': 'error',
+                        'message': 'Ticker is required', 'history': []}
+
+            raw_df = self.db.get_stock_data(ticker)
+            if raw_df.empty:
+                return {'ticker': ticker, 'status': 'error',
+                        'message': 'No data available', 'history': []}
+
+            raw_df = raw_df.sort_values('date').reset_index(drop=True)
+            days = max(1, min(int(days or 20), 60))
+            target_dates = list(raw_df['date'].tail(days))
+
+            history = []
+            for d in target_dates:
+                sub = raw_df[raw_df['date'] <= d].copy()
+                if len(sub) < 2:
+                    continue
+                ind = self.calculate_indicators(sub)
+                last = ind.iloc[-1]
+                try:
+                    score_res = self.calculate_score(last, ind, paid_up_capital)
+                    signal = self.generate_signal(int(score_res.get('score', 0)))
+                except Exception as e:
+                    logger.debug(f"score_history score failed {ticker} {d}: {e}")
+                    score_res = {'score': 0, 'raw_score': 0, 'v5_details': {}}
+                    signal = 'ERR'
+                try:
+                    early = self.calculate_early_score(last, ind)
+                except Exception as e:
+                    logger.debug(f"score_history early failed {ticker} {d}: {e}")
+                    early = {'score': 0, 'signal': 'NONE'}
+
+                le = (score_res.get('v5_details') or {}).get('late_entry') or {}
+                is_intraday = bool('is_final' in last and last.get('is_final', 1) == 0)
+                history.append({
+                    'date': last['date'].strftime('%Y-%m-%d'),
+                    'close': self._safe_float(last.get('close')),
+                    'price_change_pct': self._safe_float(last.get('price_change_pct')),
+                    'volume': int(last['volume']) if pd.notna(last.get('volume')) else 0,
+                    'rvol': self._safe_float(last.get('rvol')),
+                    'raw_score': int(score_res.get('raw_score', 0)),
+                    'score': int(score_res.get('score', 0)),
+                    'signal': signal,
+                    'early_score': int(early.get('score', 0)),
+                    'early_signal': early.get('signal', 'NONE'),
+                    'late_entry_pts': int(le.get('score', 0)) if le else 0,
+                    'return_5d_pct': self._safe_float(le.get('return_5d_pct')) if le else None,
+                    'is_intraday': is_intraday,
+                })
+
+            return {'ticker': ticker, 'status': 'success',
+                    'days': len(history), 'history': history}
+        except Exception as e:
+            logger.error(f"score_history failed for {ticker}: {e}")
+            return {'ticker': ticker, 'status': 'error',
+                    'message': str(e), 'history': []}
+
     def analyze_ticker_detailed(
         self,
         ticker: str,

@@ -110,6 +110,30 @@ export interface PortfolioItem {
   commission_paid?: number;
 }
 
+export interface ScoreHistoryRow {
+  date: string;
+  close: number | null;
+  price_change_pct: number | null;
+  volume: number;
+  rvol: number | null;
+  raw_score: number;
+  score: number;
+  signal: string;
+  early_score: number;
+  early_signal: string;
+  late_entry_pts: number;
+  return_5d_pct: number | null;
+  is_intraday: boolean;
+}
+
+export interface ScoreHistory {
+  ticker: string;
+  status: 'success' | 'error' | string;
+  message?: string;
+  days?: number;
+  history: ScoreHistoryRow[];
+}
+
 export interface PurchaseHistory {
   id: number;
   ticker: string;
