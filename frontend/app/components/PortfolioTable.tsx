@@ -44,6 +44,7 @@ export default function PortfolioTable({
           <thead>
             <tr className="text-gray-500 text-xs border-b border-gray-700">
               <th className="pb-3 pr-4">TICKER</th>
+              <th className="pb-3 pr-4">BUY DATE</th>
               <th className="pb-3 pr-4">AVG COST</th>
               <th className="pb-3 pr-4">CURRENT</th>
               <th className="pb-3 pr-4">VOLUME</th>
@@ -67,6 +68,9 @@ export default function PortfolioTable({
                   >
                     <History className="w-3 h-3 text-purple-400" />
                   </button>
+                </td>
+                <td className="py-3 pr-4 text-gray-400 whitespace-nowrap">
+                  {item.purchase_date ? item.purchase_date.slice(0, 10) : '—'}
                 </td>
                 <td className="py-3 pr-4">{item.buy_price.toFixed(2)}</td>
                 <td className="py-3 pr-4">
@@ -99,7 +103,7 @@ export default function PortfolioTable({
                 </td>
                 <td className="py-3 pr-4">
                   <span className="text-emerald-400 font-semibold">
-                    {(item.current_price * item.quantity).toFixed(2)} BDT
+                    {(item.current_price * item.quantity).toFixed(2)}
                   </span>
                 </td>
                 <td className="py-3 pr-4">
@@ -134,7 +138,7 @@ export default function PortfolioTable({
               </tr>
             ))}
             {portfolio.length === 0 && (
-              <tr><td colSpan={10} className="py-6 text-center text-gray-600">
+              <tr><td colSpan={11} className="py-6 text-center text-gray-600">
                 Portfolio is empty. Add your first trade →
               </td></tr>
             )}
@@ -142,7 +146,7 @@ export default function PortfolioTable({
           {portfolio.length > 0 && (
             <tfoot>
               <tr className="border-t-2 border-gray-600 font-bold">
-                <td className="py-3 pr-4 text-gray-300" colSpan={5}>
+                <td className="py-3 pr-4 text-gray-300" colSpan={6}>
                   TOTAL <span className="text-gray-500 font-normal">({portfolio.length} holdings)</span>
                 </td>
                 <td className="py-3 pr-4 text-orange-400">{totalCost.toFixed(2)}</td>
