@@ -105,6 +105,9 @@ export default function PortfolioTable({
                   <span className="text-emerald-400 font-semibold">
                     {(item.current_price * item.quantity).toFixed(2)}
                   </span>
+                  <div className={`text-xs ${item.profit_amount >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {item.profit_amount >= 0 ? '+' : ''}{item.profit_amount.toFixed(2)}
+                  </div>
                 </td>
                 <td className="py-3 pr-4">
                   <span className={item.profit_pct >= 0 ? 'text-green-400' : 'text-red-400'}>
