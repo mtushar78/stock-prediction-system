@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { History, ChevronLeft, ChevronRight, Radio, CalendarDays, Play } from 'lucide-react';
+import { History, ChevronLeft, ChevronRight, Radio, CalendarDays, Play, Check, Zap } from 'lucide-react';
 
 interface Props {
   dates: string[];          // trading days, newest-first
+  analyzed: string[];       // dates already cached (instant replay)
   viewing: string | null;   // the date currently analyzed/shown (null = live)
   loading: boolean;
   error: string | null;
@@ -17,9 +18,10 @@ interface Props {
  * pending date — nothing runs until "Analyze" is pressed (the compute is slow).
  * dates[] is newest-first, so older = a later array index, newer = earlier.
  */
-export default function DateReplayBar({ dates, viewing, loading, error, onAnalyze, onLive }: Props) {
+export default function DateReplayBar({ dates, analyzed, viewing, loading, error, onAnalyze, onLive }: Props) {
   const maxDate = dates.length ? dates[0] : undefined;
   const minDate = dates.length ? dates[dates.length - 1] : undefined;
+  const analyzedSet = new Set(analyzed);
 
   const [pending, setPending] = useState<string>(viewing || maxDate || '');
 
@@ -35,6 +37,7 @@ export default function DateReplayBar({ dates, viewing, loading, error, onAnalyz
   const newerDate = newerList.length ? newerList[newerList.length - 1] : null; // forward in time
 
   const isTradingDay = dates.includes(pending);
+  const isCached = analyzedSet.has(pending);
   const canAnalyze = !!pending && isTradingDay && !loading;
 
   return (
@@ -75,9 +78,24 @@ export default function DateReplayBar({ dates, viewing, loading, error, onAnalyz
         <button
           disabled={!canAnalyze}
           onClick={() => onAnalyze(pending)}
-          className="px-4 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold disabled:opacity-40 flex items-center gap-1"
-          title="Run the analysis for the selected day (takes ~1 min the first time)"
-        ><Play className="w-3 h-3" /> Analyze</button>
+          className={`px-4 py-1 rounded text-white font-bold disabled:opacity-40 flex items-center gap-1 ${
+            isCached ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-blue-600 hover:bg-blue-500'
+          }`}
+          title={isCached
+            ? 'Already analyzed — loads instantly'
+            : 'Run the analysis for the selected day (takes ~1 min the first time)'}
+        >
+          {isCached ? <Zap className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+          {isCached ? 'View · instant' : 'Analyze · ~1 min'}
+        </button>
+
+        {isTradingDay && (
+          <span className={`text-[11px] px-1.5 py-0.5 rounded flex items-center gap-1 ${
+            isCached ? 'bg-emerald-900/40 text-emerald-300 border border-emerald-700'
+                     : 'bg-gray-700 text-gray-400 border border-gray-600'}`}>
+            {isCached ? <><Check className="w-3 h-3" /> analyzed</> : 'not analyzed'}
+          </span>
+        )}
 
         {viewing && (
           <button
@@ -107,6 +125,26 @@ export default function DateReplayBar({ dates, viewing, loading, error, onAnalyz
           <span className="text-gray-500">Pick a past trading day and press <b>Analyze</b> to replay that day&apos;s signals.</span>
         )}
       </div>
+
+      {analyzed.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
+          <span className="text-emerald-400/80 flex items-center gap-1"><Zap className="w-3 h-3" /> Ready (instant):</span>
+          {analyzed.slice(0, 24).map((d) => (
+            <button
+              key={d}
+              disabled={loading}
+              onClick={() => { setPending(d); onAnalyze(d); }}
+              className={`px-1.5 py-0.5 rounded border disabled:opacity-40 ${
+                d === viewing
+                  ? 'bg-amber-700 text-white border-amber-500'
+                  : 'bg-emerald-900/30 text-emerald-300 border-emerald-800 hover:bg-emerald-800/50'
+              }`}
+              title="Already analyzed — opens instantly"
+            >{d.slice(5)}</button>
+          ))}
+          {analyzed.length > 24 && <span className="text-gray-500">+{analyzed.length - 24} more</span>}
+        </div>
+      )}
     </div>
   );
 }

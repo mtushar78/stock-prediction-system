@@ -33,6 +33,7 @@ export default function Dashboard() {
 
   // Historical replay ("time machine") state
   const [tradingDates, setTradingDates] = useState<string[]>([]);
+  const [analyzedDates, setAnalyzedDates] = useState<string[]>([]); // already cached
   const [histDate, setHistDate] = useState<string | null>(null);   // null = live
   const [histLoading, setHistLoading] = useState(false);
   const [histError, setHistError] = useState<string | null>(null);
@@ -94,6 +95,12 @@ export default function Dashboard() {
     }
   };
 
+  const refreshAnalyzedDates = () => {
+    axios.get<string[]>(`${API_URL}/api/analyzed-dates`)
+      .then((res) => setAnalyzedDates(res.data || []))
+      .catch(() => { /* non-fatal */ });
+  };
+
   // Load a past day's signals (lookahead-free; cached server-side).
   const loadHistorical = async (date: string) => {
     setHistDate(date);
@@ -104,10 +111,7 @@ export default function Dashboard() {
         params: { date }, timeout: 180000,
       });
       setSignals(res.data);
-      // Warm the next day so stepping forward is instant.
-      const i = tradingDates.indexOf(date);
-      const newer = i > 0 ? tradingDates[i - 1] : null;
-      if (newer) axios.get(`${API_URL}/api/sniper-signals/by-date`, { params: { date: newer }, timeout: 180000 }).catch(() => {});
+      refreshAnalyzedDates(); // this date is now cached
     } catch (err: unknown) {
       const e = err as { response?: { status?: number; data?: { detail?: string } } };
       setHistError(e.response?.status === 404
@@ -125,11 +129,13 @@ export default function Dashboard() {
     fetchData(true);
   };
 
-  // Load the trading-date list once (for the replay picker).
+  // Load the trading-date list + already-analyzed (cached) dates once.
   useEffect(() => {
     axios.get<string[]>(`${API_URL}/api/trading-dates`)
       .then((res) => setTradingDates(res.data || []))
       .catch(() => { /* non-fatal */ });
+    refreshAnalyzedDates();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Auto-fetch and refresh. In replay mode, refresh only live portfolio/alerts.
@@ -306,6 +312,7 @@ export default function Dashboard() {
         <div className="lg:col-span-2 space-y-6">
           <DateReplayBar
             dates={tradingDates}
+            analyzed={analyzedDates}
             viewing={histDate}
             loading={histLoading}
             error={histError}

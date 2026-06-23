@@ -752,6 +752,22 @@ def get_trading_dates(limit: int = 150):
         db.close()
 
 
+@app.get("/api/analyzed-dates")
+def get_analyzed_dates():
+    """Dates already cached in signals_history — these replay INSTANTLY with no
+    recompute. The frontend uses this to mark which days are 'ready'."""
+    from sqlalchemy import text as _text
+    db = DatabaseManager()
+    try:
+        df = pd.read_sql_query(
+            _text("SELECT DISTINCT date FROM signals_history ORDER BY date DESC"), db.engine)
+        return df['date'].astype(str).str.slice(0, 10).tolist()
+    except Exception:
+        return []  # table doesn't exist until the first historical analysis
+    finally:
+        db.close()
+
+
 @app.get("/api/sniper-signals/by-date")
 def get_sniper_signals_by_date(date: str):
     """Historical replay: the signals the system would have shown on `date`.
