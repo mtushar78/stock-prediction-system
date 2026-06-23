@@ -306,10 +306,10 @@ export default function Dashboard() {
         <div className="lg:col-span-2 space-y-6">
           <DateReplayBar
             dates={tradingDates}
-            value={histDate}
+            viewing={histDate}
             loading={histLoading}
             error={histError}
-            onPick={loadHistorical}
+            onAnalyze={loadHistorical}
             onLive={goLive}
           />
           <SignalsTable

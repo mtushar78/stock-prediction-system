@@ -1,83 +1,112 @@
 'use client';
 
-import { History, ChevronLeft, ChevronRight, Radio } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { History, ChevronLeft, ChevronRight, Radio, CalendarDays, Play } from 'lucide-react';
 
 interface Props {
   dates: string[];          // trading days, newest-first
-  value: string | null;     // selected historical date, null = live
+  viewing: string | null;   // the date currently analyzed/shown (null = live)
   loading: boolean;
   error: string | null;
-  onPick: (date: string) => void;
+  onAnalyze: (date: string) => void;
   onLive: () => void;
 }
 
 /**
- * Time-machine bar: replay any past trading day's signals and step forward
- * day-by-day to watch how they played out. dates[] is newest-first, so a
- * smaller index = a more recent day → "Next" (forward in time) = idx-1.
+ * Time-machine bar. Picking a date / stepping Prev-Next only CHANGES the
+ * pending date — nothing runs until "Analyze" is pressed (the compute is slow).
+ * dates[] is newest-first, so older = a later array index, newer = earlier.
  */
-export default function DateReplayBar({ dates, value, loading, error, onPick, onLive }: Props) {
-  const idx = value ? dates.indexOf(value) : -1;
-  const newer = idx > 0 ? dates[idx - 1] : null;                       // forward in time
-  const older = idx >= 0 && idx < dates.length - 1 ? dates[idx + 1] : null; // back in time
-  const minDate = dates.length ? dates[dates.length - 1] : undefined;
+export default function DateReplayBar({ dates, viewing, loading, error, onAnalyze, onLive }: Props) {
   const maxDate = dates.length ? dates[0] : undefined;
+  const minDate = dates.length ? dates[dates.length - 1] : undefined;
+
+  const [pending, setPending] = useState<string>(viewing || maxDate || '');
+
+  // Seed the picker once dates arrive (or follow the viewed date).
+  useEffect(() => {
+    if (!pending && (viewing || maxDate)) setPending(viewing || maxDate || '');
+  }, [viewing, maxDate]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Nearest trading day strictly older / newer than `pending` (works even if
+  // `pending` is a non-trading day picked from the calendar).
+  const olderDate = dates.find((d) => d < pending) || null;          // back in time
+  const newerList = dates.filter((d) => d > pending);
+  const newerDate = newerList.length ? newerList[newerList.length - 1] : null; // forward in time
+
+  const isTradingDay = dates.includes(pending);
+  const canAnalyze = !!pending && isTradingDay && !loading;
 
   return (
-    <div className={`mb-4 rounded border p-3 ${value ? 'bg-amber-900/20 border-amber-600' : 'bg-gray-800/50 border-gray-700'}`}>
+    <div className={`mb-4 rounded border p-3 ${viewing ? 'bg-amber-900/20 border-amber-600' : 'bg-gray-800/50 border-gray-700'}`}>
       <div className="flex flex-wrap items-center gap-2 text-sm">
-        <History className={`w-4 h-4 ${value ? 'text-amber-400' : 'text-gray-400'}`} />
-        <span className={value ? 'text-amber-300 font-bold' : 'text-gray-300 font-bold'}>
-          {value ? 'REPLAY MODE' : 'Time Machine'}
+        <History className={`w-4 h-4 ${viewing ? 'text-amber-400' : 'text-gray-400'}`} />
+        <span className={viewing ? 'text-amber-300 font-bold' : 'text-gray-300 font-bold'}>Time Machine</span>
+        <span className="text-gray-600">·</span>
+
+        <button
+          disabled={!olderDate || loading}
+          onClick={() => olderDate && setPending(olderDate)}
+          className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-30 flex items-center gap-1"
+          title="Step the date back one trading day"
+        ><ChevronLeft className="w-3 h-3" /> Prev</button>
+
+        <span className="relative flex items-center">
+          <CalendarDays className="w-4 h-4 text-gray-400 absolute left-2 pointer-events-none" />
+          <input
+            type="date"
+            value={pending}
+            min={minDate}
+            max={maxDate}
+            disabled={loading}
+            onChange={(e) => setPending(e.target.value)}
+            className="bg-gray-900 border border-gray-600 rounded pl-8 pr-2 py-1 text-gray-100"
+            title="Pick a past trading day"
+          />
         </span>
 
         <button
-          disabled={!older || loading}
-          onClick={() => older && onPick(older)}
+          disabled={!newerDate || loading}
+          onClick={() => newerDate && setPending(newerDate)}
           className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-30 flex items-center gap-1"
-          title="Previous trading day (back in time)"
-        ><ChevronLeft className="w-3 h-3" /> Prev</button>
-
-        <input
-          type="date"
-          value={value || maxDate || ''}
-          min={minDate}
-          max={maxDate}
-          disabled={loading}
-          onChange={(e) => e.target.value && onPick(e.target.value)}
-          className="bg-gray-900 border border-gray-600 rounded px-2 py-1 text-gray-100"
-          title="Pick any past trading day"
-        />
-
-        <button
-          disabled={!newer || loading}
-          onClick={() => newer && onPick(newer)}
-          className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-30 flex items-center gap-1"
-          title="Next trading day (forward in time)"
+          title="Step the date forward one trading day"
         >Next <ChevronRight className="w-3 h-3" /></button>
 
-        {value && (
+        <button
+          disabled={!canAnalyze}
+          onClick={() => onAnalyze(pending)}
+          className="px-4 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold disabled:opacity-40 flex items-center gap-1"
+          title="Run the analysis for the selected day (takes ~1 min the first time)"
+        ><Play className="w-3 h-3" /> Analyze</button>
+
+        {viewing && (
           <button
             onClick={onLive}
             className="px-3 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white flex items-center gap-1"
             title="Return to today's live signals"
           ><Radio className="w-3 h-3" /> Back to Live</button>
         )}
+      </div>
 
+      <div className="mt-2 text-xs">
         {loading && (
           <span className="text-amber-400 animate-pulse">
-            computing {value}… (first view of a day takes ~1 min, then instant)
+            Analyzing {pending}… this takes ~1 minute the first time, then it&apos;s instant.
           </span>
         )}
         {!loading && error && <span className="text-red-400">{error}</span>}
+        {!loading && !error && pending && !isTradingDay && (
+          <span className="text-yellow-500">{pending} isn&apos;t a trading day — use Prev/Next to snap to one.</span>
+        )}
+        {!loading && !error && isTradingDay && viewing && (
+          <span className="text-amber-200/80">
+            Viewing <b>{viewing}</b> — signals as the system saw them that day. Press <b>Next ▶</b> then <b>Analyze</b> to step forward.
+          </span>
+        )}
+        {!loading && !error && isTradingDay && !viewing && (
+          <span className="text-gray-500">Pick a past trading day and press <b>Analyze</b> to replay that day&apos;s signals.</span>
+        )}
       </div>
-
-      {value && !loading && !error && (
-        <div className="mt-2 text-xs text-amber-200/80">
-          Showing the signals the system would have given on <b>{value}</b> (computed with only the data
-          available that day — no hindsight). Use <b>Next ▶</b> to step forward and watch how they played out.
-        </div>
-      )}
     </div>
   );
 }
