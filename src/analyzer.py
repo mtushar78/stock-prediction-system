@@ -1298,6 +1298,18 @@ class StockAnalyzer:
         if not price_ok:
             fails.append('Price < %g (penny/MF unit)' % self.breakout_min_price)
 
+        # Extra context + the rule thresholds, so the UI's "why it fired" modal
+        # can show exact values vs the rule for every criterion.
+        checks['close'] = round(close, 2)
+        checks['high_20d'] = round(hi, 2) if hi else None
+        checks['sma200'] = round(float(sma200), 2) if pd.notna(sma200) and sma200 else None
+        checks['lookback'] = self.breakout_high_lookback
+        checks['tol_pct'] = self.breakout_high_tol_pct
+        checks['max_ext_20d'] = self.breakout_max_ext_20d
+        checks['min_rvol'] = self.breakout_min_rvol
+        checks['min_avg_vol20'] = self.breakout_min_avg_vol20
+        checks['min_price'] = self.breakout_min_price
+
         return {'is_breakout': len(fails) == 0, 'reasons': fails, 'checks': checks}
 
     def generate_signal(self, score: int) -> str:

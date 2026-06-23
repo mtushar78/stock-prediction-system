@@ -44,6 +44,14 @@ export interface Signal {
   BreakoutSignal?: boolean;
   BreakoutReasons?: string[];
   IsFreshBreakout?: boolean;
+  BreakoutChecks?: {
+    close?: number; high_20d?: number; dist_to_high_pct?: number;
+    lookback?: number; tol_pct?: number;
+    uptrend?: boolean; sma200?: number;
+    ret_20d?: number; max_ext_20d?: number;
+    rvol?: number; min_rvol?: number;
+    avg_vol20?: number; min_avg_vol20?: number; min_price?: number;
+  };
   // v8 ENTRY-PRICE GUIDANCE
   PrevClose?: number;
   DayLow?: number;

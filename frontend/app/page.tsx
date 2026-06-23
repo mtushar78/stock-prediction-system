@@ -15,6 +15,7 @@ import PortfolioSummary from './components/PortfolioSummary';
 import VolumeDetailModal from './components/VolumeDetailModal';
 import PortfolioVolumeModal from './components/PortfolioVolumeModal';
 import SignalDetailModal from './components/SignalDetailModal';
+import BreakoutDetailModal from './components/BreakoutDetailModal';
 import PortfolioDetailModal from './components/PortfolioDetailModal';
 import PurchaseHistoryModal from './components/PurchaseHistoryModal';
 import PriceHistoryModal from './components/PriceHistoryModal';
@@ -54,6 +55,7 @@ export default function Dashboard() {
   // Modal State
   const [activeModal, setActiveModal] = useState<number | null>(null);
   const [volumeModalSignal, setVolumeModalSignal] = useState<Signal | null>(null);
+  const [breakoutModalSignal, setBreakoutModalSignal] = useState<Signal | null>(null);
   const [portfolioVolumeModal, setPortfolioVolumeModal] = useState<{ ticker: string; volume: number } | null>(null);
   const [purchaseHistoryModal, setPurchaseHistoryModal] = useState<string | null>(null);
   const [purchaseHistory, setPurchaseHistory] = useState<PurchaseHistory[]>([]);
@@ -324,6 +326,7 @@ export default function Dashboard() {
             loading={loading || histLoading}
             onVolumeClick={(signal) => setVolumeModalSignal(signal)}
             onInfoClick={(signal) => setActiveModal(signals.indexOf(signal))}
+            onBreakoutInfoClick={(signal) => setBreakoutModalSignal(signal)}
             onPriceInfoClick={(signal) => setPriceHistoryModal({ ticker: signal.Ticker, currentPrice: signal.Price })}
             activeTicker={activeModal !== null && activeModal < signals.length ? signals[activeModal]?.Ticker ?? null : null}
           />
@@ -393,9 +396,16 @@ export default function Dashboard() {
       )}
 
       {activeModal !== null && activeModal < signals.length && (
-        <SignalDetailModal 
+        <SignalDetailModal
           signal={signals[activeModal]}
           onClose={() => setActiveModal(null)}
+        />
+      )}
+
+      {breakoutModalSignal && (
+        <BreakoutDetailModal
+          signal={breakoutModalSignal}
+          onClose={() => setBreakoutModalSignal(null)}
         />
       )}
 

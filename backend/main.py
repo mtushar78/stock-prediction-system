@@ -153,7 +153,7 @@ def _format_signal_records(df):
         'prev_signal': 'PrevSignal', 'prev_early_signal': 'PrevEarlySignal',
         'signal_strength': 'SignalStrength',
         'breakout_signal': 'BreakoutSignal', 'breakout_reasons': 'BreakoutReasons',
-        'is_fresh_breakout': 'IsFreshBreakout',
+        'breakout_checks': 'BreakoutChecks', 'is_fresh_breakout': 'IsFreshBreakout',
         'prev_close': 'PrevClose', 'day_low': 'DayLow', 'day_high': 'DayHigh',
         'range_position': 'RangePosition', 'recommended_entry': 'RecommendedEntry',
         'entry_quality': 'EntryQuality', 'entry_warning': 'EntryWarning',
@@ -164,15 +164,16 @@ def _format_signal_records(df):
             df[rcol] = df[rcol].apply(
                 lambda x: eval(x) if isinstance(x, str) and x.startswith('[') else (x or [])
             )
-    if 'EarlyComponents' in df.columns:
-        def _parse_components(x):
-            if isinstance(x, str):
-                try:
-                    return _json.loads(x)
-                except Exception:
-                    return {}
-            return x if isinstance(x, dict) else {}
-        df['EarlyComponents'] = df['EarlyComponents'].apply(_parse_components)
+    def _parse_json_obj(x):
+        if isinstance(x, str):
+            try:
+                return _json.loads(x)
+            except Exception:
+                return {}
+        return x if isinstance(x, dict) else {}
+    for ocol in ('EarlyComponents', 'BreakoutChecks'):
+        if ocol in df.columns:
+            df[ocol] = df[ocol].apply(_parse_json_obj)
     if 'Reason' in df.columns:
         df['Reason'] = df['Reason'].apply(lambda x: ', '.join(eval(x)) if isinstance(x, str) and x.startswith('[') else x)
     if 'v5_details' in df.columns:
