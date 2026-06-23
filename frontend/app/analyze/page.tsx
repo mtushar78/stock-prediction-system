@@ -65,13 +65,39 @@ function signalPill(sig: string) {
 }
 
 function ScoreHistoryTable({ history, loading }: { history: ScoreHistory | null; loading: boolean }) {
+  const [pageSize, setPageSize] = useState<number>(20);
+  const [page, setPage] = useState(0);
+
+  // newest-first
+  const rows = useMemo(() => (history?.history ? [...history.history].reverse() : []), [history]);
+  const total = rows.length;
+  // reset to first page whenever the data or page size changes
+  useEffect(() => { setPage(0); }, [history, pageSize]);
+
+  const perPage = pageSize >= total && total > 0 ? total : pageSize;
+  const pageCount = Math.max(1, Math.ceil(total / perPage));
+  const curPage = Math.min(page, pageCount - 1);
+  const start = curPage * perPage;
+  const visible = rows.slice(start, start + perPage);
+
   return (
     <div className="bg-gray-950 border border-gray-700 rounded p-4">
       <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
-        <h3 className="font-bold text-indigo-300">📅 20-Day Score History (settled replay)</h3>
-        {history?.history?.length ? (
-          <span className="text-xs text-gray-600">{history.history.length} days · newest first</span>
-        ) : null}
+        <h3 className="font-bold text-indigo-300">📅 60-Day Score History (settled replay)</h3>
+        <div className="flex items-center gap-2 text-xs text-gray-500">
+          {total > 0 && <span>{total} days · newest first</span>}
+          <label className="flex items-center gap-1">
+            Show
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              className="bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 text-gray-200"
+            >
+              {[10, 20, 30, 60].map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+            per page
+          </label>
+        </div>
       </div>
       <p className="text-xs text-gray-500 mb-3 italic">
         Day-by-day replay of MAIN score &amp; EarlyScore. Past days use settled volume; today&apos;s row
@@ -102,7 +128,7 @@ function ScoreHistoryTable({ history, loading }: { history: ScoreHistory | null;
               </tr>
             </thead>
             <tbody>
-              {[...history.history].reverse().map((r) => (
+              {visible.map((r) => (
                 <tr key={r.date} className="border-b border-gray-800/70 hover:bg-gray-800/40">
                   <td className="py-1.5 pr-3 text-gray-300">
                     {r.date}{r.is_intraday ? <span className="text-yellow-500 ml-1" title="Intraday / projected">●</span> : null}
@@ -130,6 +156,26 @@ function ScoreHistoryTable({ history, loading }: { history: ScoreHistory | null;
               ))}
             </tbody>
           </table>
+          {pageCount > 1 && (
+            <div className="flex items-center justify-between mt-3 text-xs">
+              <span className="text-gray-600">
+                Showing {start + 1}–{Math.min(start + perPage, total)} of {total}
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={curPage === 0}
+                  className="px-2 py-1 rounded bg-gray-800 border border-gray-700 hover:bg-gray-700 disabled:opacity-30"
+                >‹ Prev</button>
+                <span className="text-gray-400 px-2">Page {curPage + 1} / {pageCount}</span>
+                <button
+                  onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+                  disabled={curPage >= pageCount - 1}
+                  className="px-2 py-1 rounded bg-gray-800 border border-gray-700 hover:bg-gray-700 disabled:opacity-30"
+                >Next ›</button>
+              </div>
+            </div>
+          )}
           <div className="text-[11px] text-gray-600 mt-2">
             SCORE = MAIN score (raw in parens); BUY ≥ 50. EARLY ≥ 60 = pre-breakout window.
             LATE = late-entry penalty. <span className="text-yellow-500">●</span> = intraday/projected row.
@@ -179,7 +225,7 @@ export default function AnalyzeTickerPage() {
     }
     setLoadingAnalyze(true);
     setLoadingHistory(true);
-    // Detailed analysis (current snapshot) + 20-day score history in parallel.
+    // Detailed analysis (current snapshot) + 60-day score history in parallel.
     const analyzePromise = axios
       .post<DetailedTickerAnalysis>(`${API_URL}/api/analyze-ticker`, { ticker: normalizedTicker })
       .then((res) => setResult(res.data))
@@ -190,7 +236,7 @@ export default function AnalyzeTickerPage() {
       .finally(() => setLoadingAnalyze(false));
 
     const historyPromise = axios
-      .get<ScoreHistory>(`${API_URL}/api/score-history/${normalizedTicker}?days=20`)
+      .get<ScoreHistory>(`${API_URL}/api/score-history/${normalizedTicker}?days=60`)
       .then((res) => setHistory(res.data))
       .catch(() => setHistory(null))
       .finally(() => setLoadingHistory(false));
