@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import axios from 'axios';
 import { DetailedTickerAnalysis, ScoreBreakdownItem, ScoreHistory } from '../types';
+import BreakoutCriteria from '../components/BreakoutCriteria';
 
 // API Base URL
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -251,13 +252,14 @@ export default function AnalyzeTickerPage() {
     return <Badge label="OK" variant="green" />;
   }, [result]);
 
-  const signalBadge = useMemo(() => {
-    const sig = result?.score?.signal;
-    if (!sig) return null;
-    if (sig === 'BUY') return <Badge label="BUY" variant="green" />;
-    if (sig === 'WAIT') return <Badge label="WAIT" variant="yellow" />;
-    return <Badge label={sig} variant="gray" />;
+  const breakoutBadge = useMemo(() => {
+    if (!result?.breakout) return null;
+    return result.breakout.is_breakout
+      ? <Badge label="🚀 BREAKOUT" variant="blue" />
+      : <Badge label="Not a breakout" variant="gray" />;
   }, [result]);
+
+  const [legacy, setLegacy] = useState(false);
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 p-4 md:p-8 font-mono">
@@ -319,10 +321,7 @@ export default function AnalyzeTickerPage() {
           </div>
           <div className="flex items-center gap-2">
             {statusBadge}
-            {signalBadge}
-            {result?.score?.final_score !== undefined && result?.score?.final_score !== null && (
-              <Badge label={`Score: ${result.score.final_score}`} variant="blue" />
-            )}
+            {breakoutBadge}
           </div>
         </div>
 
@@ -356,8 +355,37 @@ export default function AnalyzeTickerPage() {
               )}
             </div>
 
-            {/* 20-day score history */}
+            {/* Breakout Analysis — the signal that matters (v9) */}
+            {result.breakout && (
+              <div className={`rounded p-4 border ${result.breakout.is_breakout ? 'bg-sky-950/40 border-sky-700' : 'bg-gray-950 border-gray-700'}`}>
+                <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
+                  <h3 className="font-bold text-sky-300">🚀 Breakout Analysis</h3>
+                  {result.breakout.is_breakout
+                    ? <Badge label="✓ BREAKOUT — on the buy list" variant="green" />
+                    : <Badge label="✗ Not a breakout" variant="gray" />}
+                </div>
+                <p className="text-xs text-gray-500 mb-3 italic">
+                  The only signal with a proven, regime-robust edge (backtested 2019–2026). All five rules
+                  must pass. {result.breakout.is_breakout ? '' : 'The ✗ rows below are why it doesn’t qualify today.'}
+                </p>
+                <BreakoutCriteria checks={result.breakout.checks} />
+              </div>
+            )}
+
+            {/* 60-day score history */}
             <ScoreHistoryTable history={history} loading={loadingHistory} />
+
+            {/* ---- LEGACY (collapsed) ---- */}
+            <div className="border-t border-gray-700/60 pt-3">
+              <button onClick={() => setLegacy((x) => !x)} className="text-xs text-gray-500 hover:text-gray-300">
+                {legacy ? '▾ Hide' : '▸ Show'} legacy analysis (Score / Early / breakdown — low reliability)
+              </button>
+            </div>
+
+            {legacy && (<>
+            <div className="text-[11px] text-amber-300/70 bg-amber-900/10 border border-amber-800/40 rounded px-2 py-1">
+              ⚠️ The Score/Early engine below was inversely related to forward returns in backtest — shown for reference only. Trade the breakout verdict above.
+            </div>
 
             {/* Filters */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -670,6 +698,7 @@ export default function AnalyzeTickerPage() {
                 )}
               </div>
             )}
+            </>)}
           </div>
         )}
       </section>

@@ -2045,6 +2045,9 @@ class StockAnalyzer:
 
                 # v7: parallel EarlyScore breakdown
                 'early': self._sanitize_for_json(self.calculate_early_score(row, df)),
+
+                # v9: breakout verdict + the exact 5-rule checks (the signal to trade)
+                'breakout': self._sanitize_for_json(self.calculate_breakout_signal(row, df)),
             }
 
             # If official analysis exists, include official computed trading levels for easy comparison

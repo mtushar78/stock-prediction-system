@@ -344,6 +344,17 @@ export interface DetailedTickerAnalysis {
     reward_risk_ratio?: number | null;
     trend_status?: string;
   };
+
+  // v9: breakout verdict + the exact 5-rule checks (the signal to trade)
+  breakout?: {
+    is_breakout: boolean;
+    reasons: string[];
+    checks: {
+      close?: number; high_20d?: number; dist_to_high_pct?: number; lookback?: number; tol_pct?: number;
+      uptrend?: boolean; sma200?: number; ret_20d?: number; max_ext_20d?: number;
+      rvol?: number; min_rvol?: number; avg_vol20?: number; min_avg_vol20?: number; min_price?: number;
+    };
+  };
 }
 
 // ----------------------------
