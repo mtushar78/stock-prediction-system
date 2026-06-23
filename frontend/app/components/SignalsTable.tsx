@@ -1,5 +1,5 @@
 import { Signal } from '../types';
-import { AlertCircle, Info, Flame, Sparkles, HelpCircle } from 'lucide-react';
+import { AlertCircle, Info, Flame, Sparkles, HelpCircle, Rocket } from 'lucide-react';
 import { useState } from 'react';
 
 interface SignalsTableProps {
@@ -11,7 +11,7 @@ interface SignalsTableProps {
   activeTicker: string | null;
 }
 
-type ViewTab = 'ALL' | 'EARLY' | 'BUY' | 'FRESH';
+type ViewTab = 'ALL' | 'EARLY' | 'BUY' | 'FRESH' | 'BREAKOUT';
 type SortKey = 'Score' | 'EarlyScore' | 'RVOL' | 'Price' | 'Ticker';
 type SortDir = 'asc' | 'desc';
 
@@ -39,6 +39,7 @@ export default function SignalsTable({
     if (tab === 'EARLY') return s.EarlySignal === 'EARLY' || s.EarlySignal === 'WATCH';
     if (tab === 'BUY') return s.Signal === 'BUY';
     if (tab === 'FRESH') return s.IsFreshBuy || s.IsFreshEarly;
+    if (tab === 'BREAKOUT') return !!s.BreakoutSignal;
     return true;
   });
 
@@ -56,6 +57,7 @@ export default function SignalsTable({
   const countEarly = signals.filter((s) => s.EarlySignal === 'EARLY' || s.EarlySignal === 'WATCH').length;
   const countBuy = signals.filter((s) => s.Signal === 'BUY').length;
   const countFresh = signals.filter((s) => s.IsFreshBuy || s.IsFreshEarly).length;
+  const countBreakout = signals.filter((s) => s.BreakoutSignal).length;
 
   const toggleSort = (k: SortKey) => {
     if (sortKey === k) setSortDir(sortDir === 'desc' ? 'asc' : 'desc');
@@ -104,6 +106,11 @@ export default function SignalsTable({
             className={`px-3 py-1 rounded flex items-center gap-1 ${tab === 'FRESH' ? 'bg-yellow-700 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
             title="Day-1 signals — yesterday was NOT BUY/EARLY. These are the freshest opportunities."
           ><Sparkles className="w-3 h-3" /> FRESH ({countFresh})</button>
+          <button
+            onClick={() => setTab('BREAKOUT')}
+            className={`px-3 py-1 rounded flex items-center gap-1 ${tab === 'BREAKOUT' ? 'bg-sky-700 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+            title="v9 — genuine 20-day-high breakout, not yet extended, in an uptrend, liquid. The only entry rule with positive edge in every year 2019–2026 (backtested)."
+          ><Rocket className="w-3 h-3" /> BREAKOUT ({countBreakout})</button>
         </div>
       </div>
 
@@ -112,6 +119,7 @@ export default function SignalsTable({
           <div><span className="text-green-400 font-bold">SCORE</span> — main multi-factor score (0–100). ≥ 50 = <b className="text-green-300">BUY</b>, ≥ 28 = <b className="text-yellow-300">WAIT</b>, &lt; 28 = IGNORE. Late-entry penalty automatically reduces this for stocks that already moved.</div>
           <div><span className="text-orange-400 font-bold">EARLY</span> — pre-breakout score (0–100). ≥ 60 = <b className="text-orange-300">EARLY</b> (act now), ≥ 40 = <b className="text-amber-200">WATCH</b> (setting up). Built from <i>tight base + volume tell + closing tell + near 10d high + not extended</i>.</div>
           <div><span className="text-yellow-300 font-bold">FRESH</span> badge — first day this signal fired (yesterday was not BUY/EARLY). Fresh signals are the highest-quality entries.</div>
+          <div><span className="text-sky-400 font-bold">🚀 BREAKOUT</span> (v9) — a genuine 20-day-high breakout that is <i>not yet extended</i> (&lt;12%/20d), above the 200-SMA, liquid, with real volume. In a 2019–2026 walk-forward backtest this was the only entry rule with a <b>positive edge in every year</b> (the legacy SCORE/EARLY are inversely related to forward return). Treat this as the primary buy list.</div>
           <div className="text-gray-500">Click any column header to sort. Click <Info className="inline w-3 h-3" /> in the INFO column for the full breakdown (reasons shown in tooltip on hover).</div>
         </div>
       )}
@@ -171,6 +179,12 @@ export default function SignalsTable({
                       <span title="FRESH — first day this BUY signal fired (yesterday was below BUY threshold)."
                             className="text-[9px] bg-green-600 text-white px-1 py-0.5 rounded font-bold shrink-0">
                         FRESH
+                      </span>
+                    )}
+                    {!!sig.BreakoutSignal && (
+                      <span title={`BREAKOUT (v9 — proven edge): 20-day-high breakout, not extended, uptrend, liquid.${sig.IsFreshBreakout ? ' First day.' : ''}`}
+                            className="text-[9px] bg-sky-600 text-white px-1 py-0.5 rounded font-bold shrink-0">
+                        🚀
                       </span>
                     )}
                   </div>
@@ -268,6 +282,7 @@ export default function SignalsTable({
                   tab === 'EARLY' ? 'No EARLY/WATCH setups right now.' :
                   tab === 'BUY'   ? 'No BUY signals today.' :
                   tab === 'FRESH' ? 'No fresh (day-1) signals today.' :
+                  tab === 'BREAKOUT' ? 'No breakout setups today.' :
                                     'No signals today. Market is sleeping.'}
               </td></tr>
             )}

@@ -40,6 +40,10 @@ export interface Signal {
   PrevSignal?: string | null;
   PrevEarlySignal?: string | null;
   SignalStrength?: number;  // max(Score, EarlyScore) for sorting
+  // v9 BREAKOUT SIGNAL (additive, proven positive edge)
+  BreakoutSignal?: boolean;
+  BreakoutReasons?: string[];
+  IsFreshBreakout?: boolean;
   // v8 ENTRY-PRICE GUIDANCE
   PrevClose?: number;
   DayLow?: number;
@@ -376,6 +380,8 @@ export interface ChartSignal {
   context: ChartContext;
   explanation: string;
   detected_at?: string;
+  // v9: confluence — the quant engine ALSO flags a breakout for this ticker
+  breakout?: boolean;
 }
 
 export interface ChartOhlcvBar {

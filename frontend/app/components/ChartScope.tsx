@@ -13,14 +13,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { ChartSignal } from '../types';
-import { Activity, TrendingUp, Layers, Info } from 'lucide-react';
+import { Activity, TrendingUp, Layers, Info, Rocket } from 'lucide-react';
 
 interface ChartScopeProps {
   apiUrl: string;
   onRowClick: (ticker: string) => void;
 }
 
-type Tab = 'ALL' | 'HIGH' | 'BULLISH' | 'MULTI';
+type Tab = 'ALL' | 'HIGH' | 'BULLISH' | 'MULTI' | 'BREAKOUT';
 type SortKey = 'score' | 'patterns' | 'ticker' | 'price';
 type SortDir = 'asc' | 'desc';
 
@@ -95,6 +95,7 @@ export default function ChartScope({ apiUrl, onRowClick }: ChartScopeProps) {
       if (tab === 'HIGH') return s.confidence === 'HIGH';
       if (tab === 'BULLISH') return s.overall_bias === 'bullish';
       if (tab === 'MULTI') return s.pattern_count >= 2;
+      if (tab === 'BREAKOUT') return !!s.breakout;
       return true;
     });
   }, [signals, tab]);
@@ -145,6 +146,7 @@ export default function ChartScope({ apiUrl, onRowClick }: ChartScopeProps) {
   const countHigh = signals.filter((s) => s.confidence === 'HIGH').length;
   const countBullish = signals.filter((s) => s.overall_bias === 'bullish').length;
   const countMulti = signals.filter((s) => s.pattern_count >= 2).length;
+  const countBreakout = signals.filter((s) => s.breakout).length;
 
   return (
     <section className="bg-gray-800 rounded-lg p-6 border border-purple-800/40">
@@ -208,6 +210,17 @@ export default function ChartScope({ apiUrl, onRowClick }: ChartScopeProps) {
           >
             MULTI ({countMulti})
           </button>
+          <button
+            onClick={() => setTab('BREAKOUT')}
+            className={`px-3 py-1 rounded flex items-center gap-1 ${
+              tab === 'BREAKOUT'
+                ? 'bg-sky-700 text-white'
+                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+            }`}
+            title="Confluence — chart pattern AND the quant engine's proven 20-day breakout fire on the same ticker. Highest conviction."
+          >
+            <Rocket className="w-3 h-3" /> BREAKOUT ({countBreakout})
+          </button>
         </div>
       </div>
 
@@ -224,6 +237,12 @@ export default function ChartScope({ apiUrl, onRowClick }: ChartScopeProps) {
             <span className="text-purple-300 font-bold">SCORE</span> aggregates all
             detected patterns (0–100). <b>HIGH</b> confidence = score ≥ 80 with ≥ 2
             patterns firing together. <b>MEDIUM</b> = ≥ 50. <b>LOW</b> = ≥ 25.
+          </div>
+          <div>
+            <span className="text-sky-400 font-bold">🚀 BREAKOUT</span> — confluence:
+            the independent quant engine&apos;s proven 20-day-high breakout (the only
+            entry with a positive edge in every year 2019–2026) fires on the same
+            ticker. When both engines agree, it&apos;s the highest-conviction setup.
           </div>
           <div className="text-gray-500">
             Click any row to see the full candlestick chart with pattern markers
@@ -292,7 +311,15 @@ export default function ChartScope({ apiUrl, onRowClick }: ChartScopeProps) {
                 title="Click to view full chart + pattern breakdown"
               >
                 <td className="py-2 pr-4 font-bold text-purple-300 whitespace-nowrap overflow-hidden">
-                  {sig.ticker}
+                  <span className="inline-flex items-center gap-1.5">
+                    {sig.ticker}
+                    {!!sig.breakout && (
+                      <span title="Confluence — the quant engine's proven 20-day breakout ALSO fires here. Highest conviction."
+                            className="text-[9px] bg-sky-600 text-white px-1 py-0.5 rounded font-bold shrink-0">
+                        🚀
+                      </span>
+                    )}
+                  </span>
                 </td>
                 <td className="py-2 pr-4 whitespace-nowrap text-gray-200">
                   {sig.price?.toFixed(1) ?? '-'}

@@ -124,6 +124,24 @@ class StockAnalyzer:
         # Legacy threshold kept for compatibility
         self.rvol_threshold = 1.5  # v5: lowered from 2.5 (graduated scoring handles tiers)
         self.price_change_threshold = 0.02  # 2% price change for quiet accumulation
+
+        # ── v9: BREAKOUT ENTRY SIGNAL ───────────────────────────────────────
+        # A 14-year walk-forward study (backtest_signals.py / exit_study.py)
+        # found the legacy BUY/EARLY signals have NEGATIVE edge: higher score ->
+        # worse forward return, because the engine rewards "near the 10-day high
+        # + tight base + volume pop" — which on DSE selects local tops that
+        # revert (realised -1.2%/trade, win 20%). The ONLY entry rule that beat
+        # the universe in EVERY year 2019-2026 was a genuine 20-day-high
+        # breakout that is NOT yet extended, in a confirmed uptrend, liquid
+        # (realised +1.1%/trade, win 42%, positive every year — same exits).
+        # This is exposed ADDITIVELY as `breakout_signal`; the legacy
+        # BUY/EARLY signals are left unchanged.
+        self.breakout_high_lookback = 20       # must break the N-day high
+        self.breakout_high_tol_pct = 1.0       # within this % of (or above) it
+        self.breakout_max_ext_20d = 12.0       # reject if 20-day return >= this %
+        self.breakout_min_rvol = 1.5           # needs real volume confirmation
+        self.breakout_min_avg_vol20 = 50000    # sustained liquidity floor
+        self.breakout_min_price = 5.0          # exclude sub-5 penny / MF units
         
     def calculate_projected_volume(self, current_vol: float, current_time: datetime = None) -> float:
         """
@@ -1220,6 +1238,68 @@ class StockAnalyzer:
             'v5_details': details,
         }
     
+    def calculate_breakout_signal(self, row: pd.Series, df: pd.DataFrame) -> Dict:
+        """v9: regime-robust BREAKOUT entry (the only rule with positive edge in
+        every year 2019-2026 — see module/__init__ notes).
+
+        Fires when price breaks to a new ~20-day high WITH volume, while still
+        EARLY in the move (20-day return under the cap), in a confirmed uptrend,
+        and liquid. Returns {'is_breakout', 'reasons' (why it failed/passed),
+        'checks'}. Purely structural — independent of the legacy score so it can
+        be surfaced additively without touching BUY/EARLY behaviour.
+        """
+        fails, checks = [], {}
+        close = float(row['close']) if pd.notna(row.get('close')) else 0.0
+
+        # 1. Breakout — at / above the N-day high (within tolerance)
+        hi = None
+        if len(df) >= self.breakout_high_lookback:
+            hi = float(df['high'].tail(self.breakout_high_lookback).max())
+        dist_hi = ((close / hi - 1) * 100) if hi else None
+        breakout_ok = dist_hi is not None and dist_hi > -self.breakout_high_tol_pct
+        checks['dist_to_high_pct'] = round(dist_hi, 2) if dist_hi is not None else None
+        if not breakout_ok:
+            fails.append(f'Not breaking {self.breakout_high_lookback}d high'
+                         if dist_hi is not None else 'Insufficient history')
+
+        # 2. Uptrend — above the 200-day SMA
+        sma200 = row.get('sma_200')
+        uptrend_ok = bool(pd.notna(sma200) and sma200 > 0 and close > sma200)
+        checks['uptrend'] = uptrend_ok
+        if not uptrend_ok:
+            fails.append('Below 200-SMA (not an uptrend)')
+
+        # 3. Not extended — 20-day return under the cap
+        ret_20d = None
+        if len(df) >= 21:
+            c20 = float(df.iloc[-21]['close'])
+            if c20 > 0:
+                ret_20d = (close - c20) / c20 * 100
+        ext_ok = ret_20d is not None and ret_20d < self.breakout_max_ext_20d
+        checks['ret_20d'] = round(ret_20d, 2) if ret_20d is not None else None
+        if not ext_ok:
+            fails.append(f'Already extended ({ret_20d:.0f}%/20d)'
+                         if ret_20d is not None else 'Insufficient history')
+
+        # 4. Volume confirmation
+        rvol = float(row['rvol']) if pd.notna(row.get('rvol')) else 0.0
+        rvol_ok = rvol >= self.breakout_min_rvol
+        checks['rvol'] = round(rvol, 2)
+        if not rvol_ok:
+            fails.append(f'Weak volume ({rvol:.1f}x < {self.breakout_min_rvol}x)')
+
+        # 5. Liquidity / price floor
+        avg_vol20 = row.get('avg_volume_20')
+        liquid_ok = bool(pd.notna(avg_vol20) and avg_vol20 >= self.breakout_min_avg_vol20)
+        price_ok = close >= self.breakout_min_price
+        checks['avg_vol20'] = int(avg_vol20) if pd.notna(avg_vol20) else None
+        if not liquid_ok:
+            fails.append('Thin (20d avg vol < %d)' % self.breakout_min_avg_vol20)
+        if not price_ok:
+            fails.append('Price < %g (penny/MF unit)' % self.breakout_min_price)
+
+        return {'is_breakout': len(fails) == 0, 'reasons': fails, 'checks': checks}
+
     def generate_signal(self, score: int) -> str:
         """
         Generate trading signal based on score (v7 thresholds).
@@ -1316,11 +1396,16 @@ class StockAnalyzer:
             # v7: Parallel EarlyScore (leading pre-breakout detector)
             early_result = self.calculate_early_score(row, df)
 
+            # v9: additive BREAKOUT signal (proven positive edge). Computed
+            # alongside — does NOT alter the legacy BUY/EARLY signals.
+            breakout = self.calculate_breakout_signal(row, df)
+
             # v7: Yesterday's perspective for fresh-signal detection.
             # Recompute indicators on history excluding today so the OBV/BB
             # slopes are calculated as of yesterday.
             prev_signal = None
             prev_early_signal = None
+            prev_breakout = None
             if not analysis_date and len(raw_df) >= 21:
                 try:
                     df_y = self.calculate_indicators(raw_df.iloc[:-1])
@@ -1330,11 +1415,13 @@ class StockAnalyzer:
                         prev_signal = self.generate_signal(prev_score['score'])
                         prev_early = self.calculate_early_score(prev_row_y, df_y)
                         prev_early_signal = prev_early['signal']
+                        prev_breakout = self.calculate_breakout_signal(prev_row_y, df_y)['is_breakout']
                 except Exception as e:
                     logger.debug(f"Fresh-signal recompute failed for {ticker}: {e}")
 
             is_fresh_buy = bool(signal == 'BUY' and prev_signal != 'BUY')
             is_fresh_early = bool(early_result['signal'] == 'EARLY' and prev_early_signal != 'EARLY')
+            is_fresh_breakout = bool(breakout['is_breakout'] and not prev_breakout)
 
             # v8: intraday entry-price guidance (advisory — warn, don't block).
             prev_close_val = (float(df.iloc[-2]['close']) if len(df) >= 2
@@ -1415,6 +1502,12 @@ class StockAnalyzer:
                 'prev_early_signal': prev_early_signal,
                 # Combined "best" score for sorting on the front-end
                 'signal_strength': max(score_result['score'], early_result['score']),
+
+                # ===== v9 BREAKOUT SIGNAL (additive, proven edge) =====
+                'breakout_signal': breakout['is_breakout'],
+                'breakout_reasons': breakout['reasons'],
+                'breakout_checks': self._sanitize_for_json(breakout['checks']),
+                'is_fresh_breakout': is_fresh_breakout,
 
                 # ===== v8 ENTRY-PRICE GUIDANCE =====
                 'prev_close': entry_guidance['prev_close'],

@@ -118,6 +118,7 @@ export default function PortfolioTable({
                   <div className="flex items-center gap-2">
                     <span className={`${
                       item.status === 'STOP_LOSS' ? 'text-red-500' :
+                      item.status === 'TREND_EXIT' ? 'text-red-400' :
                       item.status === 'TAKE_PROFIT' ? 'text-yellow-500' :
                       item.status === 'ZOMBIE_WARNING' ? 'text-orange-500' :
                       'text-green-500'

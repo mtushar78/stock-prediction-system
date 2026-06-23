@@ -122,23 +122,24 @@ export default function PortfolioDetailModal({ item, onClose }: PortfolioDetailM
           {/* Status Warning */}
           {item.status !== 'HOLD' && (
             <div className={`p-4 rounded border-2 ${
-              item.status === 'STOP_LOSS' || item.status === 'TAKE_PROFIT' 
-                ? 'bg-red-900/30 border-red-600' 
+              item.status === 'STOP_LOSS' || item.status === 'TAKE_PROFIT' || item.status === 'TREND_EXIT'
+                ? 'bg-red-900/30 border-red-600'
                 : 'bg-orange-900/30 border-orange-600'
             }`}>
               <div className="flex items-center gap-2">
                 <span className="text-2xl">⚠️</span>
                 <div>
                   <div className={`font-bold ${
-                    item.status === 'STOP_LOSS' || item.status === 'TAKE_PROFIT' 
-                      ? 'text-red-400' 
+                    item.status === 'STOP_LOSS' || item.status === 'TAKE_PROFIT' || item.status === 'TREND_EXIT'
+                      ? 'text-red-400'
                       : 'text-orange-400'
                   }`}>
                     {item.status}
                   </div>
                   <div className="text-xs text-gray-400 mt-1">
                     {item.status === 'STOP_LOSS' && 'Emergency stop hit! Sell immediately to limit losses.'}
-                    {item.status === 'TAKE_PROFIT' && 'Trailing stop hit! Take profit now.'}
+                    {item.status === 'TAKE_PROFIT' && 'Trailing stop hit while in profit — take profit now.'}
+                    {item.status === 'TREND_EXIT' && 'Trailing stop hit below your buy price — trend broke, exit to cap the loss.'}
                     {item.status === 'ZOMBIE_WARNING' && `Held ${item.days_held} days with minimal movement. Consider exiting.`}
                     {item.status === 'CLIMAX' && 'High volume spike! Consider taking partial profits.'}
                   </div>

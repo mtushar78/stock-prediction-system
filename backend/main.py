@@ -102,8 +102,8 @@ def _prepare_signals_for_sqlite(df_results):
     StockAnalyzer.analyze_ticker."""
     import json as _json
     df_results_copy = df_results.copy()
-    list_cols = ['reasons', 'early_reasons']
-    dict_cols = ['v5_details', 'early_components']
+    list_cols = ['reasons', 'early_reasons', 'breakout_reasons']
+    dict_cols = ['v5_details', 'early_components', 'breakout_checks']
     for col in list_cols:
         if col in df_results_copy.columns:
             df_results_copy[col] = df_results_copy[col].apply(
@@ -539,14 +539,17 @@ def get_sniper_signals():
         except Exception:
             cols = []
         has_v7 = 'early_signal' in cols and 'signal_strength' in cols
+        has_breakout = 'breakout_signal' in cols
 
         if has_v7:
+            where = ("WHERE signal IN ('BUY', 'WAIT') "
+                     "OR early_signal IN ('EARLY', 'WATCH')")
+            if has_breakout:
+                # also surface proven breakout setups even if their legacy
+                # score is low (v9 — breakout is independent of the score)
+                where += " OR breakout_signal = 1"
             df = pd.read_sql_query(
-                text(
-                    "SELECT * FROM signals_today "
-                    "WHERE signal IN ('BUY', 'WAIT') OR early_signal IN ('EARLY', 'WATCH') "
-                    "ORDER BY signal_strength DESC"
-                ),
+                text(f"SELECT * FROM signals_today {where} ORDER BY signal_strength DESC"),
                 db.engine,
             )
         else:
@@ -577,7 +580,7 @@ def get_sniper_signals():
             # v7.1.2: SQLite stores Python bools as ints — round-trip them
             # back to True/False so the frontend JSX conditionals
             # (`{sig.IsFreshEarly && ...}`) don't render a literal "0".
-            for col in ('is_fresh_buy', 'is_fresh_early'):
+            for col in ('is_fresh_buy', 'is_fresh_early', 'breakout_signal', 'is_fresh_breakout'):
                 if col in df.columns:
                     df[col] = df[col].apply(
                         lambda x: bool(x) if x is not None and not (isinstance(x, float) and pd.isna(x)) else False
@@ -620,6 +623,10 @@ def get_sniper_signals():
                 'prev_signal': 'PrevSignal',
                 'prev_early_signal': 'PrevEarlySignal',
                 'signal_strength': 'SignalStrength',
+                # v9 BREAKOUT SIGNAL (additive, proven edge)
+                'breakout_signal': 'BreakoutSignal',
+                'breakout_reasons': 'BreakoutReasons',
+                'is_fresh_breakout': 'IsFreshBreakout',
                 # v8 ENTRY-PRICE GUIDANCE
                 'prev_close': 'PrevClose',
                 'day_low': 'DayLow',
@@ -633,6 +640,11 @@ def get_sniper_signals():
             # v7: deserialize EarlyReasons (stored as repr-list) and components (JSON)
             if 'EarlyReasons' in df.columns:
                 df['EarlyReasons'] = df['EarlyReasons'].apply(
+                    lambda x: eval(x) if isinstance(x, str) and x.startswith('[') else (x or [])
+                )
+            # v9: deserialize BreakoutReasons (stored as repr-list)
+            if 'BreakoutReasons' in df.columns:
+                df['BreakoutReasons'] = df['BreakoutReasons'].apply(
                     lambda x: eval(x) if isinstance(x, str) and x.startswith('[') else (x or [])
                 )
             if 'EarlyComponents' in df.columns:
@@ -718,6 +730,17 @@ def get_chart_signals():
     try:
         db = DatabaseManager()
         df = db.get_chart_signals_today()
+        # v9: confluence — which tickers also fired the proven quant breakout?
+        breakout_tickers = set()
+        try:
+            from sqlalchemy import text as _text
+            cols = pd.read_sql_query(_text("SELECT * FROM signals_today LIMIT 1"), db.engine).columns.tolist()
+            if 'breakout_signal' in cols:
+                bdf = pd.read_sql_query(
+                    _text("SELECT ticker FROM signals_today WHERE breakout_signal = 1"), db.engine)
+                breakout_tickers = set(bdf['ticker'].tolist())
+        except Exception as _e:
+            logger.debug(f"breakout confluence lookup skipped: {_e}")
         db.close()
         if df.empty:
             return []
@@ -756,6 +779,9 @@ def get_chart_signals():
                 'patterns': _scrub(patterns),
                 'context': _scrub(context),
                 'explanation': r['explanation'] or '',
+                # v9: True when the independent quant engine ALSO flags a
+                # breakout for this ticker — a high-conviction confluence.
+                'breakout': r['ticker'] in breakout_tickers,
             })
         return out
     except Exception as e:
@@ -1003,7 +1029,10 @@ def get_portfolio():
                 if current_price <= stop_loss_price:
                     status = 'STOP_LOSS'
                 elif current_price <= trailing_stop_price:
-                    status = 'TAKE_PROFIT'
+                    # A trailing stop is only "taking profit" if we are actually
+                    # in profit. If price pulled back below entry, it's a trend
+                    # exit AT A LOSS — labelling it TAKE_PROFIT is misleading.
+                    status = 'TAKE_PROFIT' if profit_pct > 0 else 'TREND_EXIT'
                 elif is_zombie:
                     status = 'ZOMBIE_WARNING'
                 

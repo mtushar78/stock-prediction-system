@@ -542,9 +542,13 @@ class PortfolioManager:
             
             # CONDITION B: The Ratchet (Dynamic ATR-based Trailing Stop)
             elif current_price <= trailing_stop_price:
-                action = "SELL NOW 💰"
+                # Only a "take profit" if the exit is above entry. If the
+                # trailing stop fires while we are below the buy price, this is
+                # a trend exit at a LOSS, not profit-taking.
+                in_profit = current_price > buy_price
+                action = "SELL NOW 💰" if in_profit else "SELL NOW 📉"
                 reason = f"TRAILING STOP ({stop_type}): Dropped below {trailing_stop_price:.2f} from peak of {new_highest:.2f}. Trend broken."
-                signal_type = "TAKE_PROFIT"
+                signal_type = "TAKE_PROFIT" if in_profit else "TREND_EXIT"
                 urgency = "HIGH"
             
             # CONDITION C: The Climax (Volume anomaly with profit > 20%)
