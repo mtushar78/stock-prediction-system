@@ -40,7 +40,12 @@ print(f"Forward-tracking every signal to latest close {maxd}.\nEntry dates: {ent
 cache = {}
 def hist(t):
     if t not in cache:
-        h = orig(t).sort_values('date').reset_index(drop=True); h['d'] = h['date'].astype(str).str[:10]; cache[t] = h
+        h = orig(t)
+        # DSE records NON-TRADING days as close=0/volume=0 (is_final=1).
+        # Those are not real prices — drop them so forward tracking never
+        # sees a phantom crash-to-zero (which would fire false -100% stops).
+        h = h[h['close'] > 0].sort_values('date').reset_index(drop=True)
+        h['d'] = h['date'].astype(str).str[:10]; cache[t] = h
     return cache[t]
 
 def track(t, D, buy):
