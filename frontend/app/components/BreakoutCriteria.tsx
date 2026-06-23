@@ -14,11 +14,17 @@ const num = (n: number | undefined | null, d = 2) =>
 /** The five breakout rules with the stock's actual value vs the threshold, and a
  *  ✓ / ✗ for each (so it works both for confirmed breakouts and as a "why it
  *  didn't qualify" view in the manual analyzer). */
-export default function BreakoutCriteria({ checks }: { checks?: BreakoutChecksShape }) {
+export default function BreakoutCriteria({ checks, fallbackPrice }: { checks?: BreakoutChecksShape; fallbackPrice?: number }) {
   const c = checks || {};
   const lookback = c.lookback ?? 20, tol = c.tol_pct ?? 1, maxExt = c.max_ext_20d ?? 12;
   const minRvol = c.min_rvol ?? 1.5, minVol = c.min_avg_vol20 ?? 50000, minPrice = c.min_price ?? 5;
-  const price = c.close;
+  // Older cached rows (historical replay) lack `close` in their checks — fall
+  // back to the row's price so the price shows and the liquid check confirms.
+  const price = typeof c.close === 'number' ? c.close : fallbackPrice;
+  // Reconstruct the 20-day high from price + distance if it wasn't stored.
+  const high20 = typeof c.high_20d === 'number' ? c.high_20d
+    : (typeof price === 'number' && typeof c.dist_to_high_pct === 'number'
+        ? price / (1 + c.dist_to_high_pct / 100) : undefined);
   const liquidOk = (typeof c.avg_vol20 === 'number' ? c.avg_vol20 >= minVol : undefined);
   const priceOk = (typeof price === 'number' ? price >= minPrice : undefined);
 
@@ -26,7 +32,7 @@ export default function BreakoutCriteria({ checks }: { checks?: BreakoutChecksSh
     {
       ok: typeof c.dist_to_high_pct === 'number' ? c.dist_to_high_pct > -tol : undefined,
       label: `Breaking the ${lookback}-day high`,
-      detail: `Price ${num(price)} vs ${lookback}-day high ${num(c.high_20d)}${typeof c.dist_to_high_pct === 'number' ? `  (${c.dist_to_high_pct > 0 ? '+' : ''}${num(c.dist_to_high_pct)}% from it)` : ''}`,
+      detail: `Price ${num(price)} vs ${lookback}-day high ${num(high20)}${typeof c.dist_to_high_pct === 'number' ? `  (${c.dist_to_high_pct > 0 ? '+' : ''}${num(c.dist_to_high_pct)}% from it)` : ''}`,
       rule: `at or within ${tol}% of the ${lookback}-day high`,
     },
     {
@@ -39,7 +45,9 @@ export default function BreakoutCriteria({ checks }: { checks?: BreakoutChecksSh
       ok: c.uptrend === true ? true : c.uptrend === false ? false
         : (typeof price === 'number' && typeof c.sma200 === 'number' ? price > c.sma200 : undefined),
       label: 'Confirmed uptrend',
-      detail: `Price ${num(price)} vs 200-day average ${num(c.sma200)}`,
+      detail: typeof c.sma200 === 'number'
+        ? `Price ${num(price)} vs 200-day average ${num(c.sma200)}`
+        : `Price ${num(price)} is above its 200-day average`,
       rule: 'must trade above the 200-day SMA',
     },
     {

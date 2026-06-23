@@ -368,7 +368,7 @@ export default function AnalyzeTickerPage() {
                   The only signal with a proven, regime-robust edge (backtested 2019–2026). All five rules
                   must pass. {result.breakout.is_breakout ? '' : 'The ✗ rows below are why it doesn’t qualify today.'}
                 </p>
-                <BreakoutCriteria checks={result.breakout.checks} />
+                <BreakoutCriteria checks={result.breakout.checks} fallbackPrice={result.indicators?.close ?? undefined} />
               </div>
             )}
 

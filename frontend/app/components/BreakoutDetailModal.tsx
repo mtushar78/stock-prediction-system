@@ -34,7 +34,7 @@ export default function BreakoutDetailModal({ signal, onClose }: Props) {
             All five conditions passed — here&apos;s the exact reason this is on the buy list:
           </p>
 
-          <BreakoutCriteria checks={signal.BreakoutChecks} />
+          <BreakoutCriteria checks={signal.BreakoutChecks} fallbackPrice={signal.Price} />
 
           <div className="mt-4 text-xs text-sky-200/80 bg-sky-900/20 border border-sky-800/50 rounded-lg p-3">
             <b className="text-sky-300">Why trust this:</b> in a 2019–2026 walk-forward backtest, this
