@@ -5,6 +5,7 @@ import { useState } from 'react';
 interface SignalsTableProps {
   signals: Signal[];
   loading: boolean;
+  marketHealthy?: boolean;
   onVolumeClick: (signal: Signal) => void;
   onInfoClick: (signal: Signal) => void;
   onBreakoutInfoClick: (signal: Signal) => void;
@@ -35,6 +36,7 @@ function breakoutWhy(sig: Signal): string {
 export default function SignalsTable({
   signals,
   loading,
+  marketHealthy,
   onVolumeClick,
   onInfoClick,
   onBreakoutInfoClick,
@@ -144,6 +146,9 @@ export default function SignalsTable({
                 <td className="py-2 pr-4 font-bold text-sky-300 whitespace-nowrap">
                   <div className="flex items-center gap-1.5">
                     <span>{sig.Ticker}</span>
+                    {marketHealthy && (
+                      <span className="text-[9px] bg-emerald-600 text-white px-1 py-0.5 rounded font-bold" title="PRIME — fired in a healthy market (more breakouts work here)">PRIME</span>
+                    )}
                     {!!sig.IsFreshBreakout && (
                       <span className="text-[9px] bg-sky-600 text-white px-1 py-0.5 rounded font-bold" title="First day this breakout fired">FRESH</span>
                     )}

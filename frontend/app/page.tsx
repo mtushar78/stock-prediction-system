@@ -8,6 +8,7 @@ import Header from './components/Header';
 import AlertsSection from './components/AlertsSection';
 import SignalsTable from './components/SignalsTable';
 import DateReplayBar from './components/DateReplayBar';
+import MarketHealthMeter, { MarketHealth } from './components/MarketHealthMeter';
 import PortfolioTable from './components/PortfolioTable';
 import TradeForm from './components/TradeForm';
 import SystemInfoBox from './components/SystemInfoBox';
@@ -31,6 +32,7 @@ export default function Dashboard() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [marketHealth, setMarketHealth] = useState<MarketHealth | null>(null);
 
   // Historical replay ("time machine") state
   const [tradingDates, setTradingDates] = useState<string[]>([]);
@@ -89,6 +91,7 @@ export default function Dashboard() {
       if (includeSignals && histDateRef.current === null) {
         const sigRes = await axios.get(`${API_URL}/api/sniper-signals`);
         setSignals(sigRes.data);
+        axios.get(`${API_URL}/api/market-health`).then((r) => setMarketHealth(r.data)).catch(() => {});
       }
     } catch (err) {
       console.error("API Error", err);
@@ -114,6 +117,7 @@ export default function Dashboard() {
       });
       setSignals(res.data);
       refreshAnalyzedDates(); // this date is now cached
+      axios.get(`${API_URL}/api/market-health`, { params: { date } }).then((r) => setMarketHealth(r.data)).catch(() => {});
     } catch (err: unknown) {
       const e = err as { response?: { status?: number; data?: { detail?: string } } };
       setHistError(e.response?.status === 404
@@ -321,9 +325,11 @@ export default function Dashboard() {
             onAnalyze={loadHistorical}
             onLive={goLive}
           />
+          <MarketHealthMeter data={marketHealth} asOf={histDate} />
           <SignalsTable
             signals={signals}
             loading={loading || histLoading}
+            marketHealthy={!!marketHealth?.healthy}
             onVolumeClick={(signal) => setVolumeModalSignal(signal)}
             onInfoClick={(signal) => setActiveModal(signals.indexOf(signal))}
             onBreakoutInfoClick={(signal) => setBreakoutModalSignal(signal)}

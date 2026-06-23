@@ -753,6 +753,61 @@ def get_trading_dates(limit: int = 150):
         db.close()
 
 
+def _compute_market_breadth(as_of: str = None):
+    """Market-health = % of liquid stocks trading above their 50-day average,
+    as of `as_of` (or latest). Breakouts have a much higher hit-rate when this
+    is high (the regime filter from the win-rate study). Returns a dict."""
+    from sqlalchemy import text as _t
+    db = DatabaseManager()
+    try:
+        if as_of:
+            mx = pd.read_sql_query(_t("SELECT MAX(date) m FROM stock_data WHERE date <= :d"),
+                                   db.engine, params={"d": as_of})
+        else:
+            mx = pd.read_sql_query(_t("SELECT MAX(date) m FROM stock_data"), db.engine)
+        maxd = str(mx['m'].iloc[0])[:10] if mx['m'].iloc[0] is not None else None
+        if not maxd:
+            return {'date': None, 'breadth_pct': None, 'above': 0, 'total': 0, 'label': 'UNKNOWN', 'healthy': False}
+        dts = pd.read_sql_query(
+            _t("SELECT DISTINCT date FROM stock_data WHERE date <= :d ORDER BY date DESC LIMIT 55"),
+            db.engine, params={"d": maxd})
+        start = str(dts['date'].min())[:10]
+        df = pd.read_sql_query(
+            _t("SELECT date, ticker, close, volume FROM stock_data WHERE date BETWEEN :s AND :e"),
+            db.engine, params={"s": start, "e": maxd})
+        df = df[df['close'] > 0]
+        above = total = 0
+        for _tkr, g in df.groupby('ticker'):
+            g = g.sort_values('date')
+            if len(g) < 50:
+                continue
+            sma50 = g['close'].tail(50).mean()
+            av20 = g['volume'].tail(20).mean()
+            close = g['close'].iloc[-1]
+            if av20 < 50000 or close < 5:
+                continue
+            total += 1
+            if close > sma50:
+                above += 1
+        breadth = round(above / total * 100, 1) if total else None
+        label = ('HEALTHY' if breadth is not None and breadth >= 65
+                 else 'MIXED' if breadth is not None and breadth >= 45 else 'WEAK')
+        return {'date': maxd, 'breadth_pct': breadth, 'above': above, 'total': total,
+                'label': label, 'healthy': bool(breadth is not None and breadth >= 65)}
+    finally:
+        db.close()
+
+
+@app.get("/api/market-health")
+def get_market_health(date: str = None):
+    """Market breadth / regime gauge (optionally as-of a past date for replay)."""
+    try:
+        return _compute_market_breadth(date)
+    except Exception as e:
+        logger.error(f"market-health failed: {e}")
+        return {'date': None, 'breadth_pct': None, 'above': 0, 'total': 0, 'label': 'UNKNOWN', 'healthy': False}
+
+
 @app.get("/api/analyzed-dates")
 def get_analyzed_dates():
     """Dates already cached in signals_history — these replay INSTANTLY with no
