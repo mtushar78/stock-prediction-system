@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import axios from 'axios';
 import { Clock } from 'lucide-react';
 import Header from './components/Header';
 import AlertsSection from './components/AlertsSection';
 import SignalsTable from './components/SignalsTable';
+import DateReplayBar from './components/DateReplayBar';
 import PortfolioTable from './components/PortfolioTable';
 import TradeForm from './components/TradeForm';
 import SystemInfoBox from './components/SystemInfoBox';
@@ -29,7 +30,15 @@ export default function Dashboard() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [loading, setLoading] = useState(true);
-  
+
+  // Historical replay ("time machine") state
+  const [tradingDates, setTradingDates] = useState<string[]>([]);
+  const [histDate, setHistDate] = useState<string | null>(null);   // null = live
+  const [histLoading, setHistLoading] = useState(false);
+  const [histError, setHistError] = useState<string | null>(null);
+  const histDateRef = useRef<string | null>(null);
+  useEffect(() => { histDateRef.current = histDate; }, [histDate]);
+
   // Trade Form State
   const [newTicker, setNewTicker] = useState('');
   const [newPrice, setNewPrice] = useState('');
@@ -61,21 +70,23 @@ export default function Dashboard() {
     return () => document.removeEventListener('keydown', handleEscKey);
   }, []);
 
-  // Fetch Data
-  const fetchData = async () => {
+  // Fetch live data. When in replay mode, skip the live signals fetch so it
+  // doesn't overwrite the historical signals being viewed.
+  const fetchData = async (includeSignals = true) => {
     try {
       setLoading(true);
-      const [statusRes, sigRes, portRes, alertRes] = await Promise.all([
+      const [statusRes, portRes, alertRes] = await Promise.all([
         axios.get(`${API_URL}/`),
-        axios.get(`${API_URL}/api/sniper-signals`),
         axios.get(`${API_URL}/api/portfolio`),
-        axios.get(`${API_URL}/api/alerts`)
+        axios.get(`${API_URL}/api/alerts`),
       ]);
-      
       setSystemStatus(statusRes.data);
-      setSignals(sigRes.data);
       setPortfolio(portRes.data);
       setAlerts(alertRes.data);
+      if (includeSignals && histDateRef.current === null) {
+        const sigRes = await axios.get(`${API_URL}/api/sniper-signals`);
+        setSignals(sigRes.data);
+      }
     } catch (err) {
       console.error("API Error", err);
     } finally {
@@ -83,11 +94,50 @@ export default function Dashboard() {
     }
   };
 
-  // Auto-fetch and refresh
+  // Load a past day's signals (lookahead-free; cached server-side).
+  const loadHistorical = async (date: string) => {
+    setHistDate(date);
+    setHistError(null);
+    setHistLoading(true);
+    try {
+      const res = await axios.get(`${API_URL}/api/sniper-signals/by-date`, {
+        params: { date }, timeout: 180000,
+      });
+      setSignals(res.data);
+      // Warm the next day so stepping forward is instant.
+      const i = tradingDates.indexOf(date);
+      const newer = i > 0 ? tradingDates[i - 1] : null;
+      if (newer) axios.get(`${API_URL}/api/sniper-signals/by-date`, { params: { date: newer }, timeout: 180000 }).catch(() => {});
+    } catch (err: unknown) {
+      const e = err as { response?: { status?: number; data?: { detail?: string } } };
+      setHistError(e.response?.status === 404
+        ? `${date} wasn't a trading day — use Prev/Next.`
+        : `Couldn't load ${date}. Try again.`);
+    } finally {
+      setHistLoading(false);
+    }
+  };
+
+  const goLive = () => {
+    setHistDate(null);
+    setHistError(null);
+    histDateRef.current = null;
+    fetchData(true);
+  };
+
+  // Load the trading-date list once (for the replay picker).
+  useEffect(() => {
+    axios.get<string[]>(`${API_URL}/api/trading-dates`)
+      .then((res) => setTradingDates(res.data || []))
+      .catch(() => { /* non-fatal */ });
+  }, []);
+
+  // Auto-fetch and refresh. In replay mode, refresh only live portfolio/alerts.
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 60000);
+    const interval = setInterval(() => fetchData(histDateRef.current === null), 60000);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Trade form error message (inline, not alert)
@@ -254,9 +304,17 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* MAIN CONTENT (LEFT - 2 COLS) */}
         <div className="lg:col-span-2 space-y-6">
-          <SignalsTable 
+          <DateReplayBar
+            dates={tradingDates}
+            value={histDate}
+            loading={histLoading}
+            error={histError}
+            onPick={loadHistorical}
+            onLive={goLive}
+          />
+          <SignalsTable
             signals={signals}
-            loading={loading}
+            loading={loading || histLoading}
             onVolumeClick={(signal) => setVolumeModalSignal(signal)}
             onInfoClick={(signal) => setActiveModal(signals.indexOf(signal))}
             onPriceInfoClick={(signal) => setPriceHistoryModal({ ticker: signal.Ticker, currentPrice: signal.Price })}

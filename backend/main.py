@@ -117,6 +117,89 @@ def _prepare_signals_for_sqlite(df_results):
     return df_results_copy
 
 
+def _format_signal_records(df):
+    """Shared formatter: raw signals rows (snake_case, from signals_today OR
+    signals_history) -> JSON records with frontend PascalCase keys and
+    deserialised reasons/components. Used by /api/sniper-signals (today) and
+    /api/sniper-signals/by-date (historical replay) so both render identically."""
+    import json as _json, math as _math
+    df = df.replace([np.inf, -np.inf], np.nan)
+    df = df.replace({float('nan'): None})
+
+    numeric_columns = ['projected_vol', 'price_change_pct', 'avg_volume_20', 'rvol', 'score', 'volume', 'close']
+    for col in numeric_columns:
+        if col in df.columns:
+            df[col] = df[col].fillna(0)
+
+    for col in ('is_fresh_buy', 'is_fresh_early', 'breakout_signal', 'is_fresh_breakout'):
+        if col in df.columns:
+            df[col] = df[col].apply(
+                lambda x: bool(x) if x is not None and not (isinstance(x, float) and pd.isna(x)) else False
+            )
+
+    df = df.rename(columns={
+        'ticker': 'Ticker', 'close': 'Price', 'rvol': 'RVOL', 'score': 'Score',
+        'signal': 'Signal', 'reasons': 'Reason', 'volume': 'Volume',
+        'last_closing_vol': 'LastClosingVol', 'current_vol': 'CurrentVol',
+        'projected_vol': 'ProjectedVol', 'is_market_open': 'IsMarketOpen',
+        'is_intraday': 'IsIntraday', 'avg_volume_20': 'AvgVolume20',
+        'price_change_pct': 'PriceChange', 'sma_200': 'SMA200',
+        'nearest_support': 'NearestSupport', 'nearest_resistance': 'NearestResistance',
+        'recommended_stop_loss': 'RecommendedStopLoss', 'reward_risk_ratio': 'RewardRiskRatio',
+        'atr': 'ATR', 'trend_status': 'TrendStatus', 'raw_score': 'RawScore',
+        'early_score': 'EarlyScore', 'early_signal': 'EarlySignal',
+        'early_reasons': 'EarlyReasons', 'early_components': 'EarlyComponents',
+        'is_fresh_buy': 'IsFreshBuy', 'is_fresh_early': 'IsFreshEarly',
+        'prev_signal': 'PrevSignal', 'prev_early_signal': 'PrevEarlySignal',
+        'signal_strength': 'SignalStrength',
+        'breakout_signal': 'BreakoutSignal', 'breakout_reasons': 'BreakoutReasons',
+        'is_fresh_breakout': 'IsFreshBreakout',
+        'prev_close': 'PrevClose', 'day_low': 'DayLow', 'day_high': 'DayHigh',
+        'range_position': 'RangePosition', 'recommended_entry': 'RecommendedEntry',
+        'entry_quality': 'EntryQuality', 'entry_warning': 'EntryWarning',
+    })
+
+    for rcol in ('EarlyReasons', 'BreakoutReasons'):
+        if rcol in df.columns:
+            df[rcol] = df[rcol].apply(
+                lambda x: eval(x) if isinstance(x, str) and x.startswith('[') else (x or [])
+            )
+    if 'EarlyComponents' in df.columns:
+        def _parse_components(x):
+            if isinstance(x, str):
+                try:
+                    return _json.loads(x)
+                except Exception:
+                    return {}
+            return x if isinstance(x, dict) else {}
+        df['EarlyComponents'] = df['EarlyComponents'].apply(_parse_components)
+    if 'Reason' in df.columns:
+        df['Reason'] = df['Reason'].apply(lambda x: ', '.join(eval(x)) if isinstance(x, str) and x.startswith('[') else x)
+    if 'v5_details' in df.columns:
+        def _parse_v5(x):
+            if isinstance(x, str):
+                try:
+                    return _json.loads(x)
+                except Exception:
+                    return {}
+            return x if isinstance(x, dict) else {}
+        df['v5_details'] = df['v5_details'].apply(_parse_v5)
+    else:
+        df['v5_details'] = [{}] * len(df)
+
+    result = df.to_dict(orient="records")
+
+    def _sanitize(o):
+        if isinstance(o, float):
+            return None if (_math.isinf(o) or _math.isnan(o)) else o
+        if isinstance(o, dict):
+            return {k: _sanitize(v) for k, v in o.items()}
+        if isinstance(o, list):
+            return [_sanitize(v) for v in o]
+        return o
+    return _sanitize(result)
+
+
 def run_chart_analysis(label: str = "") -> int:
     """Run the independent chart-pattern engine and persist its output.
     Returns the number of tickers with detected patterns (0 on failure)."""
@@ -567,137 +650,10 @@ def get_sniper_signals():
             return []
         
         try:
-            # Replace inf/-inf with NaN first, then NaN with None for JSON compatibility
-            df = df.replace([np.inf, -np.inf], np.nan)
-            df = df.replace({float('nan'): None})
-
-            # Fill numeric columns with 0 (except sma_200 which stays None)
-            numeric_columns = ['projected_vol', 'price_change_pct', 'avg_volume_20', 'rvol', 'score', 'volume', 'close']
-            for col in numeric_columns:
-                if col in df.columns:
-                    df[col] = df[col].fillna(0)
-
-            # v7.1.2: SQLite stores Python bools as ints — round-trip them
-            # back to True/False so the frontend JSX conditionals
-            # (`{sig.IsFreshEarly && ...}`) don't render a literal "0".
-            for col in ('is_fresh_buy', 'is_fresh_early', 'breakout_signal', 'is_fresh_breakout'):
-                if col in df.columns:
-                    df[col] = df[col].apply(
-                        lambda x: bool(x) if x is not None and not (isinstance(x, float) and pd.isna(x)) else False
-                    )
-            
-            logger.info(f"✅ Processed NaN values successfully")
-            
-            # Rename columns for frontend (including v4 fields)
-            df = df.rename(columns={
-                'ticker': 'Ticker',
-                'close': 'Price',
-                'rvol': 'RVOL',
-                'score': 'Score',
-                'signal': 'Signal',
-                'reasons': 'Reason',
-                'volume': 'Volume',
-                'last_closing_vol': 'LastClosingVol',
-                'current_vol': 'CurrentVol',
-                'projected_vol': 'ProjectedVol',
-                'is_market_open': 'IsMarketOpen',
-                'is_intraday': 'IsIntraday',
-                'avg_volume_20': 'AvgVolume20',
-                'price_change_pct': 'PriceChange',
-                'sma_200': 'SMA200',
-                # v4 NEW FIELDS
-                'nearest_support': 'NearestSupport',
-                'nearest_resistance': 'NearestResistance',
-                'recommended_stop_loss': 'RecommendedStopLoss',
-                'reward_risk_ratio': 'RewardRiskRatio',
-                'atr': 'ATR',
-                'trend_status': 'TrendStatus',
-                'raw_score': 'RawScore',
-                # v7 NEW FIELDS
-                'early_score': 'EarlyScore',
-                'early_signal': 'EarlySignal',
-                'early_reasons': 'EarlyReasons',
-                'early_components': 'EarlyComponents',
-                'is_fresh_buy': 'IsFreshBuy',
-                'is_fresh_early': 'IsFreshEarly',
-                'prev_signal': 'PrevSignal',
-                'prev_early_signal': 'PrevEarlySignal',
-                'signal_strength': 'SignalStrength',
-                # v9 BREAKOUT SIGNAL (additive, proven edge)
-                'breakout_signal': 'BreakoutSignal',
-                'breakout_reasons': 'BreakoutReasons',
-                'is_fresh_breakout': 'IsFreshBreakout',
-                # v8 ENTRY-PRICE GUIDANCE
-                'prev_close': 'PrevClose',
-                'day_low': 'DayLow',
-                'day_high': 'DayHigh',
-                'range_position': 'RangePosition',
-                'recommended_entry': 'RecommendedEntry',
-                'entry_quality': 'EntryQuality',
-                'entry_warning': 'EntryWarning',
-            })
-
-            # v7: deserialize EarlyReasons (stored as repr-list) and components (JSON)
-            if 'EarlyReasons' in df.columns:
-                df['EarlyReasons'] = df['EarlyReasons'].apply(
-                    lambda x: eval(x) if isinstance(x, str) and x.startswith('[') else (x or [])
-                )
-            # v9: deserialize BreakoutReasons (stored as repr-list)
-            if 'BreakoutReasons' in df.columns:
-                df['BreakoutReasons'] = df['BreakoutReasons'].apply(
-                    lambda x: eval(x) if isinstance(x, str) and x.startswith('[') else (x or [])
-                )
-            if 'EarlyComponents' in df.columns:
-                def _parse_components(x):
-                    if isinstance(x, str):
-                        try:
-                            import json as _j
-                            return _j.loads(x)
-                        except Exception:
-                            return {}
-                    return x if isinstance(x, dict) else {}
-                df['EarlyComponents'] = df['EarlyComponents'].apply(_parse_components)
-            
-            # Format Reason (convert list to string)
-            if 'Reason' in df.columns:
-                df['Reason'] = df['Reason'].apply(lambda x: ', '.join(eval(x)) if isinstance(x, str) and x.startswith('[') else x)
-            
-            # Deserialize v5_details JSON string back to dict for frontend
-            import json as _json
-            if 'v5_details' in df.columns:
-                def _parse_v5(x):
-                    if isinstance(x, str):
-                        try:
-                            return _json.loads(x)
-                        except Exception:
-                            return {}
-                    if isinstance(x, dict):
-                        return x
-                    return {}
-                df['v5_details'] = df['v5_details'].apply(_parse_v5)
-            else:
-                df['v5_details'] = [{}] * len(df)
-            
-            result = df.to_dict(orient="records")
-
-            # Recursively sanitize inf/nan inside nested structures (e.g. v5_details)
-            import math as _math
-            def _sanitize(o):
-                if isinstance(o, float):
-                    if _math.isinf(o) or _math.isnan(o):
-                        return None
-                    return o
-                if isinstance(o, dict):
-                    return {k: _sanitize(v) for k, v in o.items()}
-                if isinstance(o, list):
-                    return [_sanitize(v) for v in o]
-                return o
-            result = _sanitize(result)
-
+            result = _format_signal_records(df)
             logger.info(f"✅ Returning {len(result)} signals to frontend")
-
             return result
-            
+
         except Exception as e:
             logger.error(f"❌ CRITICAL ERROR processing signals data: {e}")
             import traceback
@@ -711,6 +667,115 @@ def get_sniper_signals():
         import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
+# ====================================================================== #
+# HISTORICAL REPLAY — "time machine" for past-day signals
+#
+# Lets the dashboard show the exact signals the system WOULD have produced on
+# any past trading day (lookahead-free: the analyzer is wrapped so it only sees
+# data up to that day). Results are cached per date in `signals_history` so
+# stepping forward day-by-day is instant after the first (slow) computation.
+# ====================================================================== #
+
+def _compute_and_cache_signals_for_date(date: str):
+    """Analyze every ticker as of `date` (data wrapped to <= date), cache rows in
+    `signals_history`, and return the formatted actionable records for that day."""
+    from sqlalchemy import text as _text
+    db = DatabaseManager()
+    try:
+        cached = False
+        try:
+            c = pd.read_sql_query(_text("SELECT COUNT(*) AS c FROM signals_history WHERE date = :d"),
+                                  db.engine, params={"d": date})
+            cached = int(c['c'].iloc[0]) > 0
+        except Exception:
+            cached = False  # table not created yet
+
+        if not cached:
+            logger.info(f"🕰️  Computing historical signals for {date} (first time)...")
+            analyzer = StockAnalyzer(db)
+            try:
+                paid_up_data = db.get_all_fundamentals()
+            except Exception:
+                paid_up_data = {}
+            # Wrap get_stock_data so the WHOLE analyzer pipeline only sees data
+            # up to `date` — no lookahead. analyzer.db IS this db instance.
+            orig = db.get_stock_data
+            db.get_stock_data = lambda t, start_date=None, end_date=None, _d=date: orig(t, end_date=_d)
+            try:
+                df_all = analyzer.analyze_all_tickers(paid_up_data=paid_up_data)
+            finally:
+                db.get_stock_data = orig
+            # Keep only tickers that actually TRADED on `date` (their latest
+            # capped row is `date`); others would mislabel an earlier row.
+            if not df_all.empty:
+                df_all = df_all[df_all['date'] == date]
+            if not df_all.empty:
+                prepped = _prepare_signals_for_sqlite(df_all)
+                try:
+                    prepped.to_sql('signals_history', db.engine, if_exists='append', index=False)
+                except Exception as e:
+                    # Column drift vs an older cached schema → rebuild the table.
+                    logger.warning(f"signals_history append failed ({e}); rebuilding table")
+                    with db.engine.begin() as conn:
+                        conn.execute(_text("DROP TABLE IF EXISTS signals_history"))
+                    prepped.to_sql('signals_history', db.engine, if_exists='append', index=False)
+            logger.info(f"🕰️  Cached {0 if df_all.empty else len(df_all)} signals for {date}")
+
+        df = pd.read_sql_query(_text(
+            "SELECT * FROM signals_history WHERE date = :d AND ("
+            "signal IN ('BUY','WAIT') OR early_signal IN ('EARLY','WATCH') "
+            "OR breakout_signal = 1) ORDER BY signal_strength DESC"),
+            db.engine, params={"d": date})
+        if df.empty:
+            return []
+        return _format_signal_records(df)
+    finally:
+        db.close()
+
+
+@app.get("/api/trading-dates")
+def get_trading_dates(limit: int = 150):
+    """Recent trading dates (newest first) for the historical date picker."""
+    from sqlalchemy import text as _text
+    db = DatabaseManager()
+    try:
+        df = pd.read_sql_query(
+            _text("SELECT DISTINCT date FROM stock_data ORDER BY date DESC LIMIT :n"),
+            db.engine, params={"n": int(limit)})
+        return df['date'].astype(str).str.slice(0, 10).tolist()
+    except Exception as e:
+        logger.error(f"get_trading_dates failed: {e}")
+        return []
+    finally:
+        db.close()
+
+
+@app.get("/api/sniper-signals/by-date")
+def get_sniper_signals_by_date(date: str):
+    """Historical replay: the signals the system would have shown on `date`.
+    Same response shape as /api/sniper-signals. Cached after first compute."""
+    from sqlalchemy import text as _text
+    if not date or len(date) != 10:
+        raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+    db = DatabaseManager()
+    try:
+        has = pd.read_sql_query(_text("SELECT 1 FROM stock_data WHERE date = :d LIMIT 1"),
+                                db.engine, params={"d": date})
+    finally:
+        db.close()
+    if has.empty:
+        raise HTTPException(status_code=404, detail=f"No trading data for {date} (not a trading day)")
+    try:
+        return _compute_and_cache_signals_for_date(date)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"by-date {date} failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ====================================================================== #
