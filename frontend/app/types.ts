@@ -51,6 +51,7 @@ export interface Signal {
     ret_20d?: number; max_ext_20d?: number;
     rvol?: number; min_rvol?: number;
     avg_vol20?: number; min_avg_vol20?: number; min_price?: number;
+    base_tight_pct?: number; atr_pct?: number;
   };
   // v8 ENTRY-PRICE GUIDANCE
   PrevClose?: number;
@@ -353,6 +354,7 @@ export interface DetailedTickerAnalysis {
       close?: number; high_20d?: number; dist_to_high_pct?: number; lookback?: number; tol_pct?: number;
       uptrend?: boolean; sma200?: number; ret_20d?: number; max_ext_20d?: number;
       rvol?: number; min_rvol?: number; avg_vol20?: number; min_avg_vol20?: number; min_price?: number;
+      base_tight_pct?: number; atr_pct?: number;
     };
   };
 }

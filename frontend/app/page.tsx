@@ -330,6 +330,7 @@ export default function Dashboard() {
             signals={signals}
             loading={loading || histLoading}
             marketHealthy={!!marketHealth?.healthy}
+            marketBreadth={marketHealth?.breadth_pct ?? null}
             onVolumeClick={(signal) => setVolumeModalSignal(signal)}
             onInfoClick={(signal) => setActiveModal(signals.indexOf(signal))}
             onBreakoutInfoClick={(signal) => setBreakoutModalSignal(signal)}
@@ -411,6 +412,7 @@ export default function Dashboard() {
       {breakoutModalSignal && (
         <BreakoutDetailModal
           signal={breakoutModalSignal}
+          breadth={marketHealth?.breadth_pct ?? null}
           onClose={() => setBreakoutModalSignal(null)}
         />
       )}

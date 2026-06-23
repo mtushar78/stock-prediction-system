@@ -1,11 +1,13 @@
 import { Signal } from '../types';
 import { AlertCircle, Info, Flame, Sparkles, HelpCircle, Rocket, ChevronDown, ChevronRight } from 'lucide-react';
 import { useState } from 'react';
+import { breakoutGrade, gradeColor } from './breakoutGrade';
 
 interface SignalsTableProps {
   signals: Signal[];
   loading: boolean;
   marketHealthy?: boolean;
+  marketBreadth?: number | null;
   onVolumeClick: (signal: Signal) => void;
   onInfoClick: (signal: Signal) => void;
   onBreakoutInfoClick: (signal: Signal) => void;
@@ -37,6 +39,7 @@ export default function SignalsTable({
   signals,
   loading,
   marketHealthy,
+  marketBreadth,
   onVolumeClick,
   onInfoClick,
   onBreakoutInfoClick,
@@ -51,7 +54,10 @@ export default function SignalsTable({
 
   const breakouts = signals
     .filter((s) => s.BreakoutSignal)
-    .sort((a, b) => Number(b.IsFreshBreakout) - Number(a.IsFreshBreakout) || (b.RVOL || 0) - (a.RVOL || 0));
+    .map((s) => ({ s, g: breakoutGrade(s.BreakoutChecks, marketBreadth) }))
+    .sort((a, b) => b.g.score - a.g.score
+      || Number(b.s.IsFreshBreakout) - Number(a.s.IsFreshBreakout)
+      || (b.s.RVOL || 0) - (a.s.RVOL || 0));
 
   // ---- legacy table (only when expanded) ----
   const filtered = signals.filter((s) => {
@@ -117,7 +123,8 @@ export default function SignalsTable({
         </div>
       </div>
       <p className="text-xs text-gray-500 mb-3">
-        The only signal with a proven, regime-robust edge. Click <Info className="inline w-3 h-3" /> on any row for the exact reason it fired.
+        The only signal with a proven, regime-robust edge — ranked best-first by <b className="text-gray-400">quality grade (A–D)</b>.
+        Grade A historically wins ~54% vs ~42% for D. Click <Info className="inline w-3 h-3" /> on any row for the grade breakdown + exact reason it fired.
       </p>
 
       {showLegend && (
@@ -132,6 +139,7 @@ export default function SignalsTable({
         <table className="text-left text-sm min-w-[640px] w-full">
           <thead>
             <tr className="text-gray-500 text-xs border-b border-gray-700">
+              <th className="pb-3 pr-3" title="Quality grade A–D. Higher = historically better odds (A ~54% win vs D ~42%). From market regime + base tightness + low volatility + non-extreme volume.">GRADE</th>
               <th className="pb-3 pr-4">TICKER</th>
               <th className="pb-3 pr-4">PRICE</th>
               <th className="pb-3 pr-4">TREND</th>
@@ -141,8 +149,14 @@ export default function SignalsTable({
             </tr>
           </thead>
           <tbody>
-            {breakouts.map((sig, i) => (
+            {breakouts.map(({ s: sig, g }, i) => (
               <tr key={`${sig.Ticker}-${i}`} className="border-b border-gray-700/50 hover:bg-sky-900/10 transition h-11">
+                <td className="py-2 pr-3">
+                  <span className={`inline-flex items-center justify-center w-7 h-6 rounded font-bold text-sm ${gradeColor(g.grade)}`}
+                    title={`Quality ${g.score}/100 — ${g.factors.map((f) => `${f.label}: ${f.value}`).join('; ')}`}>
+                    {g.grade}
+                  </span>
+                </td>
                 <td className="py-2 pr-4 font-bold text-sky-300 whitespace-nowrap">
                   <div className="flex items-center gap-1.5">
                     <span>{sig.Ticker}</span>
@@ -168,7 +182,7 @@ export default function SignalsTable({
               </tr>
             ))}
             {breakouts.length === 0 && (
-              <tr><td colSpan={6} className="py-8 text-center text-gray-500">
+              <tr><td colSpan={7} className="py-8 text-center text-gray-500">
                 {loading ? 'Loading…' : (
                   <>No breakouts right now — nothing is breaking out today.<br />
                   <span className="text-gray-600 text-xs">That&apos;s normal on quiet days. Use the Time Machine above to study past breakouts.</span></>

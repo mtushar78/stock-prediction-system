@@ -1310,6 +1310,19 @@ class StockAnalyzer:
         checks['min_avg_vol20'] = self.breakout_min_avg_vol20
         checks['min_price'] = self.breakout_min_price
 
+        # Per-stock QUALITY factors (used by the UI quality grade). The study
+        # found tighter bases and lower volatility separate winning breakouts
+        # from losers (alongside market regime, which the UI adds).
+        try:
+            r10 = df['close'].tail(10)
+            base_tight = float((r10.max() - r10.min()) / r10.mean() * 100) if len(r10) and r10.mean() else None
+        except Exception:
+            base_tight = None
+        atr_val = row.get('ATR')
+        atr_pct = (float(atr_val) / close * 100) if (pd.notna(atr_val) and close > 0) else None
+        checks['base_tight_pct'] = round(base_tight, 2) if base_tight is not None else None
+        checks['atr_pct'] = round(atr_pct, 2) if atr_pct is not None else None
+
         return {'is_breakout': len(fails) == 0, 'reasons': fails, 'checks': checks}
 
     def generate_signal(self, score: int) -> str:
