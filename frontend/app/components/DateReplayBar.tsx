@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { History, ChevronLeft, ChevronRight, Radio, CalendarDays, Play, Check, Zap } from 'lucide-react';
+import { History, ChevronLeft, ChevronRight, Radio, Play, Check, Zap } from 'lucide-react';
+import MiniCalendar from './MiniCalendar';
 
 interface Props {
   dates: string[];          // trading days, newest-first
@@ -54,19 +55,15 @@ export default function DateReplayBar({ dates, analyzed, viewing, loading, error
           title="Step the date back one trading day"
         ><ChevronLeft className="w-3 h-3" /> Prev</button>
 
-        <span className="relative flex items-center">
-          <CalendarDays className="w-4 h-4 text-gray-400 absolute left-2 pointer-events-none" />
-          <input
-            type="date"
-            value={pending}
-            min={minDate}
-            max={maxDate}
-            disabled={loading}
-            onChange={(e) => setPending(e.target.value)}
-            className="bg-gray-900 border border-gray-600 rounded pl-8 pr-2 py-1 text-gray-100"
-            title="Pick a past trading day"
-          />
-        </span>
+        <MiniCalendar
+          value={pending}
+          min={minDate}
+          max={maxDate}
+          tradingDays={new Set(dates)}
+          analyzedDays={analyzedSet}
+          disabled={loading}
+          onChange={setPending}
+        />
 
         <button
           disabled={!newerDate || loading}
@@ -122,29 +119,9 @@ export default function DateReplayBar({ dates, analyzed, viewing, loading, error
           </span>
         )}
         {!loading && !error && isTradingDay && !viewing && (
-          <span className="text-gray-500">Pick a past trading day and press <b>Analyze</b> to replay that day&apos;s signals.</span>
+          <span className="text-gray-500">Pick a past trading day {analyzed.length > 0 && '(green = already analyzed) '}and press <b>Analyze</b>.</span>
         )}
       </div>
-
-      {analyzed.length > 0 && (
-        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
-          <span className="text-emerald-400/80 flex items-center gap-1"><Zap className="w-3 h-3" /> Ready (instant):</span>
-          {analyzed.slice(0, 24).map((d) => (
-            <button
-              key={d}
-              disabled={loading}
-              onClick={() => { setPending(d); onAnalyze(d); }}
-              className={`px-1.5 py-0.5 rounded border disabled:opacity-40 ${
-                d === viewing
-                  ? 'bg-amber-700 text-white border-amber-500'
-                  : 'bg-emerald-900/30 text-emerald-300 border-emerald-800 hover:bg-emerald-800/50'
-              }`}
-              title="Already analyzed — opens instantly"
-            >{d.slice(5)}</button>
-          ))}
-          {analyzed.length > 24 && <span className="text-gray-500">+{analyzed.length - 24} more</span>}
-        </div>
-      )}
     </div>
   );
 }
