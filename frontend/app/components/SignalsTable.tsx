@@ -92,6 +92,11 @@ export default function SignalsTable({
             className={`px-3 py-1 rounded ${tab === 'ALL' ? 'bg-emerald-700 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
           >ALL ({signals.length})</button>
           <button
+            onClick={() => setTab('BREAKOUT')}
+            className={`px-3 py-1 rounded flex items-center gap-1 ${tab === 'BREAKOUT' ? 'bg-sky-700 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+            title="v9 — genuine 20-day-high breakout, not yet extended, in an uptrend, liquid. The only entry rule with positive edge in every year 2019–2026 (backtested). The list worth trading."
+          ><Rocket className="w-3 h-3" /> BREAKOUT ({countBreakout})</button>
+          <button
             onClick={() => setTab('EARLY')}
             className={`px-3 py-1 rounded flex items-center gap-1 ${tab === 'EARLY' ? 'bg-orange-700 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
             title="Pre-breakout setups: tight base + first volume tell + not extended. Best entry window."
@@ -106,11 +111,6 @@ export default function SignalsTable({
             className={`px-3 py-1 rounded flex items-center gap-1 ${tab === 'FRESH' ? 'bg-yellow-700 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
             title="Day-1 signals — yesterday was NOT BUY/EARLY. These are the freshest opportunities."
           ><Sparkles className="w-3 h-3" /> FRESH ({countFresh})</button>
-          <button
-            onClick={() => setTab('BREAKOUT')}
-            className={`px-3 py-1 rounded flex items-center gap-1 ${tab === 'BREAKOUT' ? 'bg-sky-700 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
-            title="v9 — genuine 20-day-high breakout, not yet extended, in an uptrend, liquid. The only entry rule with positive edge in every year 2019–2026 (backtested)."
-          ><Rocket className="w-3 h-3" /> BREAKOUT ({countBreakout})</button>
         </div>
       </div>
 
