@@ -310,9 +310,11 @@ Then **Ctrl+C** to stop the dev server before launching PM2.
    INDEX statements) — only on the first instantiation per process
 3. Runs `StockAnalyzer.analyze_all_tickers()` once and writes the result
    to `signals_today` so the frontend has data immediately
-4. Starts APScheduler with **12 cron jobs** in `Asia/Dhaka` timezone:
-   - 11 intraday/EOD scrapes between **10:30 and 15:15** (Sun–Thu, when
-     DSE is open)
+4. Starts APScheduler in `Asia/Dhaka` timezone:
+   - An **intraday scrape every 8 minutes** between **10:00 and 14:56**
+     (Sun–Thu, when DSE is open), plus a **15:00 pre-close** snapshot and
+     the **15:15 final EOD** scrape
+   - A daily **16:00 PG backup sync**
    - 1 weekly fundamentals scrape at **Saturday 08:00**
 5. Listens on the configured port (12001 in this guide)
 
@@ -526,8 +528,8 @@ and add to `crontab -e`:
 
 ## 11. Verifying the daily scraper works
 
-After deployment, the easiest verification is to wait for the next 30-min
-scrape slot during the trading window (10:30 AM – 3:15 PM Asia/Dhaka,
+After deployment, the easiest verification is to wait for the next 8-minute
+scrape slot during the trading window (10:00 AM – 3:15 PM Asia/Dhaka,
 Sun–Thu) and confirm:
 
 ```bash

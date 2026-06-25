@@ -365,94 +365,28 @@ async def lifespan(app: FastAPI):
         logger.warning("⚠️  STARTUP ANALYSIS DID NOT COMPLETE SUCCESSFULLY")
         logger.warning("API will return empty signals until next scheduled update")
     
-    # Schedule DSE Scraper - 4 times daily
-    # 1. Morning scrape at 10:30 AM - INTRADAY (is_final=0)
+    # Schedule DSE Scraper.
+    # Intraday scrape every 8 minutes across the trading session
+    # (10:00 → 14:56 Asia/Dhaka, fires at :00 :08 :16 :24 :32 :40 :48 :56 each
+    # hour). Denser cadence than the old fixed 30-minute slots for a much closer
+    # view of live prices. is_final=0.
     scheduler.add_job(
         scheduled_scraper_and_analysis,
-        CronTrigger(hour=10, minute=30, timezone=BANGLADESH_TZ),
+        CronTrigger(hour='10-14', minute='*/8', timezone=BANGLADESH_TZ),
         args=[0],  # is_final = 0
-        id='morning_scrape_1030',
-        name='Morning Scrape (10:30 AM)',
-        replace_existing=True
-    )
-    
-        # 1. Morning scrape at 11:00 AM - INTRADAY (is_final=0)
-    scheduler.add_job(
-        scheduled_scraper_and_analysis,
-        CronTrigger(hour=11, minute=0, timezone=BANGLADESH_TZ),
-        args=[0],  # is_final = 0
-        id='morning_scrape_1100',
-        name='Morning Scrape (11 AM)',
-        replace_existing=True
-    )
-        # 1. Morning scrape at 11:30 AM - INTRADAY (is_final=0)
-    scheduler.add_job(
-        scheduled_scraper_and_analysis,
-        CronTrigger(hour=11, minute=30, timezone=BANGLADESH_TZ),
-        args=[0],  # is_final = 0
-        id='morning_scrape_1130',
-        name='Morning Scrape (11:30 AM)',
-        replace_existing=True
-    )    # 1. Morning scrape at 12:00 PM - INTRADAY (is_final=0)
-    scheduler.add_job(
-        scheduled_scraper_and_analysis,
-        CronTrigger(hour=12, minute=0, timezone=BANGLADESH_TZ),
-        args=[0],  # is_final = 0
-        id='morning_scrape_1200',
-        name='Morning Scrape (12 PM)',
-        replace_existing=True
-    )
-    scheduler.add_job(
-        scheduled_scraper_and_analysis,
-        CronTrigger(hour=12, minute=30, timezone=BANGLADESH_TZ),
-        args=[0],  # is_final = 0
-        id='morning_scrape_1230',
-        name='Morning Scrape (12:30 PM)',
-        replace_existing=True
-    )
-    # 2. Afternoon scrape at 1:00 PM - INTRADAY (is_final=0)
-    scheduler.add_job(
-        scheduled_scraper_and_analysis,
-        CronTrigger(hour=13, minute=0, timezone=BANGLADESH_TZ),
-        args=[0],  # is_final = 0
-        id='afternoon_scrape_1300',
-        name='Afternoon Scrape (1 PM)',
-        replace_existing=True
-    )
-    
-        # 2. Afternoon scrape at 1:30 PM - INTRADAY (is_final=0)
-    scheduler.add_job(
-        scheduled_scraper_and_analysis,
-        CronTrigger(hour=13, minute=30, timezone=BANGLADESH_TZ),
-        args=[0],  # is_final = 0
-        id='afternoon_scrape_1330',
-        name='Afternoon Scrape (1:30 PM)',
-        replace_existing=True
-    )
-        # 2. Afternoon scrape at 2:00 PM - INTRADAY (is_final=0)
-    scheduler.add_job(
-        scheduled_scraper_and_analysis,
-        CronTrigger(hour=14, minute=0, timezone=BANGLADESH_TZ),
-        args=[0],  # is_final = 0
-        id='afternoon_scrape_1400',
-        name='Afternoon Scrape (2 PM)',
+        id='intraday_scrape_8min',
+        name='Intraday Scrape (every 8 min, 10:00–14:56)',
+        max_instances=1,         # never overlap a still-running scrape
+        coalesce=True,           # if fire times were missed, run once, not a burst
+        misfire_grace_time=180,  # tolerate up to 3 min of scheduler lag
         replace_existing=True
     )
 
-    # 3. Pre-close scrape at 2:30 PM - INTRADAY (is_final=0)
+    # Pre-close intraday snapshot at 3:00 PM (after the 2:30 close, before the
+    # final EOD finalise at 3:15). is_final=0.
     scheduler.add_job(
         scheduled_scraper_and_analysis,
-        CronTrigger(hour=14, minute=30, timezone=BANGLADESH_TZ),
-        args=[0],  # is_final = 0
-        id='preclose_scrape_1430',
-        name='Pre-Close Scrape (2:30 PM)',
-        replace_existing=True
-    )
-    
-        # 3. Pre-close scrape at 3:00 PM - INTRADAY (is_final=0)
-    scheduler.add_job(
-        scheduled_scraper_and_analysis,
-        CronTrigger(hour=15, minute=00, timezone=BANGLADESH_TZ),
+        CronTrigger(hour=15, minute=0, timezone=BANGLADESH_TZ),
         args=[0],  # is_final = 0
         id='preclose_scrape_1500',
         name='Pre-Close Scrape (3 PM)',
