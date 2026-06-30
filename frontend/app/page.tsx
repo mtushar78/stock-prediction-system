@@ -18,6 +18,7 @@ import PortfolioVolumeModal from './components/PortfolioVolumeModal';
 import SignalDetailModal from './components/SignalDetailModal';
 import BreakoutDetailModal from './components/BreakoutDetailModal';
 import ReversalDetailModal from './components/ReversalDetailModal';
+import ReversalTracker from './components/ReversalTracker';
 import PortfolioDetailModal from './components/PortfolioDetailModal';
 import PurchaseHistoryModal from './components/PurchaseHistoryModal';
 import PriceHistoryModal from './components/PriceHistoryModal';
@@ -340,7 +341,9 @@ export default function Dashboard() {
             onPriceInfoClick={(signal) => setPriceHistoryModal({ ticker: signal.Ticker, currentPrice: signal.Price })}
             activeTicker={activeModal !== null && activeModal < signals.length ? signals[activeModal]?.Ticker ?? null : null}
           />
-          
+
+          <ReversalTracker apiUrl={API_URL} />
+
           <PortfolioTable
             portfolio={portfolio}
             onVolumeClick={(ticker, volume) => setPortfolioVolumeModal({ ticker, volume })}

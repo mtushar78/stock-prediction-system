@@ -267,6 +267,15 @@ async def scheduled_scraper_and_analysis(is_final: int = 0):
 
                 logger.info(f"✅ [{update_type}] Analysis: {len(df_results)} signals generated")
                 logger.info(f"✅ [{update_type}] Verified: {count} signals saved to signals_today")
+
+                # v10 live tracker: log fresh reversals (EOD only) + refresh outcomes
+                try:
+                    from src.reversal_tracker import record_fresh_reversals, update_outcomes
+                    if is_final:
+                        record_fresh_reversals(db.engine, df_results)
+                    update_outcomes(db.engine, db.get_stock_data)
+                except Exception as e:
+                    logger.error(f"reversal_tracker update failed: {e}")
                 
                 # Count signal types
                 buy_count = len(df_results[df_results['signal'] == 'BUY'])
@@ -334,6 +343,14 @@ async def lifespan(app: FastAPI):
 
             logger.info(f"✅ Initial analysis completed: {len(df_results)} signals generated")
             logger.info(f"✅ Verified: {count} signals saved to signals_today table")
+
+            # v10 live tracker: record fresh reversals + refresh all outcomes
+            try:
+                from src.reversal_tracker import record_fresh_reversals, update_outcomes
+                record_fresh_reversals(db.engine, df_results)
+                update_outcomes(db.engine, db.get_stock_data)
+            except Exception as e:
+                logger.error(f"reversal_tracker startup update failed: {e}")
             
             # Count BUY and WAIT signals
             buy_count = len(df_results[df_results['signal'] == 'BUY'])
@@ -763,6 +780,21 @@ def get_analyzed_dates():
         return df['date'].astype(str).str.slice(0, 10).tolist()
     except Exception:
         return []  # table doesn't exist until the first historical analysis
+    finally:
+        db.close()
+
+
+@app.get("/api/reversal-tracker")
+def get_reversal_tracker():
+    """Live journal of every reversal signal + its real forward outcome.
+    The honest, prospective record of whether the reversal signal works."""
+    from src.reversal_tracker import get_journal
+    db = DatabaseManager()
+    try:
+        return get_journal(db.engine)
+    except Exception as e:
+        logger.error(f"reversal-tracker fetch failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         db.close()
 
