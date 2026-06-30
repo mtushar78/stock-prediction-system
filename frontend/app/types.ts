@@ -66,6 +66,16 @@ export interface Signal {
     avg_vol20?: number; min_avg_vol20?: number; min_price?: number;
     pos_1y?: number; room_life?: number; deep_value?: boolean;
   };
+  // v11 OVERHEATED / take-profit warning (decliner mirror — a RISK flag, not a buy)
+  OverheatedSignal?: boolean;
+  OverheatedReasons?: string[];
+  IsFreshOverheated?: boolean;
+  OverheatedChecks?: {
+    close?: number; rsi?: number; ret20?: number; ext20?: number; sma20?: number;
+    rvol?: number; pos_1y?: number; new_high?: boolean;
+    heat_score?: number; heat_level?: 'EXTREME' | 'HOT' | 'WARM' | string;
+    rsi_thresh?: number; ret20_thresh?: number; ext20_thresh?: number;
+  };
   // v8 ENTRY-PRICE GUIDANCE
   PrevClose?: number;
   DayLow?: number;

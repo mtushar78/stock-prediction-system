@@ -13,6 +13,7 @@ interface SignalsTableProps {
   onInfoClick: (signal: Signal) => void;
   onBreakoutInfoClick: (signal: Signal) => void;
   onReversalInfoClick: (signal: Signal) => void;
+  onOverheatedInfoClick: (signal: Signal) => void;
   onPriceInfoClick: (signal: Signal) => void;
   activeTicker: string | null;
 }
@@ -49,6 +50,24 @@ function reversalWhy(sig: Signal): string {
   return parts.join(' · ');
 }
 
+/** Heat badge color by level (EXTREME hottest). */
+function heatColor(level?: string): string {
+  return level === 'EXTREME' ? 'bg-red-600 text-white'
+    : level === 'HOT' ? 'bg-orange-600 text-white'
+    : 'bg-amber-700 text-amber-100';
+}
+
+/** Short "why it's hot" summary for the overheated row. */
+function overheatedWhy(sig: Signal): string {
+  const r = sig.OverheatedReasons;
+  if (Array.isArray(r) && r.length) return r.join(' · ');
+  const c = sig.OverheatedChecks || {};
+  const parts: string[] = [];
+  if (typeof c.rsi === 'number') parts.push(`RSI ${Math.round(c.rsi)}`);
+  if (typeof c.ret20 === 'number') parts.push(`+${Math.round(c.ret20)}%/20d`);
+  return parts.join(' · ');
+}
+
 export default function SignalsTable({
   signals,
   loading,
@@ -58,11 +77,12 @@ export default function SignalsTable({
   onInfoClick,
   onBreakoutInfoClick,
   onReversalInfoClick,
+  onOverheatedInfoClick,
   onPriceInfoClick,
   activeTicker,
 }: SignalsTableProps) {
   const [legacy, setLegacy] = useState(false);
-  const [list, setList] = useState<'BREAKOUT' | 'REVERSAL'>('BREAKOUT');
+  const [list, setList] = useState<'BREAKOUT' | 'REVERSAL' | 'OVERHEATED'>('BREAKOUT');
   const [tab, setTab] = useState<ViewTab>('ALL');
   const [sortKey, setSortKey] = useState<SortKey>('Score');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -82,6 +102,11 @@ export default function SignalsTable({
     .sort((a, b) => b.g.score - a.g.score
       || Number(b.s.IsFreshReversal) - Number(a.s.IsFreshReversal)
       || (b.s.RVOL || 0) - (a.s.RVOL || 0));
+
+  // v11 OVERHEATED list — the take-profit / avoid warning, hottest first.
+  const overheated = signals
+    .filter((s) => s.OverheatedSignal)
+    .sort((a, b) => (b.OverheatedChecks?.heat_score || 0) - (a.OverheatedChecks?.heat_score || 0));
 
   // ---- legacy table (only when expanded) ----
   const filtered = signals.filter((s) => {
@@ -153,22 +178,37 @@ export default function SignalsTable({
             <TrendingDown className="w-4 h-4" /> Reversals
             <span className={`text-xs rounded-full px-2 py-0.5 font-bold ${list === 'REVERSAL' ? 'bg-amber-800 text-amber-100' : 'bg-gray-800 text-gray-400'}`}>{reversals.length}</span>
           </button>
-          <span className="text-[10px] text-gray-500 border border-gray-700 rounded px-1.5 py-0.5">{list === 'BREAKOUT' ? 'v9 · momentum' : 'v10 · buy the bottom'}</span>
+          <button onClick={() => setList('OVERHEATED')}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg font-bold text-sm transition-colors border ${
+              list === 'OVERHEATED' ? 'bg-red-900/40 text-red-200 border-red-600' : 'bg-gray-900/40 text-gray-400 border-gray-700 hover:text-gray-200'}`}
+            title="Overheated — run too hot, elevated pullback risk. Avoid buying / take profit if you hold.">
+            <Flame className="w-4 h-4" /> Overheated
+            <span className={`text-xs rounded-full px-2 py-0.5 font-bold ${list === 'OVERHEATED' ? 'bg-red-800 text-red-100' : 'bg-gray-800 text-gray-400'}`}>{overheated.length}</span>
+          </button>
+          <span className="text-[10px] text-gray-500 border border-gray-700 rounded px-1.5 py-0.5">{list === 'BREAKOUT' ? 'v9 · momentum' : list === 'REVERSAL' ? 'v10 · buy the bottom' : 'v11 · take profit'}</span>
           <button onClick={() => setShowLegend((x) => !x)} className="text-gray-500 hover:text-gray-200" title="What is this?">
             <HelpCircle className="w-4 h-4" />
           </button>
         </div>
       </div>
 
-      {list === 'BREAKOUT' ? (
+      {list === 'BREAKOUT' && (
         <p className="text-xs text-gray-500 mb-3">
           Momentum signal with a proven, regime-robust edge — ranked best-first by <b className="text-gray-400">quality grade (A–D)</b>.
           Grade A historically wins ~54% vs ~42% for D. Click <Info className="inline w-3 h-3" /> on any row for the breakdown.
         </p>
-      ) : (
+      )}
+      {list === 'REVERSAL' && (
         <p className="text-xs text-gray-500 mb-3">
           Mean-reversion signal — buy a <b className="text-gray-400">confirmed bottom</b> (deeply oversold, first green day, room to run).
           Ranked by quality grade. Backtest: Grade A wins ~<b className="text-amber-300/80">82%</b> (+10.5%/10d) vs ~58% for D; overall ~68% win.
+        </p>
+      )}
+      {list === 'OVERHEATED' && (
+        <p className="text-xs text-gray-500 mb-3">
+          🔥 <b className="text-red-300">Take-profit / avoid</b> warning — stocks that have run too hot.
+          Historically these pull back ≥20% about <b className="text-red-300">26%</b> of the time (vs ~15% normally) — <b>elevated risk, not a certainty</b>.
+          <b className="text-gray-400"> NOT a buy list</b>: don&apos;t chase; consider taking profit if you hold one. Ranked hottest-first.
         </p>
       )}
 
@@ -183,6 +223,12 @@ export default function SignalsTable({
           <div><span className="text-amber-300 font-bold">📉 REVERSAL</span> fires when a stock is (1) deeply oversold (RSI &lt; 30), (2) prints its first green day (the turn), (3) on real volume (RVOL ≥ 1.5×), (4) sits ≥ 15% below its 120-day high (room to run), and (5) is liquid. The buy-low edge in a mean-reverting market.</div>
           <div className="text-amber-300/70">⚠️ Edge case: in a sustained market downtrend, oversold can get more oversold (2023 &amp; 2025 backtest were weak). Honor the −7% stop; don&apos;t average down.</div>
           <div className="text-gray-500">Empty on calm days — reversals cluster around selloffs.</div>
+        </div>
+      )}
+      {showLegend && list === 'OVERHEATED' && (
+        <div className="mb-3 bg-gray-900 border border-red-800/50 rounded p-3 text-xs text-gray-300 space-y-1.5">
+          <div><span className="text-red-300 font-bold">🔥 OVERHEATED</span> flags a stock that has run too far, too fast: overbought (RSI ≥ 75), and/or parabolic (+50% in 20 days), and/or stretched (≥ 25% above its 20-day average), often on climax volume. Reverse-engineered from how DSE tops form (see docs/WINNER_ANATOMY.md).</div>
+          <div className="text-red-300/80">This is a <b>RISK flag, not a sell-now command</b> — strong stocks can stay hot a while. Use it to avoid buying tops and to take profit on names you hold. The chart predicts falls far better than rises.</div>
         </div>
       )}
 
@@ -304,6 +350,68 @@ export default function SignalsTable({
                 {loading ? 'Loading…' : (
                   <>No reversals right now — nothing has bottomed-and-turned today.<br />
                   <span className="text-gray-600 text-xs">Reversals cluster around selloffs. Use the Time Machine above to study past ones.</span></>
+                )}
+              </td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      )}
+
+      {/* ---- OVERHEATED TABLE (take-profit / avoid warning) ---- */}
+      {list === 'OVERHEATED' && (
+      <div className="overflow-x-auto">
+        <table className="text-left text-sm min-w-[680px] w-full">
+          <thead>
+            <tr className="text-gray-500 text-xs border-b border-gray-700">
+              <th className="pb-3 pr-3" title="Heat = how dangerously extended (0–100). EXTREME ≥ 65, HOT ≥ 40.">HEAT</th>
+              <th className="pb-3 pr-4">TICKER</th>
+              <th className="pb-3 pr-4">PRICE</th>
+              <th className="pb-3 pr-4" title="RSI — overbought above 70">RSI</th>
+              <th className="pb-3 pr-4" title="Run-up over the last 20 trading days">RUN-UP 20d</th>
+              <th className="pb-3 pr-4" title="How far above its 20-day average">vs 20-SMA</th>
+              <th className="pb-3 pr-4">WHY IT'S HOT</th>
+              <th className="pb-3 text-center">DETAIL</th>
+            </tr>
+          </thead>
+          <tbody>
+            {overheated.map((sig, i) => {
+              const c = sig.OverheatedChecks || {};
+              return (
+              <tr key={`${sig.Ticker}-${i}`} className="border-b border-gray-700/50 hover:bg-red-900/10 transition h-11">
+                <td className="py-2 pr-3">
+                  <span className={`inline-flex items-center justify-center px-2 h-6 rounded font-bold text-[11px] ${heatColor(c.heat_level)}`}
+                    title={`Heat ${c.heat_score ?? '?'}/100 — ${c.heat_level ?? ''}`}>
+                    {c.heat_level ?? '—'}
+                  </span>
+                </td>
+                <td className="py-2 pr-4 font-bold text-red-200 whitespace-nowrap">
+                  <div className="flex items-center gap-1.5">
+                    <span>{sig.Ticker}</span>
+                    {!!sig.IsFreshOverheated && (
+                      <span className="text-[9px] bg-red-600 text-white px-1 py-0.5 rounded font-bold" title="First day it turned overheated">NEW</span>
+                    )}
+                  </div>
+                </td>
+                <td className="py-2 pr-4 whitespace-nowrap">{priceCell(sig)}</td>
+                <td className="py-2 pr-4 font-bold text-orange-300 whitespace-nowrap">{typeof c.rsi === 'number' ? Math.round(c.rsi) : '-'}</td>
+                <td className="py-2 pr-4 font-bold text-red-300 whitespace-nowrap">{typeof c.ret20 === 'number' ? `+${Math.round(c.ret20)}%` : '-'}</td>
+                <td className="py-2 pr-4 text-red-300 whitespace-nowrap">{typeof c.ext20 === 'number' ? `+${Math.round(c.ext20)}%` : '-'}</td>
+                <td className="py-2 pr-4 text-gray-300 text-xs">{overheatedWhy(sig)}</td>
+                <td className="py-2 text-center">
+                  <button onClick={() => onOverheatedInfoClick(sig)}
+                    className="inline-flex items-center justify-center w-7 h-7 rounded border border-red-700 bg-red-900/20 text-red-300 hover:border-red-400 hover:bg-red-900/40 transition-colors"
+                    title="Why it's flagged hot — the breakdown">
+                    <Info className="w-4 h-4" />
+                  </button>
+                </td>
+              </tr>
+            );})}
+            {overheated.length === 0 && (
+              <tr><td colSpan={8} className="py-8 text-center text-gray-500">
+                {loading ? 'Loading…' : (
+                  <>Nothing overheated right now — no stock has run dangerously hot today.<br />
+                  <span className="text-gray-600 text-xs">Good — fewer tops to avoid. This fills up in frothy/euphoric markets.</span></>
                 )}
               </td></tr>
             )}

@@ -18,6 +18,7 @@ import PortfolioVolumeModal from './components/PortfolioVolumeModal';
 import SignalDetailModal from './components/SignalDetailModal';
 import BreakoutDetailModal from './components/BreakoutDetailModal';
 import ReversalDetailModal from './components/ReversalDetailModal';
+import OverheatedDetailModal from './components/OverheatedDetailModal';
 import ReversalTracker from './components/ReversalTracker';
 import PortfolioDetailModal from './components/PortfolioDetailModal';
 import PurchaseHistoryModal from './components/PurchaseHistoryModal';
@@ -61,6 +62,7 @@ export default function Dashboard() {
   const [volumeModalSignal, setVolumeModalSignal] = useState<Signal | null>(null);
   const [breakoutModalSignal, setBreakoutModalSignal] = useState<Signal | null>(null);
   const [reversalModalSignal, setReversalModalSignal] = useState<Signal | null>(null);
+  const [overheatedModalSignal, setOverheatedModalSignal] = useState<Signal | null>(null);
   const [portfolioVolumeModal, setPortfolioVolumeModal] = useState<{ ticker: string; volume: number } | null>(null);
   const [purchaseHistoryModal, setPurchaseHistoryModal] = useState<string | null>(null);
   const [purchaseHistory, setPurchaseHistory] = useState<PurchaseHistory[]>([]);
@@ -338,6 +340,7 @@ export default function Dashboard() {
             onInfoClick={(signal) => setActiveModal(signals.indexOf(signal))}
             onBreakoutInfoClick={(signal) => setBreakoutModalSignal(signal)}
             onReversalInfoClick={(signal) => setReversalModalSignal(signal)}
+            onOverheatedInfoClick={(signal) => setOverheatedModalSignal(signal)}
             onPriceInfoClick={(signal) => setPriceHistoryModal({ ticker: signal.Ticker, currentPrice: signal.Price })}
             activeTicker={activeModal !== null && activeModal < signals.length ? signals[activeModal]?.Ticker ?? null : null}
           />
@@ -427,6 +430,13 @@ export default function Dashboard() {
         <ReversalDetailModal
           signal={reversalModalSignal}
           onClose={() => setReversalModalSignal(null)}
+        />
+      )}
+
+      {overheatedModalSignal && (
+        <OverheatedDetailModal
+          signal={overheatedModalSignal}
+          onClose={() => setOverheatedModalSignal(null)}
         />
       )}
 

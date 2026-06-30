@@ -154,6 +154,16 @@ class StockAnalyzer:
         self.reversal_min_avg_vol20 = 50000    # same liquidity floor as breakout
         self.reversal_min_price = 5.0          # exclude sub-5 penny / MF units
 
+        # v11 OVERHEATED / take-profit warning — flag stocks that have run too hot
+        # and historically round-trip. 7-yr study: the danger zone (any of these)
+        # fell -20% within 40d ~26% of the time vs ~15% baseline. NOT a buy list —
+        # an avoid/take-profit flag. Fires when liquid AND any axis is breached.
+        self.overheated_rsi = 75.0             # overbought
+        self.overheated_ret20 = 50.0           # parabolic: +50% in 20 days
+        self.overheated_ext20 = 25.0           # extended: 25% above the 20-day SMA
+        self.overheated_min_avg_vol20 = 50000  # liquidity floor
+        self.overheated_min_price = 5.0
+
     def calculate_projected_volume(self, current_vol: float, current_time: datetime = None) -> float:
         """
         v6 UPGRADE: U-shaped volume projection for DSE intraday accuracy.
@@ -298,6 +308,9 @@ class StockAnalyzer:
         df['high_252'] = df['high'].rolling(window=252, min_periods=120).max()
         df['low_252'] = df['low'].rolling(window=252, min_periods=120).min()
         df['life_high'] = df['high'].expanding().max()
+        # v11 OVERHEATED: 20-day SMA + 20-day high (for the take-profit warning).
+        df['sma_20'] = df['close'].rolling(window=20, min_periods=1).mean()
+        df['high_20'] = df['high'].rolling(window=20, min_periods=1).max()
 
         # Wilder's RSI(14) — oversold/exhaustion gauge for the reversal signal.
         _delta = df['close'].diff()
@@ -1452,6 +1465,83 @@ class StockAnalyzer:
 
         return {'is_reversal': len(fails) == 0, 'reasons': fails, 'checks': checks}
 
+    def calculate_overheated_signal(self, row: pd.Series, df: pd.DataFrame) -> Dict:
+        """v11: OVERHEATED / take-profit warning — the decliner-study mirror.
+
+        Flags a stock that has run too far, too fast and is at elevated risk of a
+        pullback. Backtest 2019-2026: the danger zone (overbought OR parabolic OR
+        extended) fell -20% within 40d ~26% of the time, vs ~15% baseline. This is
+        a RISK flag (most useful as: don't chase / take profit if you hold) — NOT a
+        guarantee of a fall and NOT a buy signal. Returns {'is_overheated',
+        'reasons' (the danger flags present), 'checks' (incl. heat_score/level)}.
+        """
+        reasons, checks = [], {}
+        close = float(row['close']) if pd.notna(row.get('close')) else 0.0
+        rsi = float(row['rsi']) if pd.notna(row.get('rsi')) else 50.0
+        rvol = float(row['rvol']) if pd.notna(row.get('rvol')) else 0.0
+
+        sma20 = row.get('sma_20')
+        ext20 = ((close / float(sma20) - 1) * 100) if (pd.notna(sma20) and sma20 and sma20 > 0) else None
+        ret20 = None
+        if len(df) >= 21:
+            c20 = float(df.iloc[-21]['close'])
+            if c20 > 0:
+                ret20 = (close - c20) / c20 * 100
+        hi20 = row.get('high_20')
+        new_high = bool(pd.notna(hi20) and hi20 and close >= float(hi20) * 0.999)
+        low252, high252 = row.get('low_252'), row.get('high_252')
+        pos_1y = None
+        if pd.notna(low252) and pd.notna(high252) and (float(high252) - float(low252)) > 0:
+            pos_1y = (close - float(low252)) / (float(high252) - float(low252))
+
+        # liquidity gate (only warn on real, tradeable names)
+        avg_vol20 = row.get('avg_volume_20')
+        liquid = bool(pd.notna(avg_vol20) and avg_vol20 >= self.overheated_min_avg_vol20
+                      and close >= self.overheated_min_price)
+
+        overbought = rsi >= self.overheated_rsi
+        parabolic = ret20 is not None and ret20 >= self.overheated_ret20
+        extended = ext20 is not None and ext20 >= self.overheated_ext20
+        is_overheated = bool(liquid and (overbought or parabolic or extended))
+
+        # plain-English danger flags (shown slightly below the fire thresholds for context)
+        if rsi >= 70:
+            reasons.append(f'Overbought (RSI {rsi:.0f})')
+        if ret20 is not None and ret20 >= 40:
+            reasons.append(f'Ran +{ret20:.0f}% in 20 days')
+        if ext20 is not None and ext20 >= 20:
+            reasons.append(f'+{ext20:.0f}% above its 20-day average')
+        if rvol >= 2.0:
+            reasons.append(f'Climax volume ({rvol:.1f}x)')
+        if new_high:
+            reasons.append('At a new high (blow-off risk)')
+
+        # HEAT score 0-100 — how dangerously extended (severity, not a quality grade)
+        def clamp(x):
+            return 0.0 if x < 0 else 1.0 if x > 1 else x
+        heat = (clamp((rsi - 65) / 35) * 35
+                + (clamp(ret20 / 150) * 30 if ret20 is not None else 0)
+                + (clamp(ext20 / 60) * 20 if ext20 is not None else 0)
+                + (clamp((rvol - 1.5) / 3) * 15 if rvol > 1.5 else 0))
+        heat = round(heat)
+        level = 'EXTREME' if heat >= 65 else 'HOT' if heat >= 40 else 'WARM'
+
+        checks['close'] = round(close, 2)
+        checks['rsi'] = round(rsi, 1)
+        checks['ret20'] = round(ret20, 1) if ret20 is not None else None
+        checks['ext20'] = round(ext20, 1) if ext20 is not None else None
+        checks['sma20'] = round(float(sma20), 2) if (pd.notna(sma20) and sma20) else None
+        checks['rvol'] = round(rvol, 2)
+        checks['pos_1y'] = round(pos_1y, 2) if pos_1y is not None else None
+        checks['new_high'] = new_high
+        checks['heat_score'] = heat
+        checks['heat_level'] = level
+        checks['rsi_thresh'] = self.overheated_rsi
+        checks['ret20_thresh'] = self.overheated_ret20
+        checks['ext20_thresh'] = self.overheated_ext20
+
+        return {'is_overheated': is_overheated, 'reasons': reasons, 'checks': checks}
+
     def generate_signal(self, score: int) -> str:
         """
         Generate trading signal based on score (v7 thresholds).
@@ -1563,6 +1653,10 @@ class StockAnalyzer:
             breakout = self.calculate_breakout_signal(row, df)
             # (v10 reversal already computed up-front, before the trend gates.)
 
+            # v11: OVERHEATED / take-profit warning (the decliner mirror — a RISK
+            # flag, not a buy). Independent of every other signal.
+            overheated = self.calculate_overheated_signal(row, df)
+
             # v7: Yesterday's perspective for fresh-signal detection.
             # Recompute indicators on history excluding today so the OBV/BB
             # slopes are calculated as of yesterday.
@@ -1570,6 +1664,7 @@ class StockAnalyzer:
             prev_early_signal = None
             prev_breakout = None
             prev_reversal = None
+            prev_overheated = None
             if not analysis_date and len(raw_df) >= 21:
                 try:
                     df_y = self.calculate_indicators(raw_df.iloc[:-1])
@@ -1581,6 +1676,7 @@ class StockAnalyzer:
                         prev_early_signal = prev_early['signal']
                         prev_breakout = self.calculate_breakout_signal(prev_row_y, df_y)['is_breakout']
                         prev_reversal = self.calculate_reversal_signal(prev_row_y, df_y)['is_reversal']
+                        prev_overheated = self.calculate_overheated_signal(prev_row_y, df_y)['is_overheated']
                 except Exception as e:
                     logger.debug(f"Fresh-signal recompute failed for {ticker}: {e}")
 
@@ -1588,6 +1684,7 @@ class StockAnalyzer:
             is_fresh_early = bool(early_result['signal'] == 'EARLY' and prev_early_signal != 'EARLY')
             is_fresh_breakout = bool(breakout['is_breakout'] and not prev_breakout)
             is_fresh_reversal = bool(reversal['is_reversal'] and not prev_reversal)
+            is_fresh_overheated = bool(overheated['is_overheated'] and not prev_overheated)
 
             # v8: intraday entry-price guidance (advisory — warn, don't block).
             prev_close_val = (float(df.iloc[-2]['close']) if len(df) >= 2
@@ -1680,6 +1777,12 @@ class StockAnalyzer:
                 'reversal_reasons': reversal['reasons'],
                 'reversal_checks': self._sanitize_for_json(reversal['checks']),
                 'is_fresh_reversal': is_fresh_reversal,
+
+                # ===== v11 OVERHEATED / take-profit warning (risk flag) =====
+                'overheated_signal': overheated['is_overheated'],
+                'overheated_reasons': overheated['reasons'],
+                'overheated_checks': self._sanitize_for_json(overheated['checks']),
+                'is_fresh_overheated': is_fresh_overheated,
 
                 # ===== v8 ENTRY-PRICE GUIDANCE =====
                 'prev_close': entry_guidance['prev_close'],
@@ -2210,6 +2313,8 @@ class StockAnalyzer:
                 'breakout': self._sanitize_for_json(self.calculate_breakout_signal(row, df)),
                 # v10: reversal verdict + the exact 5-rule checks (buy-the-bottom)
                 'reversal': self._sanitize_for_json(self.calculate_reversal_signal(row, df)),
+                # v11: overheated / take-profit warning (the decliner mirror)
+                'overheated': self._sanitize_for_json(self.calculate_overheated_signal(row, df)),
             }
 
             # If official analysis exists, include official computed trading levels for easy comparison
