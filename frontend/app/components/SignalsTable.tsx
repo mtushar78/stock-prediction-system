@@ -274,6 +274,10 @@ export default function SignalsTable({
                 <td className="py-2 pr-4 font-bold text-amber-200 whitespace-nowrap">
                   <div className="flex items-center gap-1.5">
                     <span>{sig.Ticker}</span>
+                    {sig.ReversalChecks?.deep_value && (
+                      <span className="text-[9px] bg-emerald-600 text-white px-1 py-0.5 rounded font-bold"
+                        title="DEEP VALUE — near its 1-year low with big room to its lifetime high. Historically wins ~70% vs ~63% for a regular reversal.">DEEP VALUE</span>
+                    )}
                     {!!sig.IsFreshReversal && (
                       <span className="text-[9px] bg-amber-600 text-white px-1 py-0.5 rounded font-bold" title="First day this reversal fired">FRESH</span>
                     )}

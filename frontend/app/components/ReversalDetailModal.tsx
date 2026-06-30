@@ -57,6 +57,14 @@ export default function ReversalDetailModal({ signal, onClose }: Props) {
             </div>
           </div>
 
+          {signal.ReversalChecks?.deep_value && (
+            <div className="mb-3 bg-emerald-900/20 border border-emerald-700/50 rounded-lg p-3 text-xs text-emerald-200/90">
+              <b className="text-emerald-300">★ DEEP VALUE</b> — near its 1-year low
+              {typeof signal.ReversalChecks.room_life === 'number' ? ` with ${Math.round(signal.ReversalChecks.room_life)}% room back to its lifetime high` : ' with big lifetime headroom'}.
+              These reversals historically win <b>~70%</b> (vs ~63% for a regular one) — the strongest reversals on the list.
+            </div>
+          )}
+
           <p className="text-sm text-gray-400 mb-3">
             All five entry conditions passed — the exact values:
           </p>

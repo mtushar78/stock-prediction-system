@@ -64,6 +64,7 @@ export interface Signal {
     room_pct?: number; high_120?: number; min_room_pct?: number;
     dist50?: number; ret5?: number;
     avg_vol20?: number; min_avg_vol20?: number; min_price?: number;
+    pos_1y?: number; room_life?: number; deep_value?: boolean;
   };
   // v8 ENTRY-PRICE GUIDANCE
   PrevClose?: number;
