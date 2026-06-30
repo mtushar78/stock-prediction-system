@@ -1478,18 +1478,9 @@ class StockAnalyzer:
 
             # Calculate indicators (keep raw_df around for yesterday recompute)
             df = self.calculate_indicators(raw_df)
-            
-            # Apply survival filters
-            filter_result = self.apply_survival_filters(df, ticker)
-            
-            if not filter_result['passed']:
-                return {
-                    'ticker': ticker,
-                    'status': 'filtered',
-                    'message': filter_result['reason']
-                }
-            
-            # Get the row to analyze
+
+            # Get the row to analyze FIRST — needed before the survival/trend
+            # gates so the reversal signal can exempt deep-dip candidates.
             if analysis_date:
                 mask = df['date'] == pd.to_datetime(analysis_date)
                 if not mask.any():
@@ -1501,13 +1492,32 @@ class StockAnalyzer:
                 row = df[mask].iloc[-1]
             else:
                 row = df.iloc[-1]  # Latest data
+
+            # v10: REVERSAL signal (mean-reversion edge — buy the bottom).
+            # Computed up-front: reversal candidates are deeply oversold and
+            # below their moving averages, so the downtrend/survival gates below
+            # would otherwise drop the very stocks this signal exists to surface.
+            reversal = self.calculate_reversal_signal(row, df)
+
+            # Apply survival filters — reversal candidates are EXEMPT (they are
+            # liquid & active by construction: rvol>=1.5 and avg_vol20>=50k are
+            # already enforced, so they can't be ghost-town / stuck / thin).
+            filter_result = self.apply_survival_filters(df, ticker)
+            if not filter_result['passed'] and not reversal['is_reversal']:
+                return {
+                    'ticker': ticker,
+                    'status': 'filtered',
+                    'message': filter_result['reason']
+                }
             
             # *** v5: GRADUATED TREND FILTER ***
             # Only hard-filter stocks >10% below 200 SMA (deep downtrend).
             # Stocks 0-10% below are penalised via graduated scoring but still analysed.
             if pd.notna(row['sma_200']) and row['sma_200'] > 0:
                 distance_pct = (row['close'] - row['sma_200']) / row['sma_200'] * 100
-                if distance_pct < -10:
+                # Reversal candidates are EXEMPT — being below the 200-SMA is the
+                # whole point of a mean-reversion / buy-the-bottom entry.
+                if distance_pct < -10 and not reversal['is_reversal']:
                     return {
                         'ticker': ticker,
                         'status': 'filtered',
@@ -1531,9 +1541,7 @@ class StockAnalyzer:
             # v9: additive BREAKOUT signal (proven positive edge). Computed
             # alongside — does NOT alter the legacy BUY/EARLY signals.
             breakout = self.calculate_breakout_signal(row, df)
-
-            # v10: additive REVERSAL signal (mean-reversion edge — buy the bottom).
-            reversal = self.calculate_reversal_signal(row, df)
+            # (v10 reversal already computed up-front, before the trend gates.)
 
             # v7: Yesterday's perspective for fresh-signal detection.
             # Recompute indicators on history excluding today so the OBV/BB
