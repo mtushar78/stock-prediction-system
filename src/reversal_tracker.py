@@ -131,12 +131,16 @@ def update_outcomes(engine, get_stock_data):
             h = get_stock_data(tk)
             if h is None or h.empty:
                 continue
-            h = h[h['close'] > 0].copy()
+            h = h.copy()
+            # Coerce FIRST (PG may return Decimal/None), then drop non-trading
+            # rows — otherwise a single bad close NaN-poisons max()/min().
+            h['close'] = pd.to_numeric(h['close'], errors='coerce')
+            h = h[h['close'] > 0]
             h['d'] = h['date'].astype(str).str[:10]
-            fut = h[h['d'] > fd].sort_values('d').reset_index(drop=True)
+            fut = h[h['d'] > fd].drop_duplicates('d').sort_values('d').reset_index(drop=True)
             if fut.empty:
                 continue
-            closes = fut['close'].astype(float).to_numpy()
+            closes = fut['close'].to_numpy(dtype=float)
             dates = fut['d'].tolist()
             last_price = float(closes[-1]); days = len(closes)
             cur_ret = (last_price - entry) / entry * 100
