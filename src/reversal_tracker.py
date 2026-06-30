@@ -211,5 +211,23 @@ def get_journal(engine):
         "win_rate_dv_10d": wr(df[df['deep_value'] == 1]['r10']),
         "win_rate_reg_10d": wr(df[df['deep_value'] == 0]['r10']),
     }
-    df = df.where(pd.notna(df), None)
-    return {"signals": df.to_dict(orient="records"), "summary": summary}
+    import math
+    import numpy as np
+
+    def _san(o):
+        if isinstance(o, np.integer):
+            return int(o)
+        if isinstance(o, (np.floating, float)):
+            f = float(o)
+            return None if (math.isnan(f) or math.isinf(f)) else f
+        if isinstance(o, (np.bool_, bool)):
+            return bool(o)
+        if isinstance(o, dict):
+            return {k: _san(v) for k, v in o.items()}
+        if isinstance(o, list):
+            return [_san(v) for v in o]
+        if o is pd.NaT or (o is not None and o is pd.NA):
+            return None
+        return o
+
+    return _san({"signals": df.to_dict(orient="records"), "summary": summary})
