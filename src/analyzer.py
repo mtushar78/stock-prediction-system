@@ -19,6 +19,7 @@ v7: Early-detection overhaul
     - is_fresh_buy / is_fresh_early flags to distinguish day-1 signals
 """
 
+import math
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional
@@ -1808,13 +1809,20 @@ class StockAnalyzer:
     # Detailed analysis (for UI debugging)
     # ----------------------------
     def _safe_float(self, v):
-        """Convert numpy/pandas scalars to JSON-serializable python floats."""
+        """Convert numpy/pandas scalars to JSON-serializable python floats.
+
+        Returns None for NaN and for non-finite values (inf/-inf). The latter
+        arise e.g. when price_change_pct divides by a zero prior close (DSE
+        stores non-trading days as close=0); FastAPI's JSON encoder rejects
+        inf, which would 500 the whole response and hide a stock's history.
+        """
         try:
             if v is None:
                 return None
-            if pd.isna(v):
+            f = float(v)
+            if not math.isfinite(f):
                 return None
-            return float(v)
+            return f
         except Exception:
             return None
 
