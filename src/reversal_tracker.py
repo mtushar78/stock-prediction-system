@@ -124,9 +124,19 @@ def update_outcomes(engine, get_stock_data):
     rows = pd.read_sql_query(text("SELECT ticker, fire_date, entry_price FROM reversal_tracker"), engine)
     if rows.empty:
         return 0
+
+    def _n(x):
+        """NaN/None -> None (PG REAL rejects float('nan')); else float."""
+        try:
+            if x is None or (isinstance(x, float) and pd.isna(x)):
+                return None
+            return float(x)
+        except Exception:
+            return None
+
     updated = 0
-    with engine.begin() as c:
-        for _, r in rows.iterrows():
+    for _, r in rows.iterrows():
+        try:
             tk, fd, entry = r['ticker'], str(r['fire_date'])[:10], float(r['entry_price'])
             h = get_stock_data(tk)
             if h is None or h.empty:
@@ -161,17 +171,21 @@ def update_outcomes(engine, get_stock_data):
                 if j + 1 >= EXPIRE_DAYS:
                     status, exit_date, exit_ret, exit_reason = 'EXPIRED', dates[j], ret, '40d expiry'; break
 
-            c.execute(text(
-                "UPDATE reversal_tracker SET last_date=:ld, last_price=:lp, days_held=:dh, cur_ret=:cr, "
-                "peak_ret=:pr, peak_date=:pd, trough_ret=:tr, r5=:r5, r10=:r10, r20=:r20, "
-                "status=:st, exit_date=:ed, exit_ret=:er, exit_reason=:ers "
-                "WHERE ticker=:t AND fire_date=:fd"),
-                {"ld": dates[-1], "lp": last_price, "dh": days, "cr": cur_ret,
-                 "pr": peak_ret, "pd": dates[peak_i], "tr": trough_ret,
-                 "r5": at(5), "r10": at(10), "r20": at(20),
-                 "st": status, "ed": exit_date, "er": exit_ret, "ers": exit_reason,
-                 "t": tk, "fd": fd})
+            with engine.begin() as c:  # per-row commit so one bad row can't roll back all
+                c.execute(text(
+                    "UPDATE reversal_tracker SET last_date=:ld, last_price=:lp, days_held=:dh, cur_ret=:cr, "
+                    "peak_ret=:pr, peak_date=:pd, trough_ret=:tr, r5=:r5, r10=:r10, r20=:r20, "
+                    "status=:st, exit_date=:ed, exit_ret=:er, exit_reason=:ers "
+                    "WHERE ticker=:t AND fire_date=:fd"),
+                    {"ld": dates[-1], "lp": _n(last_price), "dh": days, "cr": _n(cur_ret),
+                     "pr": _n(peak_ret), "pd": dates[peak_i], "tr": _n(trough_ret),
+                     "r5": _n(at(5)), "r10": _n(at(10)), "r20": _n(at(20)),
+                     "st": status, "ed": exit_date, "er": _n(exit_ret), "ers": exit_reason,
+                     "t": tk, "fd": fd})
             updated += 1
+        except Exception as e:
+            logger.warning(f"reversal_tracker: outcome update failed for {r['ticker']}: {e}")
+            continue
     logger.info(f"📓 reversal_tracker: updated {updated} outcome(s)")
     return updated
 
