@@ -790,6 +790,52 @@ def get_analyzed_dates():
         db.close()
 
 
+@app.get("/api/quality-screen")
+def get_quality_screen():
+    """v12: 6-step fundamental quality screen (Graham/value style) over all stocks.
+    Market Cap >1000Cr · Sponsor >=30% · EPS growth >=10%/yr · ROE >=15% ·
+    Debt/Equity <50% · P/E <15. Returns each stock's per-step pass/fail + score."""
+    from sqlalchemy import text as _t
+    import math as _m
+    db = DatabaseManager()
+    try:
+        f = pd.read_sql_query(_t("SELECT * FROM fundamentals"), db.engine)
+        if f.empty:
+            return {"stocks": [], "total": 0}
+        def _num(x):
+            try:
+                x = float(x)
+                return None if (_m.isnan(x) or _m.isinf(x)) else x
+            except Exception:
+                return None
+        rows = []
+        for _, r in f.iterrows():
+            mc, sp = _num(r.get('market_cap')), _num(r.get('sponsor_pct'))
+            g, roe = _num(r.get('eps_growth_pa')), _num(r.get('roe'))
+            de, pe = _num(r.get('debt_to_equity')), _num(r.get('pe_ratio'))
+            steps = {
+                'market_cap': {'value': mc, 'pass': mc is not None and mc >= 10000},       # 1000 Cr (mn)
+                'sponsor':    {'value': sp, 'pass': sp is not None and sp >= 30},
+                'eps_growth': {'value': g,  'pass': g is not None and g >= 10},
+                'roe':        {'value': roe,'pass': roe is not None and roe >= 15},
+                'debt_equity':{'value': de, 'pass': de is not None and de < 50},
+                'pe':         {'value': pe, 'pass': pe is not None and 0 < pe < 15},
+            }
+            passed = sum(1 for s in steps.values() if s['pass'])
+            have = sum(1 for s in steps.values() if s['value'] is not None)
+            rows.append({'ticker': r['ticker'], 'sector': r.get('sector'),
+                         'passed': passed, 'have_data': have, 'steps': steps})
+        rows.sort(key=lambda x: (-x['passed'], -x['have_data'], x['ticker']))
+        return {"stocks": rows, "total": len(rows),
+                "perfect": sum(1 for x in rows if x['passed'] == 6),
+                "strong": sum(1 for x in rows if x['passed'] >= 5)}
+    except Exception as e:
+        logger.error(f"quality-screen failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
 @app.get("/api/reversal-tracker")
 def get_reversal_tracker():
     """Live journal of every reversal signal + its real forward outcome.

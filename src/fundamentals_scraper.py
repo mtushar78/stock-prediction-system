@@ -119,6 +119,66 @@ def scrape_ticker_fundamentals(ticker: str) -> dict:
     # DSE reports paid-up capital in mn BDT. Convert to Crores (÷10).
     paid_up_capital_cr = round(paid_up_capital / 10, 2) if paid_up_capital else None
 
+    # ---- v12: extended fundamentals for the 6-step quality screen ----
+    # (sponsor holding, loans, reserves, and the annual 5-yr EPS/NAV series →
+    #  EPS growth + ROE + debt/equity. The kv label-grab above mis-reads EPS, so
+    #  EPS/NAV are taken from the audited annual table instead.)
+    lines = [l.strip() for l in soup.get_text('\n').split('\n') if l.strip()]
+
+    def _after(anchor):
+        for i, l in enumerate(lines):
+            if anchor.lower() in l.lower():
+                for j in range(i + 1, min(i + 3, len(lines))):
+                    v = _parse_number(lines[j])
+                    if v is not None:
+                        return v
+        return None
+
+    sponsor_pct = _after('Sponsor/Director:')
+    st_loan = _after('Short-term loan (mn)')
+    lt_loan = _after('Long-term loan (mn)')
+    reserves = _after('Reserve & Surplus')
+
+    # Audited annual table: Year | EPS | … | NAV/share | … | Profit(mn). Per year,
+    # EPS = first numeric, NAV = numeric just before the first ≥1000 (profit, mn).
+    eps_latest = nav_latest = eps_growth_pa = roe = None
+    annual = None
+    for t in soup.find_all('table'):
+        tx = t.get_text(' ', strip=True)
+        if 'NAV Per Share' in tx and 'Earnings per share' in tx and '2021' in tx:
+            annual = t
+            break
+    if annual is not None:
+        years = {}
+        for tr in annual.find_all('tr'):
+            cells = [c.get_text(' ', strip=True) for c in tr.find_all('td')]
+            if not cells:
+                continue
+            y = _parse_number(cells[0])
+            if y is None or not (2000 <= y <= 2030):
+                continue
+            nums = [n for n in (_parse_number(c) for c in cells[1:]) if n is not None]
+            if not nums:
+                continue
+            big = [i for i, n in enumerate(nums) if n >= 1000]
+            eps_y = nums[0]
+            nav_y = nums[big[0] - 1] if (big and big[0] >= 1) else (nums[1] if len(nums) > 1 else None)
+            years[int(y)] = (eps_y, nav_y)
+        if len(years) >= 2:
+            ys = sorted(years)
+            e0 = years[ys[0]][0]
+            eps_latest, nav_latest = years[ys[-1]]
+            if e0 and e0 > 0 and eps_latest:
+                eps_growth_pa = round(((eps_latest / e0) ** (1 / (len(ys) - 1)) - 1) * 100, 1)
+            if eps_latest and nav_latest:
+                roe = round(eps_latest / nav_latest * 100, 1)
+
+    # Debt-to-Equity (%) = total bank loans / (paid-up capital + reserves)
+    debt_to_equity = None
+    equity = (paid_up_capital or 0) + (reserves or 0)
+    if equity > 0 and (st_loan is not None or lt_loan is not None):
+        debt_to_equity = round(((st_loan or 0) + (lt_loan or 0)) / equity * 100, 1)
+
     result = {
         'ticker': ticker,
         'paid_up_capital': paid_up_capital,
@@ -128,9 +188,18 @@ def scrape_ticker_fundamentals(ticker: str) -> dict:
         'total_shares': int(_parse_number(total_shares_raw)) if _parse_number(total_shares_raw) else None,
         'market_cap': _parse_number(market_cap_raw),
         'face_value': _parse_number(face_value_raw),
-        'eps': _parse_number(eps_raw),
+        # prefer the audited annual EPS/NAV; fall back to the (less reliable) header grab
+        'eps': eps_latest if eps_latest is not None else _parse_number(eps_raw),
         'pe_ratio': _parse_number(pe_raw),
-        'nav': _parse_number(nav_raw),
+        'nav': nav_latest if nav_latest is not None else _parse_number(nav_raw),
+        # v12 quality-screen fields
+        'sponsor_pct': sponsor_pct,
+        'reserves_mn': reserves,
+        'short_term_loan_mn': st_loan,
+        'long_term_loan_mn': lt_loan,
+        'debt_to_equity': debt_to_equity,
+        'eps_growth_pa': eps_growth_pa,
+        'roe': roe,
     }
     return result
 
@@ -142,8 +211,11 @@ def save_fundamentals(db: DatabaseManager, data: dict):
         cursor.execute("""
             INSERT INTO fundamentals
             (ticker, paid_up_capital, paid_up_capital_cr, sector, market_category,
-             total_shares, market_cap, face_value, eps, pe_ratio, nav, last_updated)
+             total_shares, market_cap, face_value, eps, pe_ratio, nav,
+             sponsor_pct, reserves_mn, short_term_loan_mn, long_term_loan_mn,
+             debt_to_equity, eps_growth_pa, roe, last_updated)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s,
                     to_char(NOW(), 'YYYY-MM-DD HH24:MI:SS'))
             ON CONFLICT (ticker) DO UPDATE SET
                 paid_up_capital = EXCLUDED.paid_up_capital,
@@ -156,6 +228,13 @@ def save_fundamentals(db: DatabaseManager, data: dict):
                 eps = EXCLUDED.eps,
                 pe_ratio = EXCLUDED.pe_ratio,
                 nav = EXCLUDED.nav,
+                sponsor_pct = EXCLUDED.sponsor_pct,
+                reserves_mn = EXCLUDED.reserves_mn,
+                short_term_loan_mn = EXCLUDED.short_term_loan_mn,
+                long_term_loan_mn = EXCLUDED.long_term_loan_mn,
+                debt_to_equity = EXCLUDED.debt_to_equity,
+                eps_growth_pa = EXCLUDED.eps_growth_pa,
+                roe = EXCLUDED.roe,
                 last_updated = EXCLUDED.last_updated
         """, (
             data['ticker'],
@@ -169,6 +248,13 @@ def save_fundamentals(db: DatabaseManager, data: dict):
             data.get('eps'),
             data.get('pe_ratio'),
             data.get('nav'),
+            data.get('sponsor_pct'),
+            data.get('reserves_mn'),
+            data.get('short_term_loan_mn'),
+            data.get('long_term_loan_mn'),
+            data.get('debt_to_equity'),
+            data.get('eps_growth_pa'),
+            data.get('roe'),
         ))
         db.conn.commit()
     except Exception:

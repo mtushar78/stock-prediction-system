@@ -288,9 +288,26 @@ class DatabaseManager:
                     eps DOUBLE PRECISION,
                     pe_ratio DOUBLE PRECISION,
                     nav DOUBLE PRECISION,
+                    sponsor_pct DOUBLE PRECISION,
+                    reserves_mn DOUBLE PRECISION,
+                    short_term_loan_mn DOUBLE PRECISION,
+                    long_term_loan_mn DOUBLE PRECISION,
+                    debt_to_equity DOUBLE PRECISION,
+                    eps_growth_pa DOUBLE PRECISION,
+                    roe DOUBLE PRECISION,
                     last_updated TEXT
                 )
             """)
+            # v12 migration: add the 6-step quality columns to pre-existing tables.
+            for _col in ('sponsor_pct', 'reserves_mn', 'short_term_loan_mn',
+                         'long_term_loan_mn', 'debt_to_equity', 'eps_growth_pa', 'roe'):
+                try:
+                    cursor.execute(f"ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS {_col} DOUBLE PRECISION")
+                except Exception:
+                    try:  # SQLite has no IF NOT EXISTS on ADD COLUMN
+                        cursor.execute(f"ALTER TABLE fundamentals ADD COLUMN {_col} DOUBLE PRECISION")
+                    except Exception:
+                        pass
 
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS portfolio (

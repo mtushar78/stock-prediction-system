@@ -20,6 +20,7 @@ import BreakoutDetailModal from './components/BreakoutDetailModal';
 import ReversalDetailModal from './components/ReversalDetailModal';
 import OverheatedDetailModal from './components/OverheatedDetailModal';
 import ReversalTracker from './components/ReversalTracker';
+import QualityScreen from './components/QualityScreen';
 import PortfolioDetailModal from './components/PortfolioDetailModal';
 import PurchaseHistoryModal from './components/PurchaseHistoryModal';
 import PriceHistoryModal from './components/PriceHistoryModal';
@@ -344,6 +345,8 @@ export default function Dashboard() {
             onPriceInfoClick={(signal) => setPriceHistoryModal({ ticker: signal.Ticker, currentPrice: signal.Price })}
             activeTicker={activeModal !== null && activeModal < signals.length ? signals[activeModal]?.Ticker ?? null : null}
           />
+
+          <QualityScreen apiUrl={API_URL} />
 
           <ReversalTracker apiUrl={API_URL} />
 
