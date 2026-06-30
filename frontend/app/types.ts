@@ -53,6 +53,18 @@ export interface Signal {
     avg_vol20?: number; min_avg_vol20?: number; min_price?: number;
     base_tight_pct?: number; atr_pct?: number;
   };
+  // v10 REVERSAL SIGNAL (buy-the-bottom / mean-reversion)
+  ReversalSignal?: boolean;
+  ReversalReasons?: string[];
+  IsFreshReversal?: boolean;
+  ReversalChecks?: {
+    close?: number; rsi?: number; max_rsi?: number;
+    prev_close?: number; green_day?: boolean;
+    rvol?: number; min_rvol?: number;
+    room_pct?: number; high_120?: number; min_room_pct?: number;
+    dist50?: number; ret5?: number;
+    avg_vol20?: number; min_avg_vol20?: number; min_price?: number;
+  };
   // v8 ENTRY-PRICE GUIDANCE
   PrevClose?: number;
   DayLow?: number;

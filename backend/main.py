@@ -102,8 +102,8 @@ def _prepare_signals_for_sqlite(df_results):
     StockAnalyzer.analyze_ticker."""
     import json as _json
     df_results_copy = df_results.copy()
-    list_cols = ['reasons', 'early_reasons', 'breakout_reasons']
-    dict_cols = ['v5_details', 'early_components', 'breakout_checks']
+    list_cols = ['reasons', 'early_reasons', 'breakout_reasons', 'reversal_reasons']
+    dict_cols = ['v5_details', 'early_components', 'breakout_checks', 'reversal_checks']
     for col in list_cols:
         if col in df_results_copy.columns:
             df_results_copy[col] = df_results_copy[col].apply(
@@ -131,7 +131,8 @@ def _format_signal_records(df):
         if col in df.columns:
             df[col] = df[col].fillna(0)
 
-    for col in ('is_fresh_buy', 'is_fresh_early', 'breakout_signal', 'is_fresh_breakout'):
+    for col in ('is_fresh_buy', 'is_fresh_early', 'breakout_signal', 'is_fresh_breakout',
+                'reversal_signal', 'is_fresh_reversal'):
         if col in df.columns:
             df[col] = df[col].apply(
                 lambda x: bool(x) if x is not None and not (isinstance(x, float) and pd.isna(x)) else False
@@ -154,12 +155,14 @@ def _format_signal_records(df):
         'signal_strength': 'SignalStrength',
         'breakout_signal': 'BreakoutSignal', 'breakout_reasons': 'BreakoutReasons',
         'breakout_checks': 'BreakoutChecks', 'is_fresh_breakout': 'IsFreshBreakout',
+        'reversal_signal': 'ReversalSignal', 'reversal_reasons': 'ReversalReasons',
+        'reversal_checks': 'ReversalChecks', 'is_fresh_reversal': 'IsFreshReversal',
         'prev_close': 'PrevClose', 'day_low': 'DayLow', 'day_high': 'DayHigh',
         'range_position': 'RangePosition', 'recommended_entry': 'RecommendedEntry',
         'entry_quality': 'EntryQuality', 'entry_warning': 'EntryWarning',
     })
 
-    for rcol in ('EarlyReasons', 'BreakoutReasons'):
+    for rcol in ('EarlyReasons', 'BreakoutReasons', 'ReversalReasons'):
         if rcol in df.columns:
             df[rcol] = df[rcol].apply(
                 lambda x: eval(x) if isinstance(x, str) and x.startswith('[') else (x or [])
@@ -171,7 +174,7 @@ def _format_signal_records(df):
             except Exception:
                 return {}
         return x if isinstance(x, dict) else {}
-    for ocol in ('EarlyComponents', 'BreakoutChecks'):
+    for ocol in ('EarlyComponents', 'BreakoutChecks', 'ReversalChecks'):
         if ocol in df.columns:
             df[ocol] = df[ocol].apply(_parse_json_obj)
     if 'Reason' in df.columns:
@@ -366,43 +369,39 @@ async def lifespan(app: FastAPI):
         logger.warning("API will return empty signals until next scheduled update")
     
     # Schedule DSE Scraper.
-    # Intraday scrape every 8 minutes across the trading session
-    # (10:00 → 14:56 Asia/Dhaka, fires at :00 :08 :16 :24 :32 :40 :48 :56 each
-    # hour). Denser cadence than the old fixed 30-minute slots for a much closer
-    # view of live prices. is_final=0.
+    # DSE trades 10:00 AM → 2:00 PM Asia/Dhaka. Intraday scrape every 8 minutes
+    # across the session (hour 10-13, fires at :00 :08 :16 :24 :32 :40 :48 :56 →
+    # 10:00 … 13:56). Denser cadence than the old fixed 30-minute slots for a
+    # much closer view of live prices. is_final=0. Anything after the 2:05 PM
+    # final scrape is wasted, so the cadence stops here.
     scheduler.add_job(
         scheduled_scraper_and_analysis,
-        CronTrigger(hour='10-14', minute='*/8', timezone=BANGLADESH_TZ),
+        CronTrigger(hour='10-13', minute='*/8', timezone=BANGLADESH_TZ),
         args=[0],  # is_final = 0
         id='intraday_scrape_8min',
-        name='Intraday Scrape (every 8 min, 10:00–14:56)',
+        name='Intraday Scrape (every 8 min, 10:00–13:56)',
         max_instances=1,         # never overlap a still-running scrape
         coalesce=True,           # if fire times were missed, run once, not a burst
         misfire_grace_time=180,  # tolerate up to 3 min of scheduler lag
         replace_existing=True
     )
 
-    # Pre-close intraday snapshot at 3:00 PM (after the 2:30 close, before the
-    # final EOD finalise at 3:15). is_final=0.
+    # Final EOD scrape at 2:05 PM — 5 min after the 2:00 PM close, the last
+    # meaningful read of the day. Marks data final (is_final=1). No later scrape
+    # is scheduled; prices don't change once the session ends.
     scheduler.add_job(
         scheduled_scraper_and_analysis,
-        CronTrigger(hour=15, minute=0, timezone=BANGLADESH_TZ),
-        args=[0],  # is_final = 0
-        id='preclose_scrape_1500',
-        name='Pre-Close Scrape (3 PM)',
-        replace_existing=True
-    )
-    # 4. Final scrape at 3:15 PM - FINAL EOD (is_final=1)
-    scheduler.add_job(
-        scheduled_scraper_and_analysis,
-        CronTrigger(hour=15, minute=15, timezone=BANGLADESH_TZ),
+        CronTrigger(hour=14, minute=5, timezone=BANGLADESH_TZ),
         args=[1],  # is_final = 1
-        id='final_scrape_1515',
-        name='Final Scrape (3:15 PM)',
+        id='final_scrape_1405',
+        name='Final Scrape (2:05 PM)',
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=180,
         replace_existing=True
     )
 
-    # 5. SQLite -> PG backup sync at 4:00 PM BDT (post-EOD, market closed).
+    # 5. SQLite -> PG backup sync at 2:30 PM BDT (post-EOD, market closed).
     async def scheduled_pg_backup_sync():
         try:
             logger.info("⏰ Starting SQLite -> PG backup sync...")
@@ -415,9 +414,9 @@ async def lifespan(app: FastAPI):
 
     scheduler.add_job(
         scheduled_pg_backup_sync,
-        CronTrigger(hour=16, minute=0, timezone=BANGLADESH_TZ),
-        id='pg_backup_sync_1600',
-        name='PG Backup Sync (4:00 PM)',
+        CronTrigger(hour=14, minute=30, timezone=BANGLADESH_TZ),
+        id='pg_backup_sync_1430',
+        name='PG Backup Sync (2:30 PM)',
         replace_existing=True
     )
 
@@ -441,15 +440,13 @@ async def lifespan(app: FastAPI):
 
     scheduler.start()
     logger.info("Scheduler started: DSE Scraper + Weekly Fundamentals")
-    logger.info("  - 11:30 AM (intraday)")
-    logger.info("  - 2:00 PM (intraday)")
-    logger.info("  - 3:00 PM (intraday)")
-    logger.info("  - 3:15 PM (FINAL)")
-    logger.info("  - 4:00 PM (SQLite -> PG backup sync)")
+    logger.info("  - 10:00 AM–1:56 PM (intraday, every 8 min)")
+    logger.info("  - 2:05 PM (FINAL)")
+    logger.info("  - 2:30 PM (SQLite -> PG backup sync)")
     logger.info("  - Saturday 8 AM (fundamentals refresh)")
-    
+
     # Get next run times
-    for job_id in ['morning_scrape', 'afternoon_scrape', 'preclose_scrape', 'final_scrape']:
+    for job_id in ['intraday_scrape_8min', 'final_scrape_1405', 'pg_backup_sync_1430']:
         job = scheduler.get_job(job_id)
         if job and job.next_run_time:
             next_run = job.next_run_time.strftime('%Y-%m-%d %H:%M:%S %Z')

@@ -142,7 +142,18 @@ class StockAnalyzer:
         self.breakout_min_rvol = 1.5           # needs real volume confirmation
         self.breakout_min_avg_vol20 = 50000    # sustained liquidity floor
         self.breakout_min_price = 5.0          # exclude sub-5 penny / MF units
-        
+
+        # v10 REVERSAL signal — buy a confirmed bottom (the mean-reversion edge,
+        # opposite of breakout). 7-yr backtest: 68% win / +6.2% avg at +10d, vs
+        # 42% universe baseline; Grade A wins ~82%. Fires when a deeply oversold
+        # stock with real volume prints its FIRST green day, well below its
+        # 120-day high (room to run), and is liquid. See measure_reversal study.
+        self.reversal_max_rsi = 30.0           # deeply oversold (Wilder RSI<30)
+        self.reversal_min_rvol = 1.5           # capitulation/turn volume
+        self.reversal_min_room_pct = 15.0      # >= this % below the 120d high
+        self.reversal_min_avg_vol20 = 50000    # same liquidity floor as breakout
+        self.reversal_min_price = 5.0          # exclude sub-5 penny / MF units
+
     def calculate_projected_volume(self, current_vol: float, current_time: datetime = None) -> float:
         """
         v6 UPGRADE: U-shaped volume projection for DSE intraday accuracy.
@@ -276,6 +287,20 @@ class StockAnalyzer:
         
         # Calculate ATR (Average True Range) - Level 2 Volatility Indicator
         df = self.calculate_atr(df, period=14)
+
+        # ===== v10 REVERSAL INDICATORS =====
+        # 50-day SMA (mean-reversion reference) and 120-day high (upside "room").
+        df['sma_50'] = df['close'].rolling(window=50, min_periods=1).mean()
+        df['high_120'] = df['high'].rolling(window=120, min_periods=60).max()
+
+        # Wilder's RSI(14) — oversold/exhaustion gauge for the reversal signal.
+        _delta = df['close'].diff()
+        _up = _delta.clip(lower=0.0)
+        _down = (-_delta).clip(lower=0.0)
+        _roll_up = _up.ewm(alpha=1/14, adjust=False).mean()
+        _roll_down = _down.ewm(alpha=1/14, adjust=False).mean()
+        _rs = _roll_up / _roll_down.replace(0, np.nan)
+        df['rsi'] = (100 - 100 / (1 + _rs)).fillna(50.0)
 
         # ===== v5 NEW INDICATORS =====
 
@@ -1325,6 +1350,88 @@ class StockAnalyzer:
 
         return {'is_breakout': len(fails) == 0, 'reasons': fails, 'checks': checks}
 
+    def calculate_reversal_signal(self, row: pd.Series, df: pd.DataFrame) -> Dict:
+        """v10: REVERSAL entry — buy a confirmed bottom (the mean-reversion edge).
+
+        DSE is a mean-reverting market: deeply oversold stocks that print their
+        FIRST green day on volume bounce hard. Backtest 2019-2026 (511 firings):
+        WIN 68.5% / +6.15% avg at +10d (median +5.22%), payoff 1.74, knife>15%
+        only 3.3% — vs a 41.5% / -0.94%-median universe. Fires when:
+          1. Deeply oversold      (RSI < reversal_max_rsi)
+          2. First green day       (close > prior close — the turn is starting)
+          3. Volume confirmation   (rvol >= reversal_min_rvol — capitulation/turn)
+          4. Room to run           (>= reversal_min_room_pct below the 120d high)
+          5. Liquid / not a penny  (avg_vol20 + price floor)
+        Purely structural and additive — independent of breakout & legacy score.
+        Returns {'is_reversal', 'reasons' (why it failed/passed), 'checks'}.
+        """
+        fails, checks = [], {}
+        close = float(row['close']) if pd.notna(row.get('close')) else 0.0
+
+        # 1. Oversold — Wilder RSI below the threshold
+        rsi = float(row['rsi']) if pd.notna(row.get('rsi')) else 50.0
+        oversold_ok = rsi < self.reversal_max_rsi
+        checks['rsi'] = round(rsi, 1)
+        if not oversold_ok:
+            fails.append(f'Not oversold (RSI {rsi:.0f} >= {self.reversal_max_rsi:.0f})')
+
+        # 2. First green day — today closes above the prior close (the turn)
+        prev_close = float(df.iloc[-2]['close']) if len(df) >= 2 else close
+        green_ok = close > prev_close > 0
+        checks['prev_close'] = round(prev_close, 2)
+        checks['green_day'] = green_ok
+        if not green_ok:
+            fails.append('No green reversal day (close <= prior close)')
+
+        # 3. Volume confirmation
+        rvol = float(row['rvol']) if pd.notna(row.get('rvol')) else 0.0
+        rvol_ok = rvol >= self.reversal_min_rvol
+        checks['rvol'] = round(rvol, 2)
+        if not rvol_ok:
+            fails.append(f'Weak volume ({rvol:.1f}x < {self.reversal_min_rvol}x)')
+
+        # 4. Room to run — sufficiently below the 120-day high
+        hi120 = row.get('high_120')
+        room_pct = ((close / float(hi120) - 1) * 100) if (pd.notna(hi120) and hi120 and hi120 > 0) else None
+        room_ok = room_pct is not None and room_pct <= -self.reversal_min_room_pct
+        checks['room_pct'] = round(room_pct, 2) if room_pct is not None else None
+        checks['high_120'] = round(float(hi120), 2) if (pd.notna(hi120) and hi120) else None
+        if not room_ok:
+            fails.append(f'Little room ({room_pct:.0f}% below 120d high)'
+                         if room_pct is not None else 'Insufficient history for 120d high')
+
+        # 5. Liquidity / price floor
+        avg_vol20 = row.get('avg_volume_20')
+        liquid_ok = bool(pd.notna(avg_vol20) and avg_vol20 >= self.reversal_min_avg_vol20)
+        price_ok = close >= self.reversal_min_price
+        checks['avg_vol20'] = int(avg_vol20) if pd.notna(avg_vol20) else None
+        if not liquid_ok:
+            fails.append('Thin (20d avg vol < %d)' % self.reversal_min_avg_vol20)
+        if not price_ok:
+            fails.append('Price < %g (penny/MF unit)' % self.reversal_min_price)
+
+        # Quality factors (drive the UI grade — from the study's rank-IC vs +10d:
+        # lower RSI, further below the 50-SMA, sharper recent drop, higher rvol).
+        sma50 = row.get('sma_50')
+        dist50 = ((close / float(sma50) - 1) * 100) if (pd.notna(sma50) and sma50 and sma50 > 0) else None
+        ret5 = None
+        if len(df) >= 6:
+            c5 = float(df.iloc[-6]['close'])
+            if c5 > 0:
+                ret5 = (close - c5) / c5 * 100
+        checks['dist50'] = round(dist50, 2) if dist50 is not None else None
+        checks['ret5'] = round(ret5, 2) if ret5 is not None else None
+
+        # Thresholds, so the UI "why it fired" modal can show value-vs-rule.
+        checks['close'] = round(close, 2)
+        checks['max_rsi'] = self.reversal_max_rsi
+        checks['min_rvol'] = self.reversal_min_rvol
+        checks['min_room_pct'] = self.reversal_min_room_pct
+        checks['min_avg_vol20'] = self.reversal_min_avg_vol20
+        checks['min_price'] = self.reversal_min_price
+
+        return {'is_reversal': len(fails) == 0, 'reasons': fails, 'checks': checks}
+
     def generate_signal(self, score: int) -> str:
         """
         Generate trading signal based on score (v7 thresholds).
@@ -1425,12 +1532,16 @@ class StockAnalyzer:
             # alongside — does NOT alter the legacy BUY/EARLY signals.
             breakout = self.calculate_breakout_signal(row, df)
 
+            # v10: additive REVERSAL signal (mean-reversion edge — buy the bottom).
+            reversal = self.calculate_reversal_signal(row, df)
+
             # v7: Yesterday's perspective for fresh-signal detection.
             # Recompute indicators on history excluding today so the OBV/BB
             # slopes are calculated as of yesterday.
             prev_signal = None
             prev_early_signal = None
             prev_breakout = None
+            prev_reversal = None
             if not analysis_date and len(raw_df) >= 21:
                 try:
                     df_y = self.calculate_indicators(raw_df.iloc[:-1])
@@ -1441,12 +1552,14 @@ class StockAnalyzer:
                         prev_early = self.calculate_early_score(prev_row_y, df_y)
                         prev_early_signal = prev_early['signal']
                         prev_breakout = self.calculate_breakout_signal(prev_row_y, df_y)['is_breakout']
+                        prev_reversal = self.calculate_reversal_signal(prev_row_y, df_y)['is_reversal']
                 except Exception as e:
                     logger.debug(f"Fresh-signal recompute failed for {ticker}: {e}")
 
             is_fresh_buy = bool(signal == 'BUY' and prev_signal != 'BUY')
             is_fresh_early = bool(early_result['signal'] == 'EARLY' and prev_early_signal != 'EARLY')
             is_fresh_breakout = bool(breakout['is_breakout'] and not prev_breakout)
+            is_fresh_reversal = bool(reversal['is_reversal'] and not prev_reversal)
 
             # v8: intraday entry-price guidance (advisory — warn, don't block).
             prev_close_val = (float(df.iloc[-2]['close']) if len(df) >= 2
@@ -1533,6 +1646,12 @@ class StockAnalyzer:
                 'breakout_reasons': breakout['reasons'],
                 'breakout_checks': self._sanitize_for_json(breakout['checks']),
                 'is_fresh_breakout': is_fresh_breakout,
+
+                # ===== v10 REVERSAL SIGNAL (additive, mean-reversion edge) =====
+                'reversal_signal': reversal['is_reversal'],
+                'reversal_reasons': reversal['reasons'],
+                'reversal_checks': self._sanitize_for_json(reversal['checks']),
+                'is_fresh_reversal': is_fresh_reversal,
 
                 # ===== v8 ENTRY-PRICE GUIDANCE =====
                 'prev_close': entry_guidance['prev_close'],
@@ -2061,6 +2180,8 @@ class StockAnalyzer:
 
                 # v9: breakout verdict + the exact 5-rule checks (the signal to trade)
                 'breakout': self._sanitize_for_json(self.calculate_breakout_signal(row, df)),
+                # v10: reversal verdict + the exact 5-rule checks (buy-the-bottom)
+                'reversal': self._sanitize_for_json(self.calculate_reversal_signal(row, df)),
             }
 
             # If official analysis exists, include official computed trading levels for easy comparison

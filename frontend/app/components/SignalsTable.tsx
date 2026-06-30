@@ -1,7 +1,8 @@
 import { Signal } from '../types';
-import { AlertCircle, Info, Flame, Sparkles, HelpCircle, Rocket, ChevronDown, ChevronRight } from 'lucide-react';
+import { AlertCircle, Info, Flame, Sparkles, HelpCircle, Rocket, ChevronDown, ChevronRight, TrendingDown } from 'lucide-react';
 import { useState } from 'react';
 import { breakoutGrade, gradeColor } from './breakoutGrade';
+import { reversalGrade } from './reversalGrade';
 
 interface SignalsTableProps {
   signals: Signal[];
@@ -35,6 +36,18 @@ function breakoutWhy(sig: Signal): string {
   return parts.join(' · ');
 }
 
+/** Short "why it fired" summary for the reversal table row. */
+function reversalWhy(sig: Signal): string {
+  const c = sig.ReversalChecks || {};
+  const parts: string[] = [];
+  if (typeof c.rsi === 'number') parts.push(`RSI ${Math.round(c.rsi)} oversold`);
+  if (typeof c.room_pct === 'number') parts.push(`${Math.round(c.room_pct)}% below 120d high`);
+  if (typeof c.ret5 === 'number') parts.push(`${Math.round(c.ret5)}%/5d`);
+  if (sig.RVOL) parts.push(`RVOL ${sig.RVOL}×`);
+  parts.push('green day');
+  return parts.join(' · ');
+}
+
 export default function SignalsTable({
   signals,
   loading,
@@ -47,6 +60,7 @@ export default function SignalsTable({
   activeTicker,
 }: SignalsTableProps) {
   const [legacy, setLegacy] = useState(false);
+  const [list, setList] = useState<'BREAKOUT' | 'REVERSAL'>('BREAKOUT');
   const [tab, setTab] = useState<ViewTab>('ALL');
   const [sortKey, setSortKey] = useState<SortKey>('Score');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -57,6 +71,14 @@ export default function SignalsTable({
     .map((s) => ({ s, g: breakoutGrade(s.BreakoutChecks, marketBreadth) }))
     .sort((a, b) => b.g.score - a.g.score
       || Number(b.s.IsFreshBreakout) - Number(a.s.IsFreshBreakout)
+      || (b.s.RVOL || 0) - (a.s.RVOL || 0));
+
+  // v10 REVERSAL list — buy-the-bottom, ranked best-first by reversal grade.
+  const reversals = signals
+    .filter((s) => s.ReversalSignal)
+    .map((s) => ({ s, g: reversalGrade(s.ReversalChecks) }))
+    .sort((a, b) => b.g.score - a.g.score
+      || Number(b.s.IsFreshReversal) - Number(a.s.IsFreshReversal)
       || (b.s.RVOL || 0) - (a.s.RVOL || 0));
 
   // ---- legacy table (only when expanded) ----
@@ -112,29 +134,58 @@ export default function SignalsTable({
 
   return (
     <section className="bg-gray-800 rounded-lg p-6 border border-sky-800/50">
-      <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
-        <div className="flex items-center gap-2">
-          <h2 className="text-xl font-bold text-sky-300 flex items-center gap-2"><Rocket className="w-5 h-5" /> Breakouts</h2>
-          <span className="text-[10px] text-sky-300/80 border border-sky-800 rounded px-1.5 py-0.5">v9 · the list to trade</span>
-          <span className="text-xs bg-sky-900/50 text-sky-200 border border-sky-700 rounded-full px-2 py-0.5 font-bold">{breakouts.length}</span>
-          <button onClick={() => setShowLegend((x) => !x)} className="text-gray-500 hover:text-gray-200 ml-1" title="What is this?">
+      {/* ---- LIST SWITCH: Breakouts (momentum) | Reversals (mean-reversion) ---- */}
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={() => setList('BREAKOUT')}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg font-bold text-sm transition-colors border ${
+              list === 'BREAKOUT' ? 'bg-sky-900/40 text-sky-200 border-sky-600' : 'bg-gray-900/40 text-gray-400 border-gray-700 hover:text-gray-200'}`}
+            title="Momentum — buy strength breaking to new highs">
+            <Rocket className="w-4 h-4" /> Breakouts
+            <span className={`text-xs rounded-full px-2 py-0.5 font-bold ${list === 'BREAKOUT' ? 'bg-sky-800 text-sky-100' : 'bg-gray-800 text-gray-400'}`}>{breakouts.length}</span>
+          </button>
+          <button onClick={() => setList('REVERSAL')}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg font-bold text-sm transition-colors border ${
+              list === 'REVERSAL' ? 'bg-amber-900/40 text-amber-200 border-amber-600' : 'bg-gray-900/40 text-gray-400 border-gray-700 hover:text-gray-200'}`}
+            title="Mean-reversion — buy a confirmed bottom with room to run">
+            <TrendingDown className="w-4 h-4" /> Reversals
+            <span className={`text-xs rounded-full px-2 py-0.5 font-bold ${list === 'REVERSAL' ? 'bg-amber-800 text-amber-100' : 'bg-gray-800 text-gray-400'}`}>{reversals.length}</span>
+          </button>
+          <span className="text-[10px] text-gray-500 border border-gray-700 rounded px-1.5 py-0.5">{list === 'BREAKOUT' ? 'v9 · momentum' : 'v10 · buy the bottom'}</span>
+          <button onClick={() => setShowLegend((x) => !x)} className="text-gray-500 hover:text-gray-200" title="What is this?">
             <HelpCircle className="w-4 h-4" />
           </button>
         </div>
       </div>
-      <p className="text-xs text-gray-500 mb-3">
-        The only signal with a proven, regime-robust edge — ranked best-first by <b className="text-gray-400">quality grade (A–D)</b>.
-        Grade A historically wins ~54% vs ~42% for D. Click <Info className="inline w-3 h-3" /> on any row for the grade breakdown + exact reason it fired.
-      </p>
 
-      {showLegend && (
+      {list === 'BREAKOUT' ? (
+        <p className="text-xs text-gray-500 mb-3">
+          Momentum signal with a proven, regime-robust edge — ranked best-first by <b className="text-gray-400">quality grade (A–D)</b>.
+          Grade A historically wins ~54% vs ~42% for D. Click <Info className="inline w-3 h-3" /> on any row for the breakdown.
+        </p>
+      ) : (
+        <p className="text-xs text-gray-500 mb-3">
+          Mean-reversion signal — buy a <b className="text-gray-400">confirmed bottom</b> (deeply oversold, first green day, room to run).
+          Ranked by quality grade. Backtest: Grade A wins ~<b className="text-amber-300/80">82%</b> (+10.5%/10d) vs ~58% for D; overall ~68% win.
+        </p>
+      )}
+
+      {showLegend && list === 'BREAKOUT' && (
         <div className="mb-3 bg-gray-900 border border-sky-800/50 rounded p-3 text-xs text-gray-300 space-y-1.5">
           <div><span className="text-sky-300 font-bold">🚀 BREAKOUT</span> fires only when a stock (1) breaks its 20-day high, (2) isn&apos;t already extended (&lt;12%/20d), (3) trades above its 200-day average, (4) has real volume (RVOL ≥ 1.5×), and (5) is liquid. In a 2019–2026 backtest it beat the market every year.</div>
           <div className="text-gray-500">It&apos;s normal to see <b>0</b> on quiet days — that just means nothing is breaking out. Don&apos;t force a trade.</div>
         </div>
       )}
+      {showLegend && list === 'REVERSAL' && (
+        <div className="mb-3 bg-gray-900 border border-amber-800/50 rounded p-3 text-xs text-gray-300 space-y-1.5">
+          <div><span className="text-amber-300 font-bold">📉 REVERSAL</span> fires when a stock is (1) deeply oversold (RSI &lt; 30), (2) prints its first green day (the turn), (3) on real volume (RVOL ≥ 1.5×), (4) sits ≥ 15% below its 120-day high (room to run), and (5) is liquid. The buy-low edge in a mean-reverting market.</div>
+          <div className="text-amber-300/70">⚠️ Edge case: in a sustained market downtrend, oversold can get more oversold (2023 &amp; 2025 backtest were weak). Honor the −7% stop; don&apos;t average down.</div>
+          <div className="text-gray-500">Empty on calm days — reversals cluster around selloffs.</div>
+        </div>
+      )}
 
-      {/* ---- BREAKOUT TABLE (primary) ---- */}
+      {/* ---- BREAKOUT TABLE (momentum) ---- */}
+      {list === 'BREAKOUT' && (
       <div className="overflow-x-auto">
         <table className="text-left text-sm min-w-[640px] w-full">
           <thead>
@@ -192,6 +243,68 @@ export default function SignalsTable({
           </tbody>
         </table>
       </div>
+      )}
+
+      {/* ---- REVERSAL TABLE (mean-reversion / buy-the-bottom) ---- */}
+      {list === 'REVERSAL' && (
+      <div className="overflow-x-auto">
+        <table className="text-left text-sm min-w-[640px] w-full">
+          <thead>
+            <tr className="text-gray-500 text-xs border-b border-gray-700">
+              <th className="pb-3 pr-3" title="Reversal quality grade A–D. Higher = historically better odds (A ~82% win vs D ~58%). From oversold depth + distance below 50-SMA + capitulation + turn volume.">GRADE</th>
+              <th className="pb-3 pr-4">TICKER</th>
+              <th className="pb-3 pr-4">PRICE</th>
+              <th className="pb-3 pr-4">RSI</th>
+              <th className="pb-3 pr-4">RVOL</th>
+              <th className="pb-3 pr-4">WHY IT FIRED</th>
+              <th className="pb-3 text-center">DETAIL</th>
+            </tr>
+          </thead>
+          <tbody>
+            {reversals.map(({ s: sig, g }, i) => (
+              <tr key={`${sig.Ticker}-${i}`} className="border-b border-gray-700/50 hover:bg-amber-900/10 transition h-11">
+                <td className="py-2 pr-3">
+                  <span className={`inline-flex items-center justify-center w-7 h-6 rounded font-bold text-sm ${gradeColor(g.grade)}`}
+                    title={`Quality ${g.score}/100 — ${g.factors.map((f) => `${f.label}: ${f.value}`).join('; ')}`}>
+                    {g.grade}
+                  </span>
+                </td>
+                <td className="py-2 pr-4 font-bold text-amber-200 whitespace-nowrap">
+                  <div className="flex items-center gap-1.5">
+                    <span>{sig.Ticker}</span>
+                    {!!sig.IsFreshReversal && (
+                      <span className="text-[9px] bg-amber-600 text-white px-1 py-0.5 rounded font-bold" title="First day this reversal fired">FRESH</span>
+                    )}
+                  </div>
+                </td>
+                <td className="py-2 pr-4 whitespace-nowrap">{priceCell(sig)}</td>
+                <td className="py-2 pr-4 font-bold text-emerald-400 whitespace-nowrap"
+                  title="Wilder RSI(14) — below 30 = deeply oversold">
+                  {typeof sig.ReversalChecks?.rsi === 'number' ? Math.round(sig.ReversalChecks.rsi) : '-'}
+                </td>
+                <td className="py-2 pr-4 font-bold text-yellow-400 whitespace-nowrap">{sig.RVOL}×</td>
+                <td className="py-2 pr-4 text-gray-300 text-xs">{reversalWhy(sig)}</td>
+                <td className="py-2 text-center">
+                  <button onClick={() => onInfoClick(sig)}
+                    className="inline-flex items-center justify-center w-7 h-7 rounded border border-amber-700 bg-amber-900/20 text-amber-300 hover:border-amber-400 hover:bg-amber-900/40 transition-colors"
+                    title="Why this fired — full detail">
+                    <Info className="w-4 h-4" />
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {reversals.length === 0 && (
+              <tr><td colSpan={7} className="py-8 text-center text-gray-500">
+                {loading ? 'Loading…' : (
+                  <>No reversals right now — nothing has bottomed-and-turned today.<br />
+                  <span className="text-gray-600 text-xs">Reversals cluster around selloffs. Use the Time Machine above to study past ones.</span></>
+                )}
+              </td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      )}
 
       {/* ---- LEGACY (collapsed by default) ---- */}
       <div className="mt-4 border-t border-gray-700/60 pt-3">
