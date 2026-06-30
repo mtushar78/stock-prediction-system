@@ -168,7 +168,9 @@ def scrape_ticker_fundamentals(ticker: str) -> dict:
             ys = sorted(years)
             e0 = years[ys[0]][0]
             eps_latest, nav_latest = years[ys[-1]]
-            if e0 and e0 > 0 and eps_latest:
+            # CAGR only when both ends are positive — a negative base raised to a
+            # fractional power yields a complex number (loss-making years).
+            if e0 and e0 > 0 and eps_latest and eps_latest > 0:
                 eps_growth_pa = round(((eps_latest / e0) ** (1 / (len(ys) - 1)) - 1) * 100, 1)
             if eps_latest and nav_latest:
                 roe = round(eps_latest / nav_latest * 100, 1)
