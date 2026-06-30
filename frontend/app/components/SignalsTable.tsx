@@ -12,6 +12,7 @@ interface SignalsTableProps {
   onVolumeClick: (signal: Signal) => void;
   onInfoClick: (signal: Signal) => void;
   onBreakoutInfoClick: (signal: Signal) => void;
+  onReversalInfoClick: (signal: Signal) => void;
   onPriceInfoClick: (signal: Signal) => void;
   activeTicker: string | null;
 }
@@ -56,6 +57,7 @@ export default function SignalsTable({
   onVolumeClick,
   onInfoClick,
   onBreakoutInfoClick,
+  onReversalInfoClick,
   onPriceInfoClick,
   activeTicker,
 }: SignalsTableProps) {
@@ -285,9 +287,9 @@ export default function SignalsTable({
                 <td className="py-2 pr-4 font-bold text-yellow-400 whitespace-nowrap">{sig.RVOL}×</td>
                 <td className="py-2 pr-4 text-gray-300 text-xs">{reversalWhy(sig)}</td>
                 <td className="py-2 text-center">
-                  <button onClick={() => onInfoClick(sig)}
+                  <button onClick={() => onReversalInfoClick(sig)}
                     className="inline-flex items-center justify-center w-7 h-7 rounded border border-amber-700 bg-amber-900/20 text-amber-300 hover:border-amber-400 hover:bg-amber-900/40 transition-colors"
-                    title="Why this fired — full detail">
+                    title="Why this fired — the 5 reversal rules + grade">
                     <Info className="w-4 h-4" />
                   </button>
                 </td>

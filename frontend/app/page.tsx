@@ -17,6 +17,7 @@ import VolumeDetailModal from './components/VolumeDetailModal';
 import PortfolioVolumeModal from './components/PortfolioVolumeModal';
 import SignalDetailModal from './components/SignalDetailModal';
 import BreakoutDetailModal from './components/BreakoutDetailModal';
+import ReversalDetailModal from './components/ReversalDetailModal';
 import PortfolioDetailModal from './components/PortfolioDetailModal';
 import PurchaseHistoryModal from './components/PurchaseHistoryModal';
 import PriceHistoryModal from './components/PriceHistoryModal';
@@ -58,6 +59,7 @@ export default function Dashboard() {
   const [activeModal, setActiveModal] = useState<number | null>(null);
   const [volumeModalSignal, setVolumeModalSignal] = useState<Signal | null>(null);
   const [breakoutModalSignal, setBreakoutModalSignal] = useState<Signal | null>(null);
+  const [reversalModalSignal, setReversalModalSignal] = useState<Signal | null>(null);
   const [portfolioVolumeModal, setPortfolioVolumeModal] = useState<{ ticker: string; volume: number } | null>(null);
   const [purchaseHistoryModal, setPurchaseHistoryModal] = useState<string | null>(null);
   const [purchaseHistory, setPurchaseHistory] = useState<PurchaseHistory[]>([]);
@@ -334,6 +336,7 @@ export default function Dashboard() {
             onVolumeClick={(signal) => setVolumeModalSignal(signal)}
             onInfoClick={(signal) => setActiveModal(signals.indexOf(signal))}
             onBreakoutInfoClick={(signal) => setBreakoutModalSignal(signal)}
+            onReversalInfoClick={(signal) => setReversalModalSignal(signal)}
             onPriceInfoClick={(signal) => setPriceHistoryModal({ ticker: signal.Ticker, currentPrice: signal.Price })}
             activeTicker={activeModal !== null && activeModal < signals.length ? signals[activeModal]?.Ticker ?? null : null}
           />
@@ -414,6 +417,13 @@ export default function Dashboard() {
           signal={breakoutModalSignal}
           breadth={marketHealth?.breadth_pct ?? null}
           onClose={() => setBreakoutModalSignal(null)}
+        />
+      )}
+
+      {reversalModalSignal && (
+        <ReversalDetailModal
+          signal={reversalModalSignal}
+          onClose={() => setReversalModalSignal(null)}
         />
       )}
 

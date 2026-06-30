@@ -555,6 +555,7 @@ def get_sniper_signals():
             cols = []
         has_v7 = 'early_signal' in cols and 'signal_strength' in cols
         has_breakout = 'breakout_signal' in cols
+        has_reversal = 'reversal_signal' in cols
 
         if has_v7:
             where = ("WHERE signal IN ('BUY', 'WAIT') "
@@ -563,6 +564,10 @@ def get_sniper_signals():
                 # also surface proven breakout setups even if their legacy
                 # score is low (v9 — breakout is independent of the score)
                 where += " OR breakout_signal = 1"
+            if has_reversal:
+                # v10 — surface reversals too; oversold stocks score low on the
+                # legacy engine, so without this they'd be filtered out entirely.
+                where += " OR reversal_signal = 1"
             df = pd.read_sql_query(
                 text(f"SELECT * FROM signals_today {where} ORDER BY signal_strength DESC"),
                 db.engine,
@@ -655,10 +660,17 @@ def _compute_and_cache_signals_for_date(date: str):
                     prepped.to_sql('signals_history', db.engine, if_exists='append', index=False)
             logger.info(f"🕰️  Cached {0 if df_all.empty else len(df_all)} signals for {date}")
 
+        # Surface reversal-only rows too (guard on column for old cached schemas).
+        try:
+            hcols = pd.read_sql_query(_text("SELECT * FROM signals_history WHERE date = :d LIMIT 1"),
+                                      db.engine, params={"d": date}).columns.tolist()
+        except Exception:
+            hcols = []
+        rev_clause = " OR reversal_signal = 1" if 'reversal_signal' in hcols else ""
         df = pd.read_sql_query(_text(
             "SELECT * FROM signals_history WHERE date = :d AND ("
             "signal IN ('BUY','WAIT') OR early_signal IN ('EARLY','WATCH') "
-            "OR breakout_signal = 1) ORDER BY signal_strength DESC"),
+            "OR breakout_signal = 1" + rev_clause + ") ORDER BY signal_strength DESC"),
             db.engine, params={"d": date})
         if df.empty:
             return []
