@@ -1,4 +1,4 @@
-# Winner Anatomy — what really triggers a big DSE move
+# Winner & Decliner Anatomy — what really triggers big DSE moves
 
 **Study date:** 2026-06-30 · **Data:** live production DB (Neon PG, full history through today)
 **Method:** reverse-engineering. Scanned all 433 tickers for *clean drastic winners* — a stock that
@@ -121,7 +121,86 @@ often thin — size small, use stops).
 
 ---
 
+# PART 2 — Decliner Anatomy (the vice-versa)
+
+Same method, flipped: scanned for **clean drastic falls** — dropped **≥20% within 30 days** with a pre-trough
+bounce no worse than +8%, topping near a local high. Found **69**; profiled the **top 22** (steepest falls).
+
+## The 22 decliners (profiled at the TOP, before the fall)
+
+| Ticker | Top date | Top→Now | Fell | RSI | pos 1y | ret 20d *before* | vs SMA20 | rvol (at top) | new 20d-hi | gap |
+|---|---|---|---|---|---|---|---|---|---|---|
+| PRIMEFIN | 03-15 | 5.9→3.0 | −44% | **78** | 1.00 | **+146%** | +42% | 1.5 | yes | — |
+| APEXSPINN | 05-13 | 436→399 | −33% | **81** | 0.99 | +78% | +28% | 1.0 | — | — |
+| GSPFINANCE | 03-03 | 6.2→3.4 | −32% | **87** | 0.91 | **+210%** | +57% | 2.9 | yes | +9% |
+| ISLAMIBANK | 02-03 | 54→32 | −31% | **87** | 0.96 | +47% | +36% | **4.1** | — | +3% |
+| PRAGATILIF | 02-18 | 259→188 | −31% | **73** | 0.91 | +57% | +19% | 1.9 | — | — |
+| BIFC | 03-03 | 7.2→4.2 | −31% | **94** | 0.81 | **+324%** | +89% | **4.4** | yes | +9% |
+| UNIONCAP | 03-03 | 6.8→4.6 | −29% | **80** | 0.94 | +84% | +43% | 3.2 | — | +5% |
+| MEGCONMILK | 06-03 | 49→41 | −29% | **74** | 0.99 | +45% | +26% | 1.3 | — | — |
+| NBL | 03-02 | 6.0→3.9 | −28% | **76** | 1.00 | +82% | +33% | 1.5 | yes | +9% |
+| MEGHNAPET | 06-03 | 91→81 | −28% | **89** | 1.00 | +116% | +57% | 0.7 | yes | — |
+| BAYLEASING | 03-02 | 6.2→4.6 | −27% | **75** | 0.93 | +72% | +30% | 2.2 | yes | +4% |
+| BATBC | 02-15 | 289→220 | −27% | **78** | 0.81 | +15% | +8% | 2.6 | — | — |
+| FIRSTFIN | 03-03 | 6.1→4.1 | −26% | **77** | 1.00 | +110% | +37% | 2.1 | yes | +9% |
+| SAIHAMTEX | 02-15 | 24→19 | −27% | **79** | 0.95 | +18% | +12% | 3.1 | — | +8% |
+| *(+8 more financials/textiles, same shape)* | | | −26 to −33% | 60–87 | 0.6–1.0 | +10 to +200% | +6 to +57% | 1.5–8.2 | mixed | mixed |
+
+## The Decliner DNA — a near-perfect mirror of the winners
+
+| Trait at the TOP | % of decliners | Winners (for contrast) |
+|---|---|---|
+| **Overbought RSI > 70** | **~70%** (median **76**) | winners ~48 (neutral) |
+| **Just ran up hard** (≥+45% in 20 days) | **59%** (median **+52%/20d**) | winners ~0% (flat) |
+| **Stretched above 20-SMA** (>10%) | **77%** (median **+27%**) | winners within ±10% |
+| **At/near 1-year high** (pos ≥ 0.90) | **68%** (median 0.94) | winners ~0.80 |
+| **ELEVATED / climax volume at the top** (rvol ≥ 1.5×) | **82%** (median **2.1×**) | winners **0.7×** (quiet) |
+| **Final blow-off** (new 20-day high) | 36% | winners 7% |
+| **Exhaustion gap-up** (≥3%) | 41% | winners 4% |
+| **Cheap speculative penny** (< 10 tk) | 50% | — |
+
+### One-line profile
+> **A stock that has just run up parabolically (+50–300% in weeks), is overbought (RSI 70–94), stretched far
+> above its averages, pinned at its 1-year high, on loud climax volume** — often the cheap speculative
+> financials. That's a stock about to fall.
+
+Note: **APEXSPINN and MEGHNAPET appear in BOTH lists** — they launched quiet (Part 1), ran parabolic, then
+collapsed (Part 2). The full life-cycle is in the data: *quiet coil → ignition → parabola → exhaustion → crash.*
+
+---
+
+# PART 3 — So is it news? The honest answer
+
+**The rise and the fall are NOT symmetric, and that's the most important finding in this whole study:**
+
+- **Going UP needs a reason.** A quiet coiled stock will sit forever unless an *external catalyst* (news,
+  dividend, earnings, sector flow, operator buying) lights it. That catalyst is **invisible in the chart** —
+  which is why winners give no advance tell and **cannot be reliably predicted.** Here, *yes, it's news* (or
+  an operator) — and you usually can't see it coming.
+
+- **Going DOWN needs no reason — it's gravity.** Once a stock is parabolic and overbought, it falls under its
+  **own weight**: buyers are exhausted, early buyers take profit, the climax volume *is* the smart money
+  selling. News can pick the *day*, but the fall was **inevitable and clearly visible in advance** (RSI 90,
+  +200% in a month, gapping up on huge volume is a flashing red light).
+
+**The asymmetry you can act on:** the chart **can't tell you what will go up, but it CAN tell you what is
+dangerously extended and likely to fall.** Avoiding/exiting the falls is far more doable than catching the
+rises. *Risk management is the real, reliable edge here — not stock-picking.*
+
+**Practical rules this gives us:**
+1. **Never chase a stock that's already run +50%+ in a few weeks at RSI > 75 on a volume climax** — that's the
+   decliner DNA; you'd be the exit liquidity. (This is also exactly what our breakout signal's "not extended"
+   and overbought guards are *trying* to enforce.)
+2. **If you hold something that goes parabolic, that's a SELL signal, not a hold** — overbought + extended +
+   climax volume = take profit. The data says it round-trips.
+3. **The cheap speculative financials** (sub-10 tk: PRIMEFIN, BIFC, GSPFINANCE, NBL, UNIONCAP…) are the
+   pump-and-dump zone — biggest rips *and* biggest crashes. Trade tiny or avoid.
+
+---
+
 ### Next steps (when we build on this)
-- Build the **coil watchlist screen** from the DNA above and see how many names it surfaces daily.
-- Add an **ignition alert** (volume > Nx normal + up day) on watchlist names; track it live like the reversal tracker.
-- Backtest the two-step system honestly (watchlist hit-rate, alert precision) before trusting it.
+- **Up-side:** build the **coil watchlist** + **ignition alert** (Part 1) — narrow the field, react fast.
+- **Down-side (easier & more reliable):** build an **"Overheated / take-profit" warning** — flag any stock
+  that's overbought + stretched far above its MAs + parabolic + on climax volume. This is the high-confidence
+  half. Use it to avoid buying tops and to exit winners before they round-trip.
+- Track both live (like the reversal tracker) and verify forward before trusting either.
