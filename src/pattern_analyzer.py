@@ -294,11 +294,23 @@ def _make(df: pd.DataFrame, code: str, name: str, category: str, bias: str,
           breakout_price: Optional[float], target: Optional[float],
           stop: Optional[float], height_pct: float, plain: str,
           quality_notes: List[str], quality_score: float) -> dict:
+    def _num(v, ndigits=3):
+        """JSON-safe number: None/NaN/inf -> None, else rounded float."""
+        if v is None:
+            return None
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            return None
+        if not np.isfinite(fv):
+            return None
+        return round(fv, ndigits)
+
     st = STATS.get(code, {})
     price_now = float(df.iloc[-1]['close'])
     target_pct = None
     if target is not None and price_now > 0:
-        target_pct = round((target - price_now) / price_now * 100, 1)
+        target_pct = _num((target - price_now) / price_now * 100, 1)
     # Confidence: geometry quality × Bulkowski reliability × confirmation.
     fail = st.get('fail')
     reliability = 1.0 - (fail / 100.0) if fail is not None else 0.7
@@ -320,11 +332,11 @@ def _make(df: pd.DataFrame, code: str, name: str, category: str, bias: str,
         'start_date': _date_str(df.iloc[start_idx]['date']),
         'end_date': _date_str(df.iloc[end_idx]['date']),
         'breakout_date': _date_str(df.iloc[breakout_idx]['date']) if breakout_idx is not None else None,
-        'breakout_price': round(float(breakout_price), 3) if breakout_price is not None else None,
-        'target': round(float(target), 3) if target is not None else None,
+        'breakout_price': _num(breakout_price),
+        'target': _num(target),
         'target_pct': target_pct,
-        'stop': round(float(stop), 3) if stop is not None else None,
-        'height_pct': round(float(height_pct), 1),
+        'stop': _num(stop),
+        'height_pct': _num(height_pct, 1),
         'confidence': confidence,
         'key_points': key_points,
         'lines': lines,

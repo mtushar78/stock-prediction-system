@@ -993,6 +993,16 @@ def get_chart_pattern_signals():
                 return [_scrub(v) for v in o]
             return o
 
+        def _f(v):
+            """JSON-safe float: NULL/NaN/inf -> None (pandas reads SQL NULL as NaN)."""
+            if v is None:
+                return None
+            try:
+                fv = float(v)
+            except (TypeError, ValueError):
+                return None
+            return None if (_math.isinf(fv) or _math.isnan(fv)) else fv
+
         out = []
         for _, r in df.iterrows():
             try:
@@ -1006,14 +1016,14 @@ def get_chart_pattern_signals():
             out.append({
                 'ticker': r['ticker'],
                 'analysis_date': r['analysis_date'],
-                'price': float(r['price']) if r['price'] is not None else None,
+                'price': _f(r['price']),
                 'bias': r['bias'],
                 'confidence': r['confidence'],
                 'top_code': r['top_code'],
                 'top_name': r['top_name'],
                 'status': r['status'],
-                'target': float(r['target']) if r['target'] is not None else None,
-                'target_pct': float(r['target_pct']) if r['target_pct'] is not None else None,
+                'target': _f(r['target']),
+                'target_pct': _f(r['target_pct']),
                 'pattern_count': int(r['pattern_count']),
                 'confirmed_count': int(r['confirmed_count']),
                 'has_dcb': bool(r['has_dcb']),
