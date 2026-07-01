@@ -11,10 +11,12 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import axios from 'axios';
-import { Activity, RefreshCw, TrendingUp, Search, Crosshair, CandlestickChart } from 'lucide-react';
+import { Activity, RefreshCw, TrendingUp, Search, Crosshair, CandlestickChart, GraduationCap } from 'lucide-react';
 import ChartScope from '../components/ChartScope';
 import PatternScope from '../components/PatternScope';
 import ChartDetailModal from '../components/ChartDetailModal';
+import TutorialView from '../components/TutorialView';
+import { TUTORIAL_ORDER } from '../tutorials';
 import { SystemStatus } from '../types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -26,7 +28,8 @@ export default function ChartAnalysisPage() {
   const [tickers, setTickers] = useState<string[]>([]);
   const [searchInput, setSearchInput] = useState('');
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [view, setView] = useState<'patterns' | 'candles'>('patterns');
+  const [view, setView] = useState<'patterns' | 'candles' | 'tutorial'>('patterns');
+  const [tutorialCode, setTutorialCode] = useState<string>(TUTORIAL_ORDER[0]);
 
   useEffect(() => {
     let cancelled = false;
@@ -186,12 +189,36 @@ export default function ChartAnalysisPage() {
         >
           <CandlestickChart className="w-4 h-4" /> Candlesticks
         </button>
+        <button
+          onClick={() => setView('tutorial')}
+          className={`px-3 py-1.5 rounded flex items-center gap-1.5 border transition ${
+            view === 'tutorial'
+              ? 'bg-indigo-700 text-white border-indigo-600'
+              : 'bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700'
+          }`}
+        >
+          <GraduationCap className="w-4 h-4" /> Tutorial
+        </button>
       </div>
 
-      {view === 'patterns' ? (
-        <PatternScope key={`p${refreshKey}`} apiUrl={API_URL} onRowClick={(ticker) => setActiveTicker(ticker)} />
-      ) : (
+      {view === 'patterns' && (
+        <PatternScope
+          key={`p${refreshKey}`}
+          apiUrl={API_URL}
+          onRowClick={(ticker) => setActiveTicker(ticker)}
+          onLearn={(code) => {
+            setTutorialCode(code);
+            setView('tutorial');
+          }}
+        />
+      )}
+      {view === 'candles' && (
         <ChartScope key={`c${refreshKey}`} apiUrl={API_URL} onRowClick={(ticker) => setActiveTicker(ticker)} />
+      )}
+      {view === 'tutorial' && (
+        <section className="bg-gray-800 rounded-lg p-6 border border-indigo-800/40 mb-4">
+          <TutorialView activeCode={tutorialCode} onSelect={setTutorialCode} />
+        </section>
       )}
 
       {activeTicker && (

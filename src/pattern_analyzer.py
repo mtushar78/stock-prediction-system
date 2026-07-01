@@ -75,33 +75,35 @@ EPS = 1e-9
 # --------------------------------------------------------------------------- #
 STATS: Dict[str, Dict[str, Optional[float]]] = {
     # ---- Bullish reversals (up breakout) ----
-    'double_bottom_aa': {'avg_move': 35, 'fail': 5, 'throwback': 64, 'meet': 66, 'rank': None},
-    'double_bottom_ae': {'avg_move': 37, 'fail': 5, 'throwback': 59, 'meet': 66, 'rank': None},
-    'double_bottom_ea': {'avg_move': 35, 'fail': 4, 'throwback': 57, 'meet': 66, 'rank': None},
-    'double_bottom_ee': {'avg_move': 40, 'fail': 4, 'throwback': 55, 'meet': 67, 'rank': None},
-    'triple_bottom':    {'avg_move': 37, 'fail': 4, 'throwback': 64, 'meet': 64, 'rank': None},
-    'hs_bottom':        {'avg_move': 38, 'fail': 3, 'throwback': 45, 'meet': 74, 'rank': None},
+    'double_bottom_aa': {'avg_move': 35, 'fail': 5, 'throwback': 64, 'meet': 66, 'rank': 10},
+    'double_bottom_ae': {'avg_move': 37, 'fail': 5, 'throwback': 59, 'meet': 66, 'rank': 8},
+    'double_bottom_ea': {'avg_move': 35, 'fail': 4, 'throwback': 57, 'meet': 66, 'rank': 11},
+    'double_bottom_ee': {'avg_move': 40, 'fail': 4, 'throwback': 55, 'meet': 67, 'rank': 6},
+    'triple_bottom':    {'avg_move': 37, 'fail': 4, 'throwback': 64, 'meet': 64, 'rank': 7},
+    'hs_bottom':        {'avg_move': 38, 'fail': 3, 'throwback': 45, 'meet': 74, 'rank': 7},
     'three_rising_valleys': {'avg_move': 41, 'fail': 5, 'throwback': 60, 'meet': 58, 'rank': 4},
-    'rounding_bottom':  {'avg_move': 43, 'fail': 5, 'throwback': 40, 'meet': 57, 'rank': None},
-    'cup_with_handle':  {'avg_move': 34, 'fail': 5, 'throwback': 58, 'meet': 50, 'rank': None},
+    'rounding_bottom':  {'avg_move': 43, 'fail': 5, 'throwback': 40, 'meet': 57, 'rank': 5},
+    'cup_with_handle':  {'avg_move': 34, 'fail': 5, 'throwback': 58, 'meet': 50, 'rank': 13},
+    # Pipe stats are Bulkowski's WEEKLY-chart figures; detect_pipes resamples
+    # to weekly so they apply (daily pipes fail far more — he discarded them).
     'pipe_bottom':      {'avg_move': 45, 'fail': 5, 'throwback': 44, 'meet': 83, 'rank': 2},
     # ---- Bearish reversals (down breakout) ----
-    'double_top_aa': {'avg_move': 19, 'fail': 8,  'throwback': 61, 'meet': 72, 'rank': None},
-    'double_top_ae': {'avg_move': 18, 'fail': 14, 'throwback': 59, 'meet': 69, 'rank': None},
-    'double_top_ea': {'avg_move': 15, 'fail': 13, 'throwback': 64, 'meet': 72, 'rank': None},
-    'double_top_ee': {'avg_move': 18, 'fail': 11, 'throwback': 62, 'meet': 73, 'rank': None},
-    'triple_top':    {'avg_move': 19, 'fail': 10, 'throwback': 61, 'meet': 40, 'rank': None},
+    'double_top_aa': {'avg_move': 19, 'fail': 8,  'throwback': 61, 'meet': 72, 'rank': 4},
+    'double_top_ae': {'avg_move': 18, 'fail': 14, 'throwback': 59, 'meet': 69, 'rank': 8},
+    'double_top_ea': {'avg_move': 15, 'fail': 13, 'throwback': 64, 'meet': 72, 'rank': 11},
+    'double_top_ee': {'avg_move': 18, 'fail': 11, 'throwback': 59, 'meet': 73, 'rank': 2},
+    'triple_top':    {'avg_move': 19, 'fail': 10, 'throwback': 61, 'meet': 40, 'rank': 7},
     'hs_top':        {'avg_move': 22, 'fail': 4,  'throwback': 50, 'meet': 55, 'rank': 1},
-    'three_falling_peaks': {'avg_move': 17, 'fail': 12, 'throwback': 59, 'meet': 33, 'rank': None},
+    'three_falling_peaks': {'avg_move': 17, 'fail': 12, 'throwback': 59, 'meet': 33, 'rank': 8},
     'pipe_top':      {'avg_move': 20, 'fail': 11, 'throwback': 41, 'meet': 70, 'rank': 4},
-    # ---- Bilateral / continuation ----
-    'ascending_triangle':   {'avg_move': 35, 'fail': 13, 'throwback': 57, 'meet': 75, 'rank': None},
-    'descending_triangle':  {'avg_move': 16, 'fail': 16, 'throwback': 54, 'meet': 54, 'rank': None},
-    'symmetrical_triangle': {'avg_move': 31, 'fail': 9,  'throwback': 54, 'meet': 66, 'rank': None},
-    'rectangle_bottom': {'avg_move': 46, 'fail': 10, 'throwback': 53, 'meet': 85, 'rank': None},
-    'rectangle_top':    {'avg_move': 39, 'fail': 9,  'throwback': 64, 'meet': 80, 'rank': None},
-    'falling_wedge':    {'avg_move': 32, 'fail': 11, 'throwback': 56, 'meet': 70, 'rank': None},
-    'rising_wedge':     {'avg_move': 14, 'fail': 24, 'throwback': 63, 'meet': 46, 'rank': None},
+    # ---- Bilateral / continuation (stats are for the DEFAULT breakout dir) ----
+    'ascending_triangle':   {'avg_move': 35, 'fail': 13, 'throwback': 57, 'meet': 75, 'rank': 17},
+    'descending_triangle':  {'avg_move': 16, 'fail': 16, 'throwback': 54, 'meet': 54, 'rank': 10},
+    'symmetrical_triangle': {'avg_move': 31, 'fail': 9,  'throwback': 37, 'meet': 66, 'rank': 16},
+    'rectangle_bottom': {'avg_move': 46, 'fail': 10, 'throwback': 53, 'meet': 85, 'rank': 11},
+    'rectangle_top':    {'avg_move': 39, 'fail': 9,  'throwback': 64, 'meet': 80, 'rank': 12},
+    'falling_wedge':    {'avg_move': 32, 'fail': 11, 'throwback': 56, 'meet': 70, 'rank': 20},
+    'rising_wedge':     {'avg_move': 14, 'fail': 24, 'throwback': 63, 'meet': 46, 'rank': 20},
     'flag':             {'avg_move': 23, 'fail': 4,  'throwback': 43, 'meet': 64, 'rank': None},
     'high_tight_flag':  {'avg_move': 69, 'fail': 0,  'throwback': 54, 'meet': 90, 'rank': 1},
     'pennant':          {'avg_move': 25, 'fail': 2,  'throwback': 47, 'meet': 60, 'rank': None},
@@ -618,7 +620,10 @@ def detect_triple(df, pivots, bottom=True) -> List[dict]:
             notes = _resistance_notes(df, conf_level, e3['idx'], bullish=True)
             stop = ext * 0.99
         else:
-            target = conf_level - height / 2.0
+            # Book (p.789): FULL height subtracted from the lowest low — NOT
+            # the double-top half-height rule. The meet-target rate (40%) is
+            # itself measured against this full-height objective.
+            target = conf_level - height
             bias, cat, code, nm = 'bearish', 'reversal', 'triple_top', 'Triple Top'
             notes = _support_notes(df, conf_level, e3['idx'])
             stop = ext * 1.01
@@ -707,7 +712,9 @@ def detect_head_shoulders(df, pivots, bottom=True) -> List[dict]:
             target = bo_price - height
             bias, code, nm = 'bearish', 'hs_top', 'Head-and-Shoulders Top'
             notes = _support_notes(df, bo_price, rs['idx'])
-            stop = max(ls['price'], rs['price']) * 1.01
+            # Book (p.417): stop just above the higher of the two neckline
+            # troughs (armpits n1/n2), not above a shoulder.
+            stop = max(n1['price'], n2['price']) * 1.01
         quality = _quality_from(sep_ok=True, sym=_pct_diff(ls['price'], rs['price']),
                                 confirmed=(status == 'confirmed'), extra=True)
         out.append(_make(
@@ -852,11 +859,16 @@ def detect_trendline_patterns(df, pivots) -> List[dict]:
     price0 = float(df.iloc[start_idx]['close'])
     tsl = tm / price0 * 100
     bsl = bm / price0 * 100
-    top_h = float(np.mean([p['price'] for p in highs]))
-    bot_l = float(np.mean([p['price'] for p in lows]))
+    # Book measure rule uses the pattern's EXTREME high/low, not pivot means
+    # (means underestimate the height → too-shallow targets).
+    top_h = float(max(p['price'] for p in highs))
+    bot_l = float(min(p['price'] for p in lows))
     height = top_h - bot_l
     if height <= 0:
         return out
+    # Actual extremes over the whole pattern span — used for wedge targets.
+    span_hi = float(df['high'].iloc[start_idx:n].max())
+    span_lo = float(df['low'].iloc[start_idx:n].min())
     FLAT = 0.10          # |slope| < 0.10%/bar ≈ horizontal
     band_top = _line_at(tm, tb, n - 1)
     band_bot = _line_at(bm, bb, n - 1)
@@ -901,13 +913,17 @@ def detect_trendline_patterns(df, pivots) -> List[dict]:
     expected_down = code in ('descending_triangle', 'rising_wedge')
     if direction == 'up' or (direction is None and expected_up):
         bo_price = band_top
-        target = band_top + height
+        # Falling-wedge up-target is the wedge's highest high (book p.796),
+        # NOT breakout+height. Triangles/rectangles use breakout+height.
+        target = span_hi if code == 'falling_wedge' else band_top + height
         bias = 'bullish'
         stop = band_bot * 0.99
         notes = _resistance_notes(df, bo_price, end_pivot_idx, bullish=True)
     elif direction == 'down' or (direction is None and expected_down):
         bo_price = band_bot
-        target = band_bot - height
+        # Rising-wedge down-target is the wedge's lowest low (book p.822-823),
+        # NOT breakout-height.
+        target = span_lo if code == 'rising_wedge' else band_bot - height
         bias = 'bearish'
         stop = band_top * 1.01
         notes = _support_notes(df, bo_price, end_pivot_idx)
@@ -999,10 +1015,23 @@ def detect_flag_pennant(df) -> List[dict]:
         if status == 'forming' and last < cons_hi * 0.97:
             continue
         end_idx = conf if conf is not None else n - 1
+        # A Pennant is a CONVERGING consolidation (falling highs + rising lows,
+        # a small triangle); a Flag is a parallel/rectangular channel. Fit the
+        # consolidation's per-bar highs & lows to tell them apart.
+        cx = np.arange(cons_len)
+        try:
+            hi_sl = float(np.polyfit(cx, cons['high'].to_numpy(dtype=float), 1)[0])
+            lo_sl = float(np.polyfit(cx, cons['low'].to_numpy(dtype=float), 1)[0])
+        except Exception:
+            hi_sl = lo_sl = 0.0
+        converging = hi_sl < 0 and lo_sl > 0
         htf = pole_gain >= 0.90 and pole_bars <= 44
         if htf:
             code, name = 'high_tight_flag', 'High-and-Tight Flag'
             target = cons_lo + (pole_top - base_price) / 2.0    # half the doubling move
+        elif converging:
+            code, name = 'pennant', 'Pennant'
+            target = cons_hi + (pole_top - base_price)          # full pole height
         else:
             code, name = 'flag', 'Flag'
             target = cons_hi + (pole_top - base_price)          # full pole height
@@ -1021,7 +1050,8 @@ def detect_flag_pennant(df) -> List[dict]:
             start_idx=pole_start, end_idx=end_idx, breakout_idx=conf,
             breakout_price=cons_hi, target=target, stop=cons_lo * 0.98,
             height_pct=pole_gain * 100,
-            plain=(f"A sharp {pole_gain*100:.0f}% run (the flagpole) then a tight pause. "
+            plain=(f"A sharp {pole_gain*100:.0f}% run (the flagpole) then a "
+                   f"{'converging pause (pennant)' if code == 'pennant' else 'tight pause'}. "
                    f"A close above {cons_hi:.2f} resumes the advance."
                    + (" Because price doubled, this is a High-and-Tight Flag — the strongest bullish setup in the book."
                       if htf else "")),
@@ -1093,7 +1123,7 @@ def detect_rounding_cup(df, pivots) -> List[dict]:
     quality = _quality_from(sep_ok=True, sym=1 - r2, confirmed=(status == 'confirmed'),
                             extra=(r2 >= 0.7))
     out.append(_make(
-        df, code, name, 'reversal', 'bullish', status,
+        df, code, name, 'continuation', 'bullish', status,
         key_points=[_pt(df, start_idx, left_lip, 'left lip'),
                     _pt(df, n - lookback + int(vertex), cup_low, 'base'),
                     _pt(df, n - 1, right_lip, 'right lip')],
@@ -1115,88 +1145,104 @@ def detect_rounding_cup(df, pivots) -> List[dict]:
 # DETECTORS — pipe bottom / top (two adjacent spikes)
 # --------------------------------------------------------------------------- #
 
+def _weekly_bars(df) -> List[dict]:
+    """Resample the daily frame into weekly OHLC bars (DSE trades Sun–Thu, so a
+    week ends Thursday), keeping a map back to the DAILY indices so pipe
+    geometry can still be drawn on the daily chart."""
+    dts = pd.to_datetime(df['date'])
+    keys = dts.dt.to_period('W-THU').astype(str).to_numpy()
+    bars: List[dict] = []
+    i, N = 0, len(df)
+    while i < N:
+        j = i
+        while j + 1 < N and keys[j + 1] == keys[i]:
+            j += 1
+        seg = df.iloc[i:j + 1]
+        lows = seg['low'].to_numpy(dtype=float)
+        highs = seg['high'].to_numpy(dtype=float)
+        bars.append({
+            'high': float(highs.max()), 'low': float(lows.min()),
+            'close': float(seg.iloc[-1]['close']),
+            'd_start': i, 'd_end': j,
+            'low_idx': i + int(lows.argmin()), 'high_idx': i + int(highs.argmax()),
+        })
+        i = j + 1
+    return bars
+
+
 def detect_pipes(df) -> List[dict]:
-    """Two adjacent long parallel spikes. Bulkowski uses a weekly chart; on
-    daily bars we approximate with a 2-bar spike that stands out from the
-    surrounding range — a fast V-reversal."""
+    """Pipe Bottom / Pipe Top — two adjacent long parallel spikes. Bulkowski's
+    pipe statistics are WEEKLY-chart figures (he found daily pipes unprofitable
+    and discarded them), so we resample to weekly bars for detection and map the
+    two spike weeks back to their daily extremes for drawing."""
     out = []
     n = len(df)
-    if n < 30:
+    if n < 40:
         return out
-    look = 6                                        # how far back to search for the spike
-    for direction in ('bottom', 'top'):
-        for start in range(n - look, n - 1):
-            if start < 22:
-                continue
-            b1, b2 = df.iloc[start], df.iloc[start + 1]
-            prior = df.iloc[start - 20:start]
-            avg_rng = float((prior['high'] - prior['low']).mean())
-            if avg_rng <= 0:
-                continue
-            if direction == 'bottom':
-                spike = min(float(b1['low']), float(b2['low']))
-                depth = min(float(prior['low'].min()), spike)
-                # both bars poke well below and overlap
-                r1 = float(b1['high'] - b1['low'])
-                r2 = float(b2['high'] - b2['low'])
-                if not (r1 > 1.5 * avg_rng and r2 > 1.5 * avg_rng):
-                    continue
-                if _pct_diff(float(b1['low']), float(b2['low'])) > 0.05:
-                    continue
-                top = max(float(b1['high']), float(b2['high']))
-                conf = _confirm_close_above(df, top, start + 1)
-                status = 'confirmed' if conf is not None else 'forming'
-                if status == 'forming' and float(df.iloc[-1]['close']) < top * 0.97:
-                    continue
+    wb = _weekly_bars(df)
+    W = len(wb)
+    if W < 14:
+        return out
+    # Only the last few weeks are actionable.
+    for w in range(max(12, W - 4), W - 1):
+        b1, b2 = wb[w], wb[w + 1]
+        prior = wb[max(0, w - 12):w]
+        if len(prior) < 6:
+            continue
+        avg_rng = float(np.mean([p['high'] - p['low'] for p in prior]))
+        if avg_rng <= 0:
+            continue
+        r1, r2 = b1['high'] - b1['low'], b2['high'] - b2['low']
+        if not (r1 > 1.5 * avg_rng and r2 > 1.5 * avg_rng):
+            continue
+        # -------- Pipe Bottom --------
+        if _pct_diff(b1['low'], b2['low']) <= 0.05:
+            spike = min(b1['low'], b2['low'])
+            top = max(b1['high'], b2['high'])
+            conf = _confirm_close_above(df, top, b2['d_end'])
+            status = 'confirmed' if conf is not None else 'forming'
+            if not (status == 'forming' and float(df.iloc[-1]['close']) < top * 0.97):
                 end_idx = conf if conf is not None else n - 1
                 height = top - spike
-                target = top + height
-                notes = _resistance_notes(df, top, start + 1, bullish=True)
-                quality = _quality_from(sep_ok=True, sym=_pct_diff(float(b1['low']), float(b2['low'])),
+                notes = _resistance_notes(df, top, b2['d_end'], bullish=True)
+                quality = _quality_from(sep_ok=True, sym=_pct_diff(b1['low'], b2['low']),
                                         confirmed=(status == 'confirmed'), extra=True)
                 out.append(_make(
                     df, 'pipe_bottom', 'Pipe Bottom', 'reversal', 'bullish', status,
-                    key_points=[_pt(df, start, float(b1['low']), 'spike 1'),
-                                _pt(df, start + 1, float(b2['low']), 'spike 2')],
-                    lines=[_hline(df, top, start, end_idx, 'neckline'),
-                           _hline(df, target, (conf or end_idx), n - 1, 'target')],
-                    start_idx=start, end_idx=end_idx, breakout_idx=conf,
-                    breakout_price=top, target=target, stop=spike * 0.99,
+                    key_points=[_pt(df, b1['low_idx'], b1['low'], 'spike 1'),
+                                _pt(df, b2['low_idx'], b2['low'], 'spike 2')],
+                    lines=[_hline(df, top, b1['d_start'], end_idx, 'neckline'),
+                           _hline(df, top + height, (conf or end_idx), n - 1, 'target')],
+                    start_idx=b1['d_start'], end_idx=end_idx, breakout_idx=conf,
+                    breakout_price=top, target=top + height, stop=spike * 0.99,
                     height_pct=height / spike * 100,
-                    plain=(f"Two adjacent downward spikes to ~{spike:.2f} — a sharp V washout. "
-                           f"Bulkowski ranks pipe bottoms 2nd of 23 bullish patterns (+45% avg). "
+                    plain=(f"Two adjacent WEEKLY downward spikes to ~{spike:.2f} — a sharp V washout. "
+                           f"Bulkowski ranks pipe bottoms 2nd of 23 bullish patterns (+45% avg, weekly). "
                            f"A close above {top:.2f} confirms."),
                     quality_notes=notes, quality_score=quality,
                 ))
-            else:
-                r1 = float(b1['high'] - b1['low'])
-                r2 = float(b2['high'] - b2['low'])
-                if not (r1 > 1.5 * avg_rng and r2 > 1.5 * avg_rng):
-                    continue
-                if _pct_diff(float(b1['high']), float(b2['high'])) > 0.05:
-                    continue
-                peak = max(float(b1['high']), float(b2['high']))
-                bot = min(float(b1['low']), float(b2['low']))
-                conf = _confirm_close_below(df, bot, start + 1)
-                status = 'confirmed' if conf is not None else 'forming'
-                if status == 'forming' and float(df.iloc[-1]['close']) > bot * 1.03:
-                    continue
+        # -------- Pipe Top --------
+        if _pct_diff(b1['high'], b2['high']) <= 0.05:
+            peak = max(b1['high'], b2['high'])
+            bot = min(b1['low'], b2['low'])
+            conf = _confirm_close_below(df, bot, b2['d_end'])
+            status = 'confirmed' if conf is not None else 'forming'
+            if not (status == 'forming' and float(df.iloc[-1]['close']) > bot * 1.03):
                 end_idx = conf if conf is not None else n - 1
                 height = peak - bot
-                target = bot - height
-                notes = _support_notes(df, bot, start + 1)
-                quality = _quality_from(sep_ok=True, sym=_pct_diff(float(b1['high']), float(b2['high'])),
+                notes = _support_notes(df, bot, b2['d_end'])
+                quality = _quality_from(sep_ok=True, sym=_pct_diff(b1['high'], b2['high']),
                                         confirmed=(status == 'confirmed'), extra=True)
                 out.append(_make(
                     df, 'pipe_top', 'Pipe Top', 'reversal', 'bearish', status,
-                    key_points=[_pt(df, start, float(b1['high']), 'spike 1'),
-                                _pt(df, start + 1, float(b2['high']), 'spike 2')],
-                    lines=[_hline(df, bot, start, end_idx, 'neckline'),
-                           _hline(df, target, (conf or end_idx), n - 1, 'target')],
-                    start_idx=start, end_idx=end_idx, breakout_idx=conf,
-                    breakout_price=bot, target=target, stop=peak * 1.01,
+                    key_points=[_pt(df, b1['high_idx'], b1['high'], 'spike 1'),
+                                _pt(df, b2['high_idx'], b2['high'], 'spike 2')],
+                    lines=[_hline(df, bot, b1['d_start'], end_idx, 'neckline'),
+                           _hline(df, bot - height, (conf or end_idx), n - 1, 'target')],
+                    start_idx=b1['d_start'], end_idx=end_idx, breakout_idx=conf,
+                    breakout_price=bot, target=bot - height, stop=peak * 1.01,
                     height_pct=height / peak * 100,
-                    plain=(f"Two adjacent upward spikes to ~{peak:.2f} — a sharp blow-off. "
+                    plain=(f"Two adjacent WEEKLY upward spikes to ~{peak:.2f} — a sharp blow-off. "
                            f"A close below {bot:.2f} confirms the top."),
                     quality_notes=notes, quality_score=quality,
                 ))

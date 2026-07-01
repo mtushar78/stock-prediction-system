@@ -36,7 +36,9 @@ import {
   ChartPattern,
   DetectedChartPattern,
 } from '../types';
-import { X, AlertCircle, Info, AlertTriangle, Target, Crosshair, TrendingUp, TrendingDown } from 'lucide-react';
+import { tutorialCodeFor } from '../tutorials';
+import TutorialModal from './TutorialModal';
+import { X, AlertCircle, Info, AlertTriangle, Target, Crosshair, TrendingUp, TrendingDown, GraduationCap } from 'lucide-react';
 
 interface ChartDetailModalProps {
   apiUrl: string;
@@ -110,6 +112,8 @@ export default function ChartDetailModal({ apiUrl, ticker, onClose }: ChartDetai
   const [error, setError] = useState<string | null>(null);
   // Which chart pattern's geometry is drawn on the candles.
   const [activePattern, setActivePattern] = useState(0);
+  // Tutorial overlay for "learn this pattern".
+  const [learnCode, setLearnCode] = useState<string | null>(null);
 
   const chartPatterns: DetectedChartPattern[] = useMemo(
     () => signal?.chart_patterns ?? [],
@@ -365,6 +369,7 @@ export default function ChartDetailModal({ apiUrl, ticker, onClose }: ChartDetai
       : 'text-yellow-400';
 
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-2" onClick={onClose}>
       <div
         className="bg-gray-900 rounded-lg shadow-2xl border border-purple-800/40 w-full max-w-[1200px] max-h-[95vh] overflow-y-auto"
@@ -491,6 +496,7 @@ export default function ChartDetailModal({ apiUrl, ticker, onClose }: ChartDetai
                   pattern={p}
                   active={i === activePattern}
                   onClick={() => setActivePattern(i)}
+                  onLearn={() => setLearnCode(tutorialCodeFor(p.code))}
                 />
               ))}
             </div>
@@ -524,6 +530,8 @@ export default function ChartDetailModal({ apiUrl, ticker, onClose }: ChartDetai
         </div>
       </div>
     </div>
+    {learnCode && <TutorialModal code={learnCode} onClose={() => setLearnCode(null)} />}
+    </>
   );
 }
 
@@ -548,18 +556,22 @@ function ChartPatternCard({
   pattern,
   active,
   onClick,
+  onLearn,
 }: {
   pattern: DetectedChartPattern;
   active: boolean;
   onClick: () => void;
+  onLearn: () => void;
 }) {
   const c = biasColor(pattern.bias);
   const s = pattern.stats;
   const confirmed = pattern.status === 'confirmed';
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
-      className={`w-full text-left rounded-lg p-3 space-y-2 border transition ${
+      className={`w-full text-left rounded-lg p-3 space-y-2 border transition cursor-pointer ${
         active ? 'bg-gray-800 ring-1 ring-purple-500' : 'bg-gray-800/40 hover:bg-gray-800/70'
       }`}
       style={{ borderColor: c + (active ? 'aa' : '44') }}
@@ -597,6 +609,18 @@ function ChartPatternCard({
               Bulkowski rank #{s.rank}
             </span>
           )}
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(e) => {
+              e.stopPropagation();
+              onLearn();
+            }}
+            className="text-[10px] text-indigo-300 hover:text-indigo-100 inline-flex items-center gap-0.5 cursor-pointer"
+            title="Learn this pattern"
+          >
+            <GraduationCap className="w-3.5 h-3.5" /> Learn
+          </span>
         </div>
         {pattern.target != null && (
           <div className="flex items-center gap-1 text-xs" style={{ color: LINE_COLORS.target }}>
@@ -646,7 +670,7 @@ function ChartPatternCard({
           ))}
         </ul>
       )}
-    </button>
+    </div>
   );
 }
 

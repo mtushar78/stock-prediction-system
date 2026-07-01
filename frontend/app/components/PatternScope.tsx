@@ -16,11 +16,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { ChartPatternScanRow } from '../types';
-import { Crosshair, TrendingUp, TrendingDown, AlertTriangle, Target, Info, Rocket, Trophy, ShieldAlert } from 'lucide-react';
+import { tutorialCodeFor } from '../tutorials';
+import { Crosshair, TrendingUp, TrendingDown, Target, Info, Rocket, Trophy, GraduationCap, ShieldAlert } from 'lucide-react';
 
 interface PatternScopeProps {
   apiUrl: string;
   onRowClick: (ticker: string) => void;
+  onLearn?: (tutorialCode: string) => void;
 }
 
 type Tab = 'SETUPS' | 'WARNINGS' | 'CONFIRMED' | 'ALL';
@@ -62,7 +64,7 @@ const biasBadge = (bias: string) =>
 const isSetup = (r: ChartPatternScanRow) => r.verdict === 'BUY SETUP' || r.verdict === 'WATCH';
 const isWarn = (r: ChartPatternScanRow) => r.has_dcb || r.verdict === 'DANGER' || r.verdict === 'EXIT / AVOID';
 
-export default function PatternScope({ apiUrl, onRowClick }: PatternScopeProps) {
+export default function PatternScope({ apiUrl, onRowClick, onLearn }: PatternScopeProps) {
   const [rows, setRows] = useState<ChartPatternScanRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -305,6 +307,18 @@ export default function PatternScope({ apiUrl, onRowClick }: PatternScopeProps) 
                       ) : null}
                       {r.top_name}
                       {r.pattern_count > 1 && <span className="text-gray-500 text-[10px]">+{r.pattern_count - 1}</span>}
+                      {onLearn && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onLearn(tutorialCodeFor(r.top_code));
+                          }}
+                          title={`Learn about ${r.top_name}`}
+                          className="text-indigo-400 hover:text-indigo-200"
+                        >
+                          <GraduationCap className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </span>
                   </td>
                   <td className="py-2 pr-3 whitespace-nowrap">
