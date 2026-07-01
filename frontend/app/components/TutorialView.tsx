@@ -12,7 +12,7 @@
 import { useMemo } from 'react';
 import { TUTORIALS, TUTORIAL_ORDER, Tutorial } from '../tutorials';
 import PatternSchematic from './PatternSchematic';
-import { BookOpen, Target, Search, Eye, Cpu, Ruler, TrendingUp, AlertTriangle, Quote } from 'lucide-react';
+import { BookOpen, Target, Search, Cpu, Ruler, TrendingUp, AlertTriangle, Quote, Lightbulb, ExternalLink } from 'lucide-react';
 
 const biasColor = (b: string) => (b === 'bullish' ? '#34d399' : b === 'bearish' ? '#f87171' : '#cbd5e1');
 
@@ -134,6 +134,16 @@ export default function TutorialView({
           </ul>
         </Section>
 
+        <Section icon={<Lightbulb className="w-3.5 h-3.5" />} title="Worked examples">
+          <div className="space-y-2">
+            {t.examples.map((x, i) => (
+              <div key={i} className="bg-gray-900/60 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200">
+                {x}
+              </div>
+            ))}
+          </div>
+        </Section>
+
         <div className="grid md:grid-cols-2 gap-4">
           <Section icon={<Cpu className="w-3.5 h-3.5" />} title="How dse-sniper detects it">
             {t.howWeDetect}
@@ -160,9 +170,25 @@ export default function TutorialView({
           </Section>
         </div>
 
-        <div className="text-[11px] text-gray-600 flex items-center gap-1.5 pt-1">
-          <Eye className="w-3 h-3" /> Source: Thomas Bulkowski, <i>Encyclopedia of Chart Patterns</i> (2nd ed.). Statistics are
-          bull-market averages.
+        <Section icon={<ExternalLink className="w-3.5 h-3.5" />} title="Further reading">
+          <div className="flex flex-wrap gap-2">
+            {t.sources.map((s, i) => (
+              <a
+                key={i}
+                href={s.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-xs bg-gray-900/60 border border-gray-700 hover:border-indigo-600 hover:text-indigo-200 text-gray-300 rounded px-2 py-1 transition"
+              >
+                <ExternalLink className="w-3 h-3" /> {s.title}
+              </a>
+            ))}
+          </div>
+        </Section>
+
+        <div className="text-[11px] text-gray-600 pt-1">
+          Win-rate statistics are bull-market averages from Thomas Bulkowski, <i>Encyclopedia of Chart Patterns</i> (2nd ed.);
+          explanations synthesised from the sources above.
         </div>
       </div>
     </div>
