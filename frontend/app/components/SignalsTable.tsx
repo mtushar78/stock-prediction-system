@@ -68,6 +68,17 @@ function overheatedWhy(sig: Signal): string {
   return parts.join(' · ');
 }
 
+/** Short "why it's moving" summary for the cheap-movers row. */
+function momentumWhy(sig: Signal): string {
+  const r = sig.MomentumReasons;
+  if (Array.isArray(r) && r.length) return r.join(' · ');
+  const c = sig.MomentumChecks || {};
+  const parts: string[] = [];
+  if (typeof c.ret5 === 'number') parts.push(`+${Math.round(c.ret5)}%/5d`);
+  if (sig.RVOL) parts.push(`RVOL ${sig.RVOL}×`);
+  return parts.join(' · ');
+}
+
 export default function SignalsTable({
   signals,
   loading,
@@ -82,7 +93,8 @@ export default function SignalsTable({
   activeTicker,
 }: SignalsTableProps) {
   const [legacy, setLegacy] = useState(false);
-  const [list, setList] = useState<'BREAKOUT' | 'REVERSAL' | 'OVERHEATED'>('BREAKOUT');
+  const [list, setList] = useState<'BREAKOUT' | 'REVERSAL' | 'OVERHEATED' | 'MOVERS'>('BREAKOUT');
+  const [search, setSearch] = useState('');
   const [tab, setTab] = useState<ViewTab>('ALL');
   const [sortKey, setSortKey] = useState<SortKey>('Score');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -107,6 +119,18 @@ export default function SignalsTable({
   const overheated = signals
     .filter((s) => s.OverheatedSignal)
     .sort((a, b) => (b.OverheatedChecks?.heat_score || 0) - (a.OverheatedChecks?.heat_score || 0));
+
+  // v13 CHEAP MOVERS — cheap (<100 tk) short-term momentum, strongest first.
+  const movers = signals
+    .filter((s) => s.MomentumSignal && (s.Price || 0) < 100)
+    .sort((a, b) => (b.MomentumChecks?.mo_score || 0) - (a.MomentumChecks?.mo_score || 0));
+
+  // ---- ticker search filter (applies to whichever list is active) ----
+  const q = search.trim().toUpperCase();
+  const fb = q ? breakouts.filter(({ s }) => s.Ticker.includes(q)) : breakouts;
+  const fr = q ? reversals.filter(({ s }) => s.Ticker.includes(q)) : reversals;
+  const fo = q ? overheated.filter((s) => s.Ticker.includes(q)) : overheated;
+  const fm = q ? movers.filter((s) => s.Ticker.includes(q)) : movers;
 
   // ---- legacy table (only when expanded) ----
   const filtered = signals.filter((s) => {
@@ -185,11 +209,21 @@ export default function SignalsTable({
             <Flame className="w-4 h-4" /> Overheated
             <span className={`text-xs rounded-full px-2 py-0.5 font-bold ${list === 'OVERHEATED' ? 'bg-red-800 text-red-100' : 'bg-gray-800 text-gray-400'}`}>{overheated.length}</span>
           </button>
-          <span className="text-[10px] text-gray-500 border border-gray-700 rounded px-1.5 py-0.5">{list === 'BREAKOUT' ? 'v9 · momentum' : list === 'REVERSAL' ? 'v10 · buy the bottom' : 'v11 · take profit'}</span>
+          <button onClick={() => setList('MOVERS')}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg font-bold text-sm transition-colors border ${
+              list === 'MOVERS' ? 'bg-purple-900/40 text-purple-200 border-purple-600' : 'bg-gray-900/40 text-gray-400 border-gray-700 hover:text-gray-200'}`}
+            title="Cheap movers — low-price stocks on short-term momentum, for a 1-2 week trade">
+            <Flame className="w-4 h-4" /> Cheap Movers
+            <span className={`text-xs rounded-full px-2 py-0.5 font-bold ${list === 'MOVERS' ? 'bg-purple-800 text-purple-100' : 'bg-gray-800 text-gray-400'}`}>{movers.length}</span>
+          </button>
           <button onClick={() => setShowLegend((x) => !x)} className="text-gray-500 hover:text-gray-200" title="What is this?">
             <HelpCircle className="w-4 h-4" />
           </button>
         </div>
+        <input
+          value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search ticker…"
+          className="bg-gray-950 border border-gray-700 rounded px-2.5 py-1 text-xs text-white w-40 focus:outline-none focus:border-sky-500 placeholder-gray-600"
+        />
       </div>
 
       {list === 'BREAKOUT' && (
@@ -209,6 +243,13 @@ export default function SignalsTable({
           🔥 <b className="text-red-300">Take-profit / avoid</b> warning — stocks that have run too hot.
           Historically these pull back ≥20% about <b className="text-red-300">26%</b> of the time (vs ~15% normally) — <b>elevated risk, not a certainty</b>.
           <b className="text-gray-400"> NOT a buy list</b>: don&apos;t chase; consider taking profit if you hold one. Ranked hottest-first.
+        </p>
+      )}
+      {list === 'MOVERS' && (
+        <p className="text-xs text-gray-500 mb-3">
+          ⚡ <b className="text-purple-300">Cheap stocks (&lt; 100 tk) moving now</b> — near a 20-day high, in an uptrend, on volume. For a quick
+          <b> 1–2 week trade</b>. Backtest: ~<b className="text-purple-300">1 in 3 pops +7%</b> within 10 days — <b>but ~1 in 8 crashes −10%</b>.
+          <b className="text-red-300"> High risk</b>: always set a −7% stop, take profit fast, and trade a *basket*, never one name.
         </p>
       )}
 
@@ -231,6 +272,12 @@ export default function SignalsTable({
           <div className="text-red-300/80">This is a <b>RISK flag, not a sell-now command</b> — strong stocks can stay hot a while. Use it to avoid buying tops and to take profit on names you hold. The chart predicts falls far better than rises.</div>
         </div>
       )}
+      {showLegend && list === 'MOVERS' && (
+        <div className="mb-3 bg-gray-900 border border-purple-800/50 rounded p-3 text-xs text-gray-300 space-y-1.5">
+          <div><span className="text-purple-300 font-bold">⚡ CHEAP MOVERS</span> = a low-price (&lt;100tk) stock at/near its 20-day high, above its 20 &amp; 200-day averages, on real volume (RVOL ≥ 1.5×), not already blown off (RSI &lt; 80). It&apos;s <b>moving right now</b> — for a short 1–2 week trade, then sell.</div>
+          <div className="text-red-300/80">⚠️ This is the <b>highest-variance</b> list — cheap momentum is where both the fast gains and the pump-and-dumps live. It only makes money <b>with discipline</b>: −7% stop, take profit at +7–10%, spread across several names. Never go all-in on one.</div>
+        </div>
+      )}
 
       {/* ---- BREAKOUT TABLE (momentum) ---- */}
       {list === 'BREAKOUT' && (
@@ -248,7 +295,7 @@ export default function SignalsTable({
             </tr>
           </thead>
           <tbody>
-            {breakouts.map(({ s: sig, g }, i) => (
+            {fb.map(({ s: sig, g }, i) => (
               <tr key={`${sig.Ticker}-${i}`} className="border-b border-gray-700/50 hover:bg-sky-900/10 transition h-11">
                 <td className="py-2 pr-3">
                   <span className={`inline-flex items-center justify-center w-7 h-6 rounded font-bold text-sm ${gradeColor(g.grade)}`}
@@ -280,7 +327,7 @@ export default function SignalsTable({
                 </td>
               </tr>
             ))}
-            {breakouts.length === 0 && (
+            {fb.length === 0 && (
               <tr><td colSpan={7} className="py-8 text-center text-gray-500">
                 {loading ? 'Loading…' : (
                   <>No breakouts right now — nothing is breaking out today.<br />
@@ -309,7 +356,7 @@ export default function SignalsTable({
             </tr>
           </thead>
           <tbody>
-            {reversals.map(({ s: sig, g }, i) => (
+            {fr.map(({ s: sig, g }, i) => (
               <tr key={`${sig.Ticker}-${i}`} className="border-b border-gray-700/50 hover:bg-amber-900/10 transition h-11">
                 <td className="py-2 pr-3">
                   <span className={`inline-flex items-center justify-center w-7 h-6 rounded font-bold text-sm ${gradeColor(g.grade)}`}
@@ -345,7 +392,7 @@ export default function SignalsTable({
                 </td>
               </tr>
             ))}
-            {reversals.length === 0 && (
+            {fr.length === 0 && (
               <tr><td colSpan={7} className="py-8 text-center text-gray-500">
                 {loading ? 'Loading…' : (
                   <>No reversals right now — nothing has bottomed-and-turned today.<br />
@@ -375,7 +422,7 @@ export default function SignalsTable({
             </tr>
           </thead>
           <tbody>
-            {overheated.map((sig, i) => {
+            {fo.map((sig, i) => {
               const c = sig.OverheatedChecks || {};
               return (
               <tr key={`${sig.Ticker}-${i}`} className="border-b border-gray-700/50 hover:bg-red-900/10 transition h-11">
@@ -407,11 +454,72 @@ export default function SignalsTable({
                 </td>
               </tr>
             );})}
-            {overheated.length === 0 && (
+            {fo.length === 0 && (
               <tr><td colSpan={8} className="py-8 text-center text-gray-500">
                 {loading ? 'Loading…' : (
                   <>Nothing overheated right now — no stock has run dangerously hot today.<br />
                   <span className="text-gray-600 text-xs">Good — fewer tops to avoid. This fills up in frothy/euphoric markets.</span></>
+                )}
+              </td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      )}
+
+      {/* ---- CHEAP MOVERS TABLE (short-term momentum, price < 100) ---- */}
+      {list === 'MOVERS' && (
+      <div className="overflow-x-auto">
+        <table className="text-left text-sm min-w-[680px] w-full">
+          <thead>
+            <tr className="text-gray-500 text-xs border-b border-gray-700">
+              <th className="pb-3 pr-3" title="Momentum strength 0–100 (volume + 5-day thrust + closeness to the 20-day high)">MO</th>
+              <th className="pb-3 pr-4">TICKER</th>
+              <th className="pb-3 pr-4">PRICE</th>
+              <th className="pb-3 pr-4" title="Up over the last 5 trading days">5d</th>
+              <th className="pb-3 pr-4">RVOL</th>
+              <th className="pb-3 pr-4">WHY IT'S MOVING</th>
+              <th className="pb-3 text-center">DETAIL</th>
+            </tr>
+          </thead>
+          <tbody>
+            {fm.map((sig, i) => {
+              const c = sig.MomentumChecks || {};
+              const mo = c.mo_score ?? 0;
+              return (
+              <tr key={`${sig.Ticker}-${i}`} className="border-b border-gray-700/50 hover:bg-purple-900/10 transition h-11">
+                <td className="py-2 pr-3">
+                  <span className={`inline-flex items-center justify-center w-8 h-6 rounded font-bold text-xs ${mo >= 60 ? 'bg-purple-600 text-white' : mo >= 35 ? 'bg-purple-800 text-purple-100' : 'bg-gray-700 text-gray-300'}`}
+                    title={`Momentum ${mo}/100`}>{mo}</span>
+                </td>
+                <td className="py-2 pr-4 font-bold text-purple-200 whitespace-nowrap">
+                  <div className="flex items-center gap-1.5">
+                    <span>{sig.Ticker}</span>
+                    {!!sig.IsFreshMomentum && (
+                      <span className="text-[9px] bg-purple-600 text-white px-1 py-0.5 rounded font-bold" title="First day it started moving">NEW</span>
+                    )}
+                  </div>
+                </td>
+                <td className="py-2 pr-4 whitespace-nowrap">{priceCell(sig)}</td>
+                <td className={`py-2 pr-4 font-bold whitespace-nowrap ${(c.ret5 || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {typeof c.ret5 === 'number' ? `${c.ret5 > 0 ? '+' : ''}${Math.round(c.ret5)}%` : '-'}
+                </td>
+                <td className="py-2 pr-4 font-bold text-yellow-400 whitespace-nowrap">{sig.RVOL}×</td>
+                <td className="py-2 pr-4 text-gray-300 text-xs">{momentumWhy(sig)}</td>
+                <td className="py-2 text-center">
+                  <button onClick={() => onInfoClick(sig)}
+                    className="inline-flex items-center justify-center w-7 h-7 rounded border border-purple-700 bg-purple-900/20 text-purple-300 hover:border-purple-400 hover:bg-purple-900/40 transition-colors"
+                    title="Details">
+                    <Info className="w-4 h-4" />
+                  </button>
+                </td>
+              </tr>
+            );})}
+            {fm.length === 0 && (
+              <tr><td colSpan={7} className="py-8 text-center text-gray-500">
+                {loading ? 'Loading…' : (
+                  <>No cheap movers right now — no low-price stock is on strong momentum today.<br />
+                  <span className="text-gray-600 text-xs">Fills up when cheap stocks start running. Use the Time Machine to study past ones.</span></>
                 )}
               </td></tr>
             )}

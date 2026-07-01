@@ -76,6 +76,15 @@ export interface Signal {
     heat_score?: number; heat_level?: 'EXTREME' | 'HOT' | 'WARM' | string;
     rsi_thresh?: number; ret20_thresh?: number; ext20_thresh?: number;
   };
+  // v13 CHEAP MOVERS — short-term momentum
+  MomentumSignal?: boolean;
+  MomentumReasons?: string[];
+  IsFreshMomentum?: boolean;
+  MomentumChecks?: {
+    close?: number; dist_to_20dhigh?: number; ret5?: number;
+    rvol?: number; rsi?: number; uptrend?: boolean;
+    mo_score?: number; avg_vol20?: number;
+  };
   // v8 ENTRY-PRICE GUIDANCE
   PrevClose?: number;
   DayLow?: number;

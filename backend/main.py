@@ -102,8 +102,8 @@ def _prepare_signals_for_sqlite(df_results):
     StockAnalyzer.analyze_ticker."""
     import json as _json
     df_results_copy = df_results.copy()
-    list_cols = ['reasons', 'early_reasons', 'breakout_reasons', 'reversal_reasons', 'overheated_reasons']
-    dict_cols = ['v5_details', 'early_components', 'breakout_checks', 'reversal_checks', 'overheated_checks']
+    list_cols = ['reasons', 'early_reasons', 'breakout_reasons', 'reversal_reasons', 'overheated_reasons', 'momentum_reasons']
+    dict_cols = ['v5_details', 'early_components', 'breakout_checks', 'reversal_checks', 'overheated_checks', 'momentum_checks']
     for col in list_cols:
         if col in df_results_copy.columns:
             df_results_copy[col] = df_results_copy[col].apply(
@@ -132,7 +132,8 @@ def _format_signal_records(df):
             df[col] = df[col].fillna(0)
 
     for col in ('is_fresh_buy', 'is_fresh_early', 'breakout_signal', 'is_fresh_breakout',
-                'reversal_signal', 'is_fresh_reversal', 'overheated_signal', 'is_fresh_overheated'):
+                'reversal_signal', 'is_fresh_reversal', 'overheated_signal', 'is_fresh_overheated',
+                'momentum_signal', 'is_fresh_momentum'):
         if col in df.columns:
             df[col] = df[col].apply(
                 lambda x: bool(x) if x is not None and not (isinstance(x, float) and pd.isna(x)) else False
@@ -159,12 +160,14 @@ def _format_signal_records(df):
         'reversal_checks': 'ReversalChecks', 'is_fresh_reversal': 'IsFreshReversal',
         'overheated_signal': 'OverheatedSignal', 'overheated_reasons': 'OverheatedReasons',
         'overheated_checks': 'OverheatedChecks', 'is_fresh_overheated': 'IsFreshOverheated',
+        'momentum_signal': 'MomentumSignal', 'momentum_reasons': 'MomentumReasons',
+        'momentum_checks': 'MomentumChecks', 'is_fresh_momentum': 'IsFreshMomentum',
         'prev_close': 'PrevClose', 'day_low': 'DayLow', 'day_high': 'DayHigh',
         'range_position': 'RangePosition', 'recommended_entry': 'RecommendedEntry',
         'entry_quality': 'EntryQuality', 'entry_warning': 'EntryWarning',
     })
 
-    for rcol in ('EarlyReasons', 'BreakoutReasons', 'ReversalReasons', 'OverheatedReasons'):
+    for rcol in ('EarlyReasons', 'BreakoutReasons', 'ReversalReasons', 'OverheatedReasons', 'MomentumReasons'):
         if rcol in df.columns:
             df[rcol] = df[rcol].apply(
                 lambda x: eval(x) if isinstance(x, str) and x.startswith('[') else (x or [])
@@ -176,7 +179,7 @@ def _format_signal_records(df):
             except Exception:
                 return {}
         return x if isinstance(x, dict) else {}
-    for ocol in ('EarlyComponents', 'BreakoutChecks', 'ReversalChecks', 'OverheatedChecks'):
+    for ocol in ('EarlyComponents', 'BreakoutChecks', 'ReversalChecks', 'OverheatedChecks', 'MomentumChecks'):
         if ocol in df.columns:
             df[ocol] = df[ocol].apply(_parse_json_obj)
     if 'Reason' in df.columns:
@@ -576,6 +579,7 @@ def get_sniper_signals():
         has_breakout = 'breakout_signal' in cols
         has_reversal = 'reversal_signal' in cols
         has_overheated = 'overheated_signal' in cols
+        has_momentum = 'momentum_signal' in cols
 
         if has_v7:
             where = ("WHERE signal IN ('BUY', 'WAIT') "
@@ -590,6 +594,8 @@ def get_sniper_signals():
                 where += " OR reversal_signal = 1"
             if has_overheated:
                 where += " OR overheated_signal = 1"   # v11 take-profit warning
+            if has_momentum:
+                where += " OR momentum_signal = 1"      # v13 cheap movers
             df = pd.read_sql_query(
                 text(f"SELECT * FROM signals_today {where} ORDER BY signal_strength DESC"),
                 db.engine,
@@ -690,10 +696,11 @@ def _compute_and_cache_signals_for_date(date: str):
             hcols = []
         rev_clause = " OR reversal_signal = 1" if 'reversal_signal' in hcols else ""
         oh_clause = " OR overheated_signal = 1" if 'overheated_signal' in hcols else ""
+        mo_clause = " OR momentum_signal = 1" if 'momentum_signal' in hcols else ""
         df = pd.read_sql_query(_text(
             "SELECT * FROM signals_history WHERE date = :d AND ("
             "signal IN ('BUY','WAIT') OR early_signal IN ('EARLY','WATCH') "
-            "OR breakout_signal = 1" + rev_clause + oh_clause + ") ORDER BY signal_strength DESC"),
+            "OR breakout_signal = 1" + rev_clause + oh_clause + mo_clause + ") ORDER BY signal_strength DESC"),
             db.engine, params={"d": date})
         if df.empty:
             return []

@@ -1543,6 +1543,64 @@ class StockAnalyzer:
 
         return {'is_overheated': is_overheated, 'reasons': reasons, 'checks': checks}
 
+    def calculate_momentum_signal(self, row: pd.Series, df: pd.DataFrame) -> Dict:
+        """v13: CHEAP MOVERS — short-term momentum for small traders.
+
+        A stock that is MOVING now: near (within 3% of) its 20-day high, in an
+        uptrend (>200-SMA, >20-SMA), on real volume, and not already blown off.
+        Built for a 1-2 week trade. Backtest 2019-2026 (price<100, ~13k firings):
+        ~45% win / +1.1% avg at +10d, ~33% pop +7% within 10d, but ~12% crash -10%
+        — HIGH VARIANCE. A stop-loss is mandatory; trade a basket, not one name.
+        Returns {'is_momentum', 'reasons', 'checks' (incl. a 0-100 mo_score)}.
+        """
+        reasons, checks = [], {}
+        close = float(row['close']) if pd.notna(row.get('close')) else 0.0
+        rvol = float(row['rvol']) if pd.notna(row.get('rvol')) else 0.0
+        rsi = float(row['rsi']) if pd.notna(row.get('rsi')) else 50.0
+        sma20, sma200, hi20 = row.get('sma_20'), row.get('sma_200'), row.get('high_20')
+        avg_vol20 = row.get('avg_volume_20')
+
+        dist_hi = ((close / float(hi20) - 1) * 100) if (pd.notna(hi20) and hi20 and hi20 > 0) else None
+        ret5 = None
+        if len(df) >= 6:
+            c5 = float(df.iloc[-6]['close'])
+            if c5 > 0:
+                ret5 = (close - c5) / c5 * 100
+
+        near_high = dist_hi is not None and dist_hi >= -3.0     # at/within 3% of the 20d high
+        uptrend = bool(pd.notna(sma200) and sma200 > 0 and close > float(sma200)
+                       and pd.notna(sma20) and sma20 and close > float(sma20))
+        volume_ok = rvol >= 1.5
+        not_blown = rsi < 80 and (ret5 is None or ret5 < 15)   # leave room, avoid the exact top
+        liquid = bool(pd.notna(avg_vol20) and avg_vol20 >= 50000 and close >= 5)
+        is_momentum = bool(near_high and uptrend and volume_ok and not_blown and liquid)
+
+        if near_high:
+            reasons.append('At its 20-day high' if (dist_hi is not None and dist_hi >= -0.5)
+                           else f'{dist_hi:.0f}% from its 20-day high')
+        if ret5 is not None and ret5 > 0:
+            reasons.append(f'Up +{ret5:.0f}% in 5 days')
+        if volume_ok:
+            reasons.append(f'Volume {rvol:.1f}x')
+        if uptrend:
+            reasons.append('Uptrend')
+
+        def clamp(x):
+            return 0.0 if x < 0 else 1.0 if x > 1 else x
+        mo = (clamp((rvol - 1.5) / 3) * 40                                   # volume push
+              + (clamp(ret5 / 12) * 35 if ret5 is not None else 0)          # 5-day thrust
+              + (clamp((dist_hi + 3) / 3) * 25 if dist_hi is not None else 0))  # closeness to the high
+        checks['close'] = round(close, 2)
+        checks['dist_to_20dhigh'] = round(dist_hi, 2) if dist_hi is not None else None
+        checks['ret5'] = round(ret5, 1) if ret5 is not None else None
+        checks['rvol'] = round(rvol, 2)
+        checks['rsi'] = round(rsi, 1)
+        checks['uptrend'] = uptrend
+        checks['mo_score'] = round(mo)
+        checks['avg_vol20'] = int(avg_vol20) if pd.notna(avg_vol20) else None
+
+        return {'is_momentum': is_momentum, 'reasons': reasons, 'checks': checks}
+
     def generate_signal(self, score: int) -> str:
         """
         Generate trading signal based on score (v7 thresholds).
@@ -1658,6 +1716,9 @@ class StockAnalyzer:
             # flag, not a buy). Independent of every other signal.
             overheated = self.calculate_overheated_signal(row, df)
 
+            # v13: CHEAP MOVERS — short-term momentum (near-high + uptrend + volume).
+            momentum = self.calculate_momentum_signal(row, df)
+
             # v7: Yesterday's perspective for fresh-signal detection.
             # Recompute indicators on history excluding today so the OBV/BB
             # slopes are calculated as of yesterday.
@@ -1666,6 +1727,7 @@ class StockAnalyzer:
             prev_breakout = None
             prev_reversal = None
             prev_overheated = None
+            prev_momentum = None
             if not analysis_date and len(raw_df) >= 21:
                 try:
                     df_y = self.calculate_indicators(raw_df.iloc[:-1])
@@ -1678,6 +1740,7 @@ class StockAnalyzer:
                         prev_breakout = self.calculate_breakout_signal(prev_row_y, df_y)['is_breakout']
                         prev_reversal = self.calculate_reversal_signal(prev_row_y, df_y)['is_reversal']
                         prev_overheated = self.calculate_overheated_signal(prev_row_y, df_y)['is_overheated']
+                        prev_momentum = self.calculate_momentum_signal(prev_row_y, df_y)['is_momentum']
                 except Exception as e:
                     logger.debug(f"Fresh-signal recompute failed for {ticker}: {e}")
 
@@ -1686,6 +1749,7 @@ class StockAnalyzer:
             is_fresh_breakout = bool(breakout['is_breakout'] and not prev_breakout)
             is_fresh_reversal = bool(reversal['is_reversal'] and not prev_reversal)
             is_fresh_overheated = bool(overheated['is_overheated'] and not prev_overheated)
+            is_fresh_momentum = bool(momentum['is_momentum'] and not prev_momentum)
 
             # v8: intraday entry-price guidance (advisory — warn, don't block).
             prev_close_val = (float(df.iloc[-2]['close']) if len(df) >= 2
@@ -1784,6 +1848,12 @@ class StockAnalyzer:
                 'overheated_reasons': overheated['reasons'],
                 'overheated_checks': self._sanitize_for_json(overheated['checks']),
                 'is_fresh_overheated': is_fresh_overheated,
+
+                # ===== v13 CHEAP MOVERS — short-term momentum =====
+                'momentum_signal': momentum['is_momentum'],
+                'momentum_reasons': momentum['reasons'],
+                'momentum_checks': self._sanitize_for_json(momentum['checks']),
+                'is_fresh_momentum': is_fresh_momentum,
 
                 # ===== v8 ENTRY-PRICE GUIDANCE =====
                 'prev_close': entry_guidance['prev_close'],
@@ -2323,6 +2393,8 @@ class StockAnalyzer:
                 'reversal': self._sanitize_for_json(self.calculate_reversal_signal(row, df)),
                 # v11: overheated / take-profit warning (the decliner mirror)
                 'overheated': self._sanitize_for_json(self.calculate_overheated_signal(row, df)),
+                # v13: cheap movers / short-term momentum
+                'momentum': self._sanitize_for_json(self.calculate_momentum_signal(row, df)),
             }
 
             # If official analysis exists, include official computed trading levels for easy comparison
