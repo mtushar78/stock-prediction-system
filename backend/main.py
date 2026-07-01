@@ -209,6 +209,35 @@ def _format_signal_records(df):
     return _sanitize(result)
 
 
+# Handle to the most recent chart-pattern scan subprocess, so we never pile
+# up overlapping scans (each is a few minutes of CPU).
+_pattern_scan_proc = None
+
+
+def _launch_pattern_scan(label: str = "") -> None:
+    """Fire-and-forget the out-of-process chart-pattern scan. No-op if one is
+    still running."""
+    global _pattern_scan_proc
+    import os
+    import subprocess
+    import sys
+    try:
+        if _pattern_scan_proc is not None and _pattern_scan_proc.poll() is None:
+            logger.info(f"📐 [{label}] Chart-pattern scan still running (pid "
+                        f"{_pattern_scan_proc.pid}); skipping launch")
+            return
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        script = os.path.join(root, "scan_patterns.py")
+        _pattern_scan_proc = subprocess.Popen(
+            [sys.executable, script], cwd=root,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        logger.info(f"📐 [{label}] Launched chart-pattern scan subprocess "
+                    f"(pid {_pattern_scan_proc.pid})")
+    except Exception as e:
+        logger.error(f"❌ [{label}] Failed to launch chart-pattern scan: {e}")
+
+
 def run_chart_analysis(label: str = "") -> int:
     """Run the independent chart-pattern engine and persist its output.
     Returns the number of tickers with detected patterns (0 on failure)."""
@@ -218,17 +247,14 @@ def run_chart_analysis(label: str = "") -> int:
         results = analyzer.analyze_all_tickers()
         analyzer.save_results(results)
         logger.info(f"📈 [{label}] Chart analysis: {len(results)} tickers with patterns")
-
-        # v14: Bulkowski multi-week chart-pattern scanner (independent engine).
-        try:
-            from src.pattern_analyzer import PatternAnalyzer
-            pa_rows = PatternAnalyzer().analyze_all(db)
-            db.save_chart_pattern_signals_bulk(pa_rows)
-            logger.info(f"📐 [{label}] Chart patterns: {len(pa_rows)} tickers with formations")
-        except Exception as _pe:
-            logger.error(f"❌ [{label}] Chart-pattern scanner failed: {_pe}")
-
         db.close()
+
+        # v14: Bulkowski multi-week chart-pattern scan. It's CPU-bound over
+        # ~430 tickers, so we run it as a DETACHED SUBPROCESS — running it
+        # inline starved the web event loop and 502'd the whole site. The
+        # scanner writes chart_pattern_signals on its own and exits. We skip
+        # launching a new one if a prior scan is still running.
+        _launch_pattern_scan(label)
         return len(results)
     except Exception as e:
         logger.error(f"❌ [{label}] Chart analysis FAILED: {e}")
