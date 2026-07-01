@@ -421,6 +421,81 @@ export interface ChartContext {
   ret_5d_pct?: number;
 }
 
+// ----------------------------
+// v14: Bulkowski multi-week CHART patterns (separate engine, drawn on chart)
+// ----------------------------
+
+export interface ChartPatternPoint {
+  date: string;
+  price: number;
+  label?: string;
+}
+
+export interface ChartPatternLine {
+  // neckline | resistance | support | trend | target | stop
+  kind: string;
+  points: ChartPatternPoint[];
+}
+
+export interface ChartPatternStats {
+  avg_move_pct: number | null;      // Bulkowski avg rise/decline (bull market)
+  failure_rate_pct: number | null;  // break-even (5%) failure rate
+  throwback_pct: number | null;     // throwback (bottoms) / pullback (tops)
+  meet_target_pct: number | null;   // % reaching the measure-rule target
+  rank: number | null;              // Bulkowski performance rank (1 = best)
+}
+
+export interface DetectedChartPattern {
+  code: string;
+  name: string;
+  category: 'reversal' | 'continuation' | 'event' | string;
+  bias: 'bullish' | 'bearish' | 'neutral' | string;
+  status: 'confirmed' | 'forming' | string;
+  start_date: string;
+  end_date: string;
+  breakout_date: string | null;
+  breakout_price: number | null;
+  target: number | null;
+  target_pct: number | null;
+  stop: number | null;
+  height_pct: number;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW' | string;
+  key_points: ChartPatternPoint[];
+  lines: ChartPatternLine[];
+  stats: ChartPatternStats;
+  plain: string;
+  quality_notes: string[];
+}
+
+// One row of the multi-week chart-pattern scanner (list view).
+export interface ChartPatternScanRow {
+  ticker: string;
+  analysis_date: string;
+  price: number | null;
+  bias: string;
+  confidence: string;
+  top_code: string;
+  top_name: string;
+  status: 'confirmed' | 'forming' | string;
+  target: number | null;
+  target_pct: number | null;
+  pattern_count: number;
+  confirmed_count: number;
+  has_dcb: boolean;
+  patterns: DetectedChartPattern[];
+  summary: ChartPatternSummary | Record<string, never>;
+}
+
+export interface ChartPatternSummary {
+  bias: 'bullish' | 'bearish' | 'mixed' | string;
+  pattern_count: number;
+  confirmed_count: number;
+  has_dead_cat_bounce: boolean;
+  top_pattern: string;
+  top_confidence: string;
+  headline: string;
+}
+
 export interface ChartSignal {
   ticker: string;
   analysis_date: string;
@@ -435,6 +510,9 @@ export interface ChartSignal {
   detected_at?: string;
   // v9: confluence — the quant engine ALSO flags a breakout for this ticker
   breakout?: boolean;
+  // v14: Bulkowski chart patterns
+  chart_patterns?: DetectedChartPattern[];
+  chart_pattern_summary?: ChartPatternSummary | null;
 }
 
 export interface ChartOhlcvBar {

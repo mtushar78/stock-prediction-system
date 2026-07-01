@@ -218,6 +218,16 @@ def run_chart_analysis(label: str = "") -> int:
         results = analyzer.analyze_all_tickers()
         analyzer.save_results(results)
         logger.info(f"📈 [{label}] Chart analysis: {len(results)} tickers with patterns")
+
+        # v14: Bulkowski multi-week chart-pattern scanner (independent engine).
+        try:
+            from src.pattern_analyzer import PatternAnalyzer
+            pa_rows = PatternAnalyzer().analyze_all(db)
+            db.save_chart_pattern_signals_bulk(pa_rows)
+            logger.info(f"📐 [{label}] Chart patterns: {len(pa_rows)} tickers with formations")
+        except Exception as _pe:
+            logger.error(f"❌ [{label}] Chart-pattern scanner failed: {_pe}")
+
         db.close()
         return len(results)
     except Exception as e:
@@ -960,6 +970,62 @@ def get_chart_signals():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/chart-analysis/patterns")
+def get_chart_pattern_signals():
+    """v14: today's Bulkowski multi-week CHART-pattern scanner. One row per
+    ticker with ≥1 active formation (double bottom, H&S, triangle, flag,
+    dead-cat bounce…), each with its measure-rule target and win-rate stats."""
+    try:
+        db = DatabaseManager()
+        df = db.get_chart_pattern_signals_today()
+        db.close()
+        if df.empty:
+            return []
+        import json as _json
+        import math as _math
+
+        def _scrub(o):
+            if isinstance(o, float):
+                return None if (_math.isinf(o) or _math.isnan(o)) else o
+            if isinstance(o, dict):
+                return {k: _scrub(v) for k, v in o.items()}
+            if isinstance(o, list):
+                return [_scrub(v) for v in o]
+            return o
+
+        out = []
+        for _, r in df.iterrows():
+            try:
+                patterns = _json.loads(r['patterns']) if r['patterns'] else []
+            except Exception:
+                patterns = []
+            try:
+                summary = _json.loads(r['summary']) if r['summary'] else {}
+            except Exception:
+                summary = {}
+            out.append({
+                'ticker': r['ticker'],
+                'analysis_date': r['analysis_date'],
+                'price': float(r['price']) if r['price'] is not None else None,
+                'bias': r['bias'],
+                'confidence': r['confidence'],
+                'top_code': r['top_code'],
+                'top_name': r['top_name'],
+                'status': r['status'],
+                'target': float(r['target']) if r['target'] is not None else None,
+                'target_pct': float(r['target_pct']) if r['target_pct'] is not None else None,
+                'pattern_count': int(r['pattern_count']),
+                'confirmed_count': int(r['confirmed_count']),
+                'has_dcb': bool(r['has_dcb']),
+                'patterns': _scrub(patterns),
+                'summary': _scrub(summary),
+            })
+        return out
+    except Exception as e:
+        logger.error(f"get_chart_pattern_signals failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/chart-analysis/{ticker}")
 def get_chart_signal_detail(ticker: str):
     """Full chart-analysis breakdown for one ticker.
@@ -975,24 +1041,47 @@ def get_chart_signal_detail(ticker: str):
     ticker_u = ticker.upper()
     try:
         db = DatabaseManager()
-        sig = db.get_chart_signal(ticker_u)
-        if sig:
-            db.close()
-            return sig
 
-        # Fall through: try on-demand analysis
-        from src.chart_analyzer import ChartAnalyzer
-        analyzer = ChartAnalyzer(db)
-        result = analyzer.analyze_ticker(ticker_u)
+        # Full history — the chart-pattern engine needs months of bars.
+        hist = db.get_stock_data(ticker_u)
+
+        sig = db.get_chart_signal(ticker_u)
+        if not sig:
+            # Fall through: on-demand candlestick analysis
+            from src.chart_analyzer import ChartAnalyzer
+            analyzer = ChartAnalyzer(db)
+            sig = analyzer.analyze_ticker(ticker_u, df=hist if hist is not None and not hist.empty else None)
+
+        # Multi-week Bulkowski chart patterns — merged onto the same payload.
+        chart_patterns, chart_summary = [], None
+        try:
+            from src.pattern_analyzer import PatternAnalyzer
+            if hist is not None and not hist.empty:
+                pa = PatternAnalyzer().analyze(hist)
+                chart_patterns = pa.get('chart_patterns', [])
+                chart_summary = pa.get('chart_pattern_summary')
+        except Exception as _pe:
+            logger.warning(f"pattern engine failed for {ticker_u}: {_pe}")
+
         db.close()
 
-        if not result:
+        if not sig:
+            # No candlestick signal — but chart patterns alone may exist.
+            if chart_patterns:
+                return {
+                    'ticker': ticker_u, 'analysis_date': None,
+                    'overall_score': 0, 'overall_bias': chart_summary.get('bias') if chart_summary else 'neutral',
+                    'confidence': 'NONE', 'pattern_count': 0, 'price': None,
+                    'patterns': [], 'context': {}, 'explanation': '',
+                    'chart_patterns': chart_patterns, 'chart_pattern_summary': chart_summary,
+                }
             raise HTTPException(
                 status_code=404,
                 detail=f"Cannot analyse {ticker_u}: ticker not found, insufficient history, or stale data."
             )
-        # On-demand result has same shape as cached signal — just return it
-        return result
+        sig['chart_patterns'] = chart_patterns
+        sig['chart_pattern_summary'] = chart_summary
+        return sig
     except HTTPException:
         raise
     except Exception as e:

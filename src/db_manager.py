@@ -367,6 +367,38 @@ class DatabaseManager:
                 "ON chart_signals(analysis_date DESC, overall_score DESC)"
             )
 
+            # v14: Bulkowski multi-week CHART patterns (double bottoms, H&S,
+            # triangles, flags, dead-cat bounce…). Separate from the candlestick
+            # chart_signals table. One row per ticker with ≥1 active chart
+            # pattern; `patterns` is the full JSON, the flat columns exist for
+            # cheap list sorting/filtering.
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS chart_pattern_signals (
+                    id SERIAL PRIMARY KEY,
+                    ticker TEXT NOT NULL,
+                    analysis_date TEXT NOT NULL,
+                    price DOUBLE PRECISION,
+                    bias TEXT,
+                    confidence TEXT,
+                    top_code TEXT,
+                    top_name TEXT,
+                    status TEXT,
+                    target DOUBLE PRECISION,
+                    target_pct DOUBLE PRECISION,
+                    pattern_count INTEGER NOT NULL DEFAULT 0,
+                    confirmed_count INTEGER NOT NULL DEFAULT 0,
+                    has_dcb INTEGER NOT NULL DEFAULT 0,
+                    patterns TEXT NOT NULL,
+                    summary TEXT,
+                    detected_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(ticker, analysis_date)
+                )
+            """)
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_chart_pattern_signals_date "
+                "ON chart_pattern_signals(analysis_date DESC)"
+            )
+
             # Older SQLite DBs created portfolio without total_cost /
             # commission_paid — upgrade in-place.
             cursor.execute("PRAGMA table_info(portfolio)")
@@ -676,6 +708,79 @@ class DatabaseManager:
                 pass
             logger.error(f"get_chart_signal({ticker}) failed: {e}")
             return None
+
+    # ------------------------------------------------------------------ #
+    # Chart-PATTERN storage (Bulkowski multi-week formations, v14)
+    # ------------------------------------------------------------------ #
+
+    def save_chart_pattern_signals_bulk(self, rows: list):
+        """UPSERT chart-pattern scanner rows. Deletes rows for the same
+        analysis_date not in the new set (so de-flagged tickers drop out)."""
+        import json as _json
+        if not rows:
+            return
+        try:
+            cursor = self.conn.cursor()
+            from collections import defaultdict
+            by_date: dict = defaultdict(set)
+            for r in rows:
+                by_date[r['analysis_date']].add(r['ticker'])
+            for adate, tset in by_date.items():
+                placeholders = ','.join(['?'] * len(tset))
+                cursor.execute(
+                    f"DELETE FROM chart_pattern_signals "
+                    f"WHERE analysis_date = ? AND ticker NOT IN ({placeholders})",
+                    (adate, *sorted(tset))
+                )
+            sql = (
+                "INSERT INTO chart_pattern_signals "
+                "(ticker, analysis_date, price, bias, confidence, top_code, top_name, "
+                " status, target, target_pct, pattern_count, confirmed_count, has_dcb, "
+                " patterns, summary) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (ticker, analysis_date) DO UPDATE SET "
+                "  price=EXCLUDED.price, bias=EXCLUDED.bias, confidence=EXCLUDED.confidence, "
+                "  top_code=EXCLUDED.top_code, top_name=EXCLUDED.top_name, status=EXCLUDED.status, "
+                "  target=EXCLUDED.target, target_pct=EXCLUDED.target_pct, "
+                "  pattern_count=EXCLUDED.pattern_count, confirmed_count=EXCLUDED.confirmed_count, "
+                "  has_dcb=EXCLUDED.has_dcb, patterns=EXCLUDED.patterns, summary=EXCLUDED.summary, "
+                "  detected_at=CURRENT_TIMESTAMP"
+            )
+            payload = []
+            for r in rows:
+                payload.append((
+                    r['ticker'], r['analysis_date'],
+                    float(r.get('price') or 0), r.get('bias'), r.get('confidence'),
+                    r.get('top_code'), r.get('top_name'), r.get('status'),
+                    (float(r['target']) if r.get('target') is not None else None),
+                    (float(r['target_pct']) if r.get('target_pct') is not None else None),
+                    int(r.get('pattern_count') or 0), int(r.get('confirmed_count') or 0),
+                    int(r.get('has_dcb') or 0),
+                    _json.dumps(r.get('patterns', []), default=str),
+                    _json.dumps(r.get('summary', {}), default=str),
+                ))
+            cursor.executemany(sql, payload)
+            self.conn.commit()
+            logger.info(f"Saved {len(payload)} chart-pattern rows")
+        except Exception as e:
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            logger.error(f"save_chart_pattern_signals_bulk failed: {e}")
+            raise
+
+    def get_chart_pattern_signals_today(self) -> pd.DataFrame:
+        """Most recent analysis_date's chart-pattern scanner rows."""
+        try:
+            return pd.read_sql_query(text(
+                "SELECT * FROM chart_pattern_signals "
+                "WHERE analysis_date = (SELECT MAX(analysis_date) FROM chart_pattern_signals) "
+                "ORDER BY (status='confirmed') DESC, confidence DESC, pattern_count DESC, ticker ASC"
+            ), self.engine)
+        except Exception as e:
+            logger.error(f"get_chart_pattern_signals_today failed: {e}")
+            return pd.DataFrame()
 
     def get_ohlcv_for_chart(self, ticker: str, days: int = 60) -> pd.DataFrame:
         """Return last N days of OHLCV for chart rendering, oldest-first."""

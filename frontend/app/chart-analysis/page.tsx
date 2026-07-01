@@ -11,8 +11,9 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import axios from 'axios';
-import { Activity, RefreshCw, TrendingUp, Search } from 'lucide-react';
+import { Activity, RefreshCw, TrendingUp, Search, Crosshair, CandlestickChart } from 'lucide-react';
 import ChartScope from '../components/ChartScope';
+import PatternScope from '../components/PatternScope';
 import ChartDetailModal from '../components/ChartDetailModal';
 import { SystemStatus } from '../types';
 
@@ -25,6 +26,7 @@ export default function ChartAnalysisPage() {
   const [tickers, setTickers] = useState<string[]>([]);
   const [searchInput, setSearchInput] = useState('');
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [view, setView] = useState<'patterns' | 'candles'>('patterns');
 
   useEffect(() => {
     let cancelled = false;
@@ -77,7 +79,7 @@ export default function ChartAnalysisPage() {
             <Activity className="w-8 h-8" /> Chart Analyst
           </h1>
           <p className="text-gray-500 text-sm">
-            Independent second opinion · classical candlestick patterns + chart context
+            Independent second opinion · Bulkowski chart patterns + candlestick context
           </p>
         </div>
         <div className="flex gap-2 flex-wrap items-center">
@@ -162,11 +164,35 @@ export default function ChartAnalysisPage() {
         </div>
       </section>
 
-      <ChartScope
-        key={refreshKey}
-        apiUrl={API_URL}
-        onRowClick={(ticker) => setActiveTicker(ticker)}
-      />
+      {/* View toggle: multi-week chart patterns (Bulkowski) vs candlesticks */}
+      <div className="flex gap-1 mb-3 text-sm">
+        <button
+          onClick={() => setView('patterns')}
+          className={`px-3 py-1.5 rounded flex items-center gap-1.5 border transition ${
+            view === 'patterns'
+              ? 'bg-cyan-700 text-white border-cyan-600'
+              : 'bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700'
+          }`}
+        >
+          <Crosshair className="w-4 h-4" /> Chart patterns
+        </button>
+        <button
+          onClick={() => setView('candles')}
+          className={`px-3 py-1.5 rounded flex items-center gap-1.5 border transition ${
+            view === 'candles'
+              ? 'bg-purple-700 text-white border-purple-600'
+              : 'bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700'
+          }`}
+        >
+          <CandlestickChart className="w-4 h-4" /> Candlesticks
+        </button>
+      </div>
+
+      {view === 'patterns' ? (
+        <PatternScope key={`p${refreshKey}`} apiUrl={API_URL} onRowClick={(ticker) => setActiveTicker(ticker)} />
+      ) : (
+        <ChartScope key={`c${refreshKey}`} apiUrl={API_URL} onRowClick={(ticker) => setActiveTicker(ticker)} />
+      )}
 
       {activeTicker && (
         <ChartDetailModal
