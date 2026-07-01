@@ -56,6 +56,30 @@ const confidenceClass = (c: string) =>
     ? 'bg-gray-600 text-gray-200'
     : 'bg-gray-800 text-gray-500';
 
+const gradeCls = (g?: string) =>
+  g === 'A'
+    ? 'bg-emerald-500 text-black'
+    : g === 'B'
+    ? 'bg-lime-500 text-black'
+    : g === 'C'
+    ? 'bg-yellow-500 text-black'
+    : g === 'D'
+    ? 'bg-orange-500 text-black'
+    : 'bg-red-600 text-white';
+
+const verdictCls = (v?: string) =>
+  v === 'BUY SETUP'
+    ? 'bg-emerald-600 text-white'
+    : v === 'WATCH'
+    ? 'bg-blue-600 text-white'
+    : v === 'EXIT / AVOID'
+    ? 'bg-orange-700 text-white'
+    : v === 'DANGER'
+    ? 'bg-red-700 text-white'
+    : v === 'PLAYED OUT'
+    ? 'bg-gray-800 text-gray-500'
+    : 'bg-gray-600 text-gray-100';
+
 // Colours for the geometry we overlay on the candles.
 const LINE_COLORS: Record<string, string> = {
   neckline: '#f59e0b',
@@ -542,6 +566,11 @@ function ChartPatternCard({
     >
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2 flex-wrap">
+          {pattern.grade && (
+            <span className={`w-6 h-6 rounded flex items-center justify-center font-black text-xs ${gradeCls(pattern.grade)}`} title={`edge ${pattern.edge ?? '-'}/100`}>
+              {pattern.grade}
+            </span>
+          )}
           {pattern.bias === 'bullish' ? (
             <TrendingUp className="w-4 h-4" style={{ color: c }} />
           ) : (
@@ -550,15 +579,17 @@ function ChartPatternCard({
           <span className="text-sm font-bold" style={{ color: c }}>
             {pattern.name}
           </span>
+          {pattern.verdict && (
+            <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${verdictCls(pattern.verdict)}`}>
+              {pattern.verdict}
+            </span>
+          )}
           <span
             className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
               confirmed ? 'bg-emerald-900/70 text-emerald-300' : 'bg-amber-900/60 text-amber-300'
             }`}
           >
             {confirmed ? 'CONFIRMED' : 'FORMING'}
-          </span>
-          <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${confidenceClass(pattern.confidence)}`}>
-            {pattern.confidence}
           </span>
           <span className="text-[10px] text-gray-500 uppercase">{pattern.category}</span>
           {s.rank != null && (
@@ -586,6 +617,11 @@ function ChartPatternCard({
       </div>
 
       <div className="text-xs text-gray-300">{pattern.plain}</div>
+      {pattern.verdict_reason && (
+        <div className="text-xs text-cyan-200/90 bg-cyan-950/30 border border-cyan-900/40 rounded px-2 py-1">
+          <b>Verdict:</b> {pattern.verdict_reason}
+        </div>
+      )}
 
       {/* Bulkowski statistics row */}
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 bg-gray-900/50 rounded px-2 py-1.5">

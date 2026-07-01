@@ -385,6 +385,12 @@ class DatabaseManager:
                     status TEXT,
                     target DOUBLE PRECISION,
                     target_pct DOUBLE PRECISION,
+                    edge INTEGER DEFAULT 0,
+                    grade TEXT,
+                    verdict TEXT,
+                    verdict_reason TEXT,
+                    room_pct DOUBLE PRECISION,
+                    has_conflict INTEGER DEFAULT 0,
                     pattern_count INTEGER NOT NULL DEFAULT 0,
                     confirmed_count INTEGER NOT NULL DEFAULT 0,
                     has_dcb INTEGER NOT NULL DEFAULT 0,
@@ -398,6 +404,16 @@ class DatabaseManager:
                 "CREATE INDEX IF NOT EXISTS idx_chart_pattern_signals_date "
                 "ON chart_pattern_signals(analysis_date DESC)"
             )
+            # Migrate the decision-layer columns onto any pre-existing table
+            # (the table was created a version earlier without them).
+            cursor.execute("PRAGMA table_info(chart_pattern_signals)")
+            _cp_cols = {r[1] for r in cursor.fetchall()}
+            for _c, _t in (('edge', 'INTEGER DEFAULT 0'), ('grade', 'TEXT'),
+                           ('verdict', 'TEXT'), ('verdict_reason', 'TEXT'),
+                           ('room_pct', 'DOUBLE PRECISION'),
+                           ('has_conflict', 'INTEGER DEFAULT 0')):
+                if _c not in _cp_cols:
+                    cursor.execute(f"ALTER TABLE chart_pattern_signals ADD COLUMN {_c} {_t}")
 
             # Older SQLite DBs created portfolio without total_cost /
             # commission_paid — upgrade in-place.
@@ -735,13 +751,17 @@ class DatabaseManager:
             sql = (
                 "INSERT INTO chart_pattern_signals "
                 "(ticker, analysis_date, price, bias, confidence, top_code, top_name, "
-                " status, target, target_pct, pattern_count, confirmed_count, has_dcb, "
+                " status, target, target_pct, edge, grade, verdict, verdict_reason, "
+                " room_pct, has_conflict, pattern_count, confirmed_count, has_dcb, "
                 " patterns, summary) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT (ticker, analysis_date) DO UPDATE SET "
                 "  price=EXCLUDED.price, bias=EXCLUDED.bias, confidence=EXCLUDED.confidence, "
                 "  top_code=EXCLUDED.top_code, top_name=EXCLUDED.top_name, status=EXCLUDED.status, "
                 "  target=EXCLUDED.target, target_pct=EXCLUDED.target_pct, "
+                "  edge=EXCLUDED.edge, grade=EXCLUDED.grade, verdict=EXCLUDED.verdict, "
+                "  verdict_reason=EXCLUDED.verdict_reason, room_pct=EXCLUDED.room_pct, "
+                "  has_conflict=EXCLUDED.has_conflict, "
                 "  pattern_count=EXCLUDED.pattern_count, confirmed_count=EXCLUDED.confirmed_count, "
                 "  has_dcb=EXCLUDED.has_dcb, patterns=EXCLUDED.patterns, summary=EXCLUDED.summary, "
                 "  detected_at=CURRENT_TIMESTAMP"
@@ -754,6 +774,10 @@ class DatabaseManager:
                     r.get('top_code'), r.get('top_name'), r.get('status'),
                     (float(r['target']) if r.get('target') is not None else None),
                     (float(r['target_pct']) if r.get('target_pct') is not None else None),
+                    int(r.get('edge') or 0), r.get('grade'), r.get('verdict'),
+                    r.get('verdict_reason'),
+                    (float(r['room_pct']) if r.get('room_pct') is not None else None),
+                    int(r.get('has_conflict') or 0),
                     int(r.get('pattern_count') or 0), int(r.get('confirmed_count') or 0),
                     int(r.get('has_dcb') or 0),
                     _json.dumps(r.get('patterns', []), default=str),
@@ -776,7 +800,7 @@ class DatabaseManager:
             return pd.read_sql_query(text(
                 "SELECT * FROM chart_pattern_signals "
                 "WHERE analysis_date = (SELECT MAX(analysis_date) FROM chart_pattern_signals) "
-                "ORDER BY (status='confirmed') DESC, confidence DESC, pattern_count DESC, ticker ASC"
+                "ORDER BY edge DESC, (status='confirmed') DESC, ticker ASC"
             ), self.engine)
         except Exception as e:
             logger.error(f"get_chart_pattern_signals_today failed: {e}")

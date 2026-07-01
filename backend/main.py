@@ -978,6 +978,21 @@ def get_chart_pattern_signals():
     try:
         db = DatabaseManager()
         df = db.get_chart_pattern_signals_today()
+        # v14: confluence — which tickers ALSO fire the proven quant breakout /
+        # reversal signals? When a chart pattern agrees with the engine that has
+        # the only positive edge in every backtest, that's the strongest tell.
+        breakout_tickers, reversal_tickers = set(), set()
+        try:
+            from sqlalchemy import text as _text
+            cols = pd.read_sql_query(_text("SELECT * FROM signals_today LIMIT 1"), db.engine).columns.tolist()
+            if 'breakout_signal' in cols:
+                bdf = pd.read_sql_query(_text("SELECT ticker FROM signals_today WHERE breakout_signal = 1"), db.engine)
+                breakout_tickers = set(bdf['ticker'].tolist())
+            if 'reversal_signal' in cols:
+                rdf = pd.read_sql_query(_text("SELECT ticker FROM signals_today WHERE reversal_signal = 1"), db.engine)
+                reversal_tickers = set(rdf['ticker'].tolist())
+        except Exception as _ce:
+            logger.debug(f"confluence lookup skipped: {_ce}")
         db.close()
         if df.empty:
             return []
@@ -1013,12 +1028,37 @@ def get_chart_pattern_signals():
                 summary = _json.loads(r['summary']) if r['summary'] else {}
             except Exception:
                 summary = {}
+            tk = r['ticker']
+            # Confluence with the proven quant engine (bullish patterns only).
+            confluence = None
+            if r['bias'] == 'bullish':
+                if tk in breakout_tickers:
+                    confluence = 'breakout'
+                elif tk in reversal_tickers:
+                    confluence = 'reversal'
+            edge = int(r['edge']) if ('edge' in r and r['edge'] is not None) else 0
+            grade = r['grade'] if 'grade' in r else None
+            verdict = r['verdict'] if 'verdict' in r else None
+            # A confirmed pattern that agrees with the quant engine gets a real
+            # bump and, if it was only a WATCH, is promoted to a BUY SETUP.
+            if confluence:
+                edge = min(100, edge + 12)
+                grade = 'A' if edge >= 75 else 'B' if edge >= 60 else 'C' if edge >= 45 else 'D' if edge >= 30 else 'F'
+                if verdict == 'WATCH':
+                    verdict = 'BUY SETUP'
             out.append({
-                'ticker': r['ticker'],
+                'ticker': tk,
                 'analysis_date': r['analysis_date'],
                 'price': _f(r['price']),
                 'bias': r['bias'],
+                'has_conflict': bool(r['has_conflict']) if 'has_conflict' in r and r['has_conflict'] is not None else False,
                 'confidence': r['confidence'],
+                'edge': edge,
+                'grade': grade,
+                'verdict': verdict,
+                'verdict_reason': r['verdict_reason'] if 'verdict_reason' in r else None,
+                'room_pct': _f(r['room_pct']) if 'room_pct' in r else None,
+                'confluence': confluence,
                 'top_code': r['top_code'],
                 'top_name': r['top_name'],
                 'status': r['status'],
@@ -1030,6 +1070,8 @@ def get_chart_pattern_signals():
                 'patterns': _scrub(patterns),
                 'summary': _scrub(summary),
             })
+        # Re-sort so confluence + edge lead the list (grade already reflects it).
+        out.sort(key=lambda x: (x['edge'], x['status'] == 'confirmed'), reverse=True)
         return out
     except Exception as e:
         logger.error(f"get_chart_pattern_signals failed: {e}")

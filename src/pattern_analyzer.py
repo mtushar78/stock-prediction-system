@@ -323,6 +323,74 @@ def _make(df: pd.DataFrame, code: str, name: str, category: str, bias: str,
         confidence = 'MEDIUM'
     else:
         confidence = 'LOW'
+
+    # ------------------------------------------------------------------ #
+    # DECISION LAYER — turn the pattern into a single grade + verdict.
+    # This is what makes the scanner a tool and not a data dump: it blends
+    # Bulkowski's reward/risk, how FRESH the breakout is, how much ROOM is
+    # left to target, and throwback risk into one 0-100 "edge" score.
+    # ------------------------------------------------------------------ #
+    n = len(df)
+    age = (n - 1 - breakout_idx) if breakout_idx is not None else None  # bars since breakout
+    # Room = favourable distance to target (%). Bullish wants target above,
+    # bearish wants it below. <=0 means the move already reached target.
+    if target_pct is None:
+        room = None
+    elif bias == 'bullish':
+        room = target_pct
+    elif bias == 'bearish':
+        room = -target_pct
+    else:
+        room = abs(target_pct)
+
+    avg = float(st.get('avg_move') or 0)
+    fail = st.get('fail')
+    fail = float(fail) if fail is not None else 25.0
+    meet = float(st.get('meet') or 55)
+    # (1) intrinsic pattern quality = reward × reliability × target-hit rate
+    intrinsic = avg * (1 - fail / 100.0) * (meet / 100.0)      # ~5 (rising wedge) .. ~62 (HTF)
+    p_quality = min(40.0, intrinsic / 62.0 * 40.0)
+    # (2) freshness — a breakout you can still act on
+    if status == 'forming':
+        p_fresh = 8.0
+    elif age is None:
+        p_fresh = 6.0
+    else:
+        p_fresh = max(0.0, 1 - age / 18.0) * 20.0
+    # (3) room to target, weighted by how often the target is actually met
+    if room is None:
+        p_room = 4.0
+    elif room <= 0:
+        p_room = 0.0                                           # already at/past target
+    else:
+        p_room = min(1.0, room / 15.0) * 25.0 * (0.5 + 0.5 * meet / 100.0)
+    # (4) location — nearby resistance/support (throwback risk) hurts
+    p_loc = 4.0 if quality_notes else 13.0
+    edge = int(round(min(100.0, p_quality + p_fresh + p_room + p_loc)))
+    grade = ('A' if edge >= 75 else 'B' if edge >= 60 else 'C' if edge >= 45
+             else 'D' if edge >= 30 else 'F')
+
+    # Plain verdict a human can act on.
+    if code == 'dead_cat_bounce':
+        verdict, vreason = 'DANGER', 'Falling knife — bounces fail ~67% and it usually breaks lower. Not a buy for ~6 months.'
+    elif status == 'forming':
+        verdict, vreason = 'WAIT', 'Shape is complete but it has NOT broken out yet — wait for a close beyond the line.'
+    elif bias == 'bearish':
+        if room is not None and room >= 3:
+            verdict, vreason = 'EXIT / AVOID', f'Confirmed topping pattern with ~{room:.0f}% downside to target. Reduce or stay away.'
+        else:
+            verdict, vreason = 'PLAYED OUT', 'Down-move has largely reached its target — little left.'
+    elif bias == 'bullish':
+        if room is None or room < 2:
+            verdict, vreason = 'PLAYED OUT', 'Breakout already ran to its target — the easy money is gone.'
+        elif edge >= 62 and (age is None or age <= 10):
+            verdict, vreason = 'BUY SETUP', f'Fresh confirmed breakout, ~{room:.0f}% room to target, grade {grade}.'
+        else:
+            verdict, vreason = 'WATCH', (f'Confirmed but {"getting old" if (age and age > 10) else "middling edge"} — ~{room:.0f}% room left.')
+    else:
+        verdict, vreason = 'WATCH', 'Bilateral pattern — direction not resolved yet.'
+    actionable = verdict in ('BUY SETUP', 'WATCH', 'EXIT / AVOID', 'DANGER')
+
     return {
         'code': code,
         'name': name,
@@ -335,9 +403,16 @@ def _make(df: pd.DataFrame, code: str, name: str, category: str, bias: str,
         'breakout_price': _num(breakout_price),
         'target': _num(target),
         'target_pct': target_pct,
+        'room_pct': _num(room, 1),
+        'age_bars': age,
         'stop': _num(stop),
         'height_pct': _num(height_pct, 1),
         'confidence': confidence,
+        'edge': edge,
+        'grade': grade,
+        'verdict': verdict,
+        'verdict_reason': vreason,
+        'actionable': actionable,
         'key_points': key_points,
         'lines': lines,
         'stats': {
@@ -1360,6 +1435,11 @@ class PatternAnalyzer:
 
         # Filter to actionable patterns and de-overlap to one-per-region.
         patterns = _finalize(df, patterns)
+        # Present best-DECISION-first: highest edge, dead-cat-bounce always on
+        # top (it's a safety warning), then confirmed over forming.
+        patterns.sort(key=lambda p: (p['code'] == 'dead_cat_bounce',
+                                     p.get('edge', 0),
+                                     p['status'] == 'confirmed'), reverse=True)
 
         summary = self._summarize(patterns)
         # Strip internal fields before returning.
@@ -1381,13 +1461,22 @@ class PatternAnalyzer:
         analysis_date = _date_str(cdf.iloc[-1]['date'])
         price = float(cdf.iloc[-1]['close'])
         summary = res['chart_pattern_summary'] or {}
-        top = patterns[0]
+        top = patterns[0]                     # highest-edge / dominant pattern
+        has_bull = any(p['bias'] == 'bullish' for p in patterns)
+        has_bear = any(p['bias'] == 'bearish' for p in patterns)
         return {
             'ticker': ticker,
             'analysis_date': analysis_date,
             'price': round(price, 3),
-            'bias': summary.get('bias', top['bias']),
+            # Row bias reflects the DOMINANT (top) pattern, not a muddy "mixed".
+            'bias': top['bias'],
+            'has_conflict': 1 if (has_bull and has_bear) else 0,
             'confidence': top['confidence'],
+            'edge': top.get('edge', 0),
+            'grade': top.get('grade', 'F'),
+            'verdict': top.get('verdict', 'WATCH'),
+            'verdict_reason': top.get('verdict_reason', ''),
+            'room_pct': top.get('room_pct'),
             'top_code': top['code'],
             'top_name': top['name'],
             'status': top['status'],
