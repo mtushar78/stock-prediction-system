@@ -35,15 +35,28 @@ export default function QualityScreen({ apiUrl }: { apiUrl: string }) {
   const [data, setData] = useState<QData | null>(null);
   const [loading, setLoading] = useState(true);
   const [minScore, setMinScore] = useState(5);
+  const [query, setQuery] = useState('');
+  const [loadedAt, setLoadedAt] = useState<string | null>(null);
 
+  // Refresh every 5 min so a fundamentals backfill shows up without a manual
+  // page reload, and stamp when the data was fetched.
   useEffect(() => {
-    axios.get(`${apiUrl}/api/quality-screen`)
-      .then((r) => setData(r.data))
-      .catch(() => setData({ stocks: [], total: 0, perfect: 0, strong: 0 }))
-      .finally(() => setLoading(false));
+    let cancelled = false;
+    const load = () => {
+      axios.get(`${apiUrl}/api/quality-screen`)
+        .then((r) => { if (!cancelled) { setData(r.data); setLoadedAt(new Date().toLocaleTimeString()); } })
+        .catch(() => { if (!cancelled) setData((d) => d ?? { stocks: [], total: 0, perfect: 0, strong: 0 }); })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    };
+    load();
+    const interval = setInterval(load, 300000);
+    return () => { cancelled = true; clearInterval(interval); };
   }, [apiUrl]);
 
-  const shown = (data?.stocks || []).filter((s) => s.passed >= minScore);
+  const q = query.trim().toUpperCase();
+  const shown = (data?.stocks || []).filter(
+    (s) => s.passed >= minScore && (!q || s.ticker.includes(q)),
+  );
 
   return (
     <section className="bg-gray-800 rounded-lg p-6 border border-emerald-800/40 mt-6">
@@ -51,6 +64,7 @@ export default function QualityScreen({ apiUrl }: { apiUrl: string }) {
         <ShieldCheck className="w-5 h-5 text-emerald-300" />
         <h2 className="text-lg font-bold text-emerald-200">Fundamental Quality</h2>
         <span className="text-[10px] text-gray-500 border border-gray-700 rounded px-1.5 py-0.5">v12 · 6-step Graham screen</span>
+        {loadedAt && <span className="text-[10px] text-gray-600">as of {loadedAt} · fundamentals refresh weekly</span>}
       </div>
       <p className="text-xs text-gray-500 mb-3">
         The companies worth <b className="text-gray-400">owning</b> — strong fundamentals, not chart timing.
@@ -70,6 +84,19 @@ export default function QualityScreen({ apiUrl }: { apiUrl: string }) {
             <span className="bg-gray-900 border border-gray-700 rounded px-2.5 py-1">Scanned <b className="text-gray-200">{data.total}</b></span>
             <span className="bg-gray-900 border border-emerald-800/50 rounded px-2.5 py-1">Pass all 6: <b className="text-emerald-300">{data.perfect}</b></span>
             <span className="bg-gray-900 border border-emerald-800/50 rounded px-2.5 py-1">Pass 5+: <b className="text-emerald-300">{data.strong}</b></span>
+            <input
+              className="bg-gray-950 border border-gray-700 rounded px-2.5 py-1 text-xs text-white w-44 focus:outline-none focus:border-emerald-500 placeholder-gray-600"
+              list="quality-tickers"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search ticker…"
+              autoComplete="off"
+            />
+            <datalist id="quality-tickers">
+              {(data.stocks || []).map((s) => (
+                <option key={s.ticker} value={s.ticker} />
+              ))}
+            </datalist>
             <div className="ml-auto flex items-center gap-1">
               {[6, 5, 4, 0].map((n) => (
                 <button key={n} onClick={() => setMinScore(n)}
@@ -105,7 +132,10 @@ export default function QualityScreen({ apiUrl }: { apiUrl: string }) {
                   </tr>
                 ))}
                 {shown.length === 0 && (
-                  <tr><td colSpan={8} className="py-8 text-center text-gray-500">No stocks at {minScore}+/6 yet. Lower the filter or run the backfill.</td></tr>
+                  <tr><td colSpan={8} className="py-8 text-center text-gray-500">
+                    {q ? `No match for “${q}” at ${minScore}+/6. Clear the search or lower the filter.`
+                       : `No stocks at ${minScore}+/6 yet. Lower the filter or run the backfill.`}
+                  </td></tr>
                 )}
               </tbody>
             </table>

@@ -73,9 +73,14 @@ export default function ReversalDetailModal({ signal, onClose }: Props) {
 
           <div className="mt-4 text-xs text-amber-200/80 bg-amber-900/20 border border-amber-800/50 rounded-lg p-3">
             <b className="text-amber-300">Why trust this:</b> in a 2019–2026 walk-forward backtest this
-            reversal rule won <b>68.5%</b> at +10 days (+6.2% avg, median +5.2%); Grade A won ~<b>82%</b>.
-            It buys a confirmed bottom in a mean-reverting market.
-            <div className="mt-1.5 text-amber-300/70">⚠️ Edge case: in a sustained market downtrend it weakens (2023/2025 were poor). Honor the −7% stop and don&apos;t average down.</div>
+            reversal rule won <b>68.5%</b> at +10 days (+6.2% avg gross, <b>+5.1% net of commission</b>); Grade A won ~<b>82%</b>.
+            It buys a confirmed bottom in a mean-reverting market — the strongest measured edge in the system.
+            <div className="mt-1.5 text-amber-300/70">
+              📋 Exit plan: <b>−10% stop</b> (wider than a breakout&apos;s — this entry is a falling knife by design,
+              and a −7% stop shook out recoveries), <b>+25% target</b>, or exit after ~<b>20 trading days</b> —
+              the edge is realized by +10 to +20 days.
+            </div>
+            <div className="mt-1.5 text-amber-300/70">⚠️ Edge case: in a sustained market downtrend it weakens (2023/2025 were poor). Don&apos;t average down.</div>
           </div>
         </div>
       </div>

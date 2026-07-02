@@ -155,7 +155,8 @@ export default function PatternScope({ apiUrl, onRowClick, onLearn }: PatternSco
     () => [...setups].sort((a, b) => b.edge - a.edge).slice(0, 3),
     [setups],
   );
-  const confluenceCount = rows.filter((r) => r.confluence).length;
+  // Only reversal confluence counts — it's the one with a validated net edge.
+  const confluenceCount = rows.filter((r) => r.confluence === 'reversal').length;
 
   const TabBtn = ({ id, label, count, cls }: { id: Tab; label: string; count: number; cls?: string }) => (
     <button
@@ -199,7 +200,7 @@ export default function PatternScope({ apiUrl, onRowClick, onLearn }: PatternSco
             <span className="text-gray-300">
               {setups.length} actionable setup{setups.length === 1 ? '' : 's'}
               {confluenceCount > 0 && (
-                <> · <span className="text-sky-300">{confluenceCount} agree with the quant engine 🚀</span></>
+                <> · <span className="text-emerald-300">{confluenceCount} with quant REVERSAL confluence 🚀</span></>
               )}
               {warnings.length > 0 && (
                 <> · <span className="text-red-300">{warnings.length} to avoid/exit ⚠</span></>
@@ -283,15 +284,25 @@ export default function PatternScope({ apiUrl, onRowClick, onLearn }: PatternSco
                       {r.grade}
                     </span>
                   </td>
-                  <td className="py-2 pr-3 whitespace-nowrap">
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${vm.cls}`}>{r.verdict}</span>
+                  <td className="py-2 pr-3">
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold whitespace-nowrap ${vm.cls}`}>{r.verdict}</span>
+                    {r.verdict_reason && (
+                      <div className="text-[10px] text-gray-500 mt-0.5 max-w-[220px] truncate" title={r.verdict_reason}>
+                        {r.verdict_reason}
+                      </div>
+                    )}
                   </td>
                   <td className="py-2 pr-3 font-bold text-cyan-300 whitespace-nowrap">
                     <span className="inline-flex items-center gap-1.5">
                       {r.ticker}
-                      {r.confluence && (
-                        <span title={`Quant ${r.confluence} signal also fires here — strongest agreement`} className="text-[9px] bg-sky-600 text-white px-1 py-0.5 rounded font-bold">
-                          🚀
+                      {r.confluence === 'reversal' && (
+                        <span title="Quant REVERSAL signal also fires here — the one confluence with a validated net edge (+5.1%/trade, 65% win)" className="text-[9px] bg-emerald-600 text-white px-1 py-0.5 rounded font-bold">
+                          🚀 REV
+                        </span>
+                      )}
+                      {r.confluence === 'breakout' && (
+                        <span title="Quant breakout also fires here — informational only (breakout nets ~+0.3%/trade after costs, no edge boost applied)" className="text-[9px] bg-gray-600 text-gray-200 px-1 py-0.5 rounded font-bold">
+                          BRK
                         </span>
                       )}
                       {r.has_dcb && <ShieldAlert className="w-3.5 h-3.5 text-red-400" />}

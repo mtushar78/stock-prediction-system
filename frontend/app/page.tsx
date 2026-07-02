@@ -23,6 +23,7 @@ import ReversalTracker from './components/ReversalTracker';
 import QualityScreen from './components/QualityScreen';
 import PortfolioDetailModal from './components/PortfolioDetailModal';
 import PurchaseHistoryModal from './components/PurchaseHistoryModal';
+import RealizedPnl from './components/RealizedPnl';
 import PriceHistoryModal from './components/PriceHistoryModal';
 import { Signal, PortfolioItem, Alert, SystemStatus, PurchaseHistory, EntryGuidance } from './types';
 
@@ -37,6 +38,8 @@ export default function Dashboard() {
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [marketHealth, setMarketHealth] = useState<MarketHealth | null>(null);
+  // ticker → Graham quality score (0–6); badges quality names in the Reversals list
+  const [qualityMap, setQualityMap] = useState<Record<string, number>>({});
 
   // Historical replay ("time machine") state
   const [tradingDates, setTradingDates] = useState<string[]>([]);
@@ -147,6 +150,14 @@ export default function Dashboard() {
       .then((res) => setTradingDates(res.data || []))
       .catch(() => { /* non-fatal */ });
     refreshAnalyzedDates();
+    // Fundamental quality scores (0–6) for the reversal-list quality badge.
+    axios.get<{ stocks: Array<{ ticker: string; passed: number }> }>(`${API_URL}/api/quality-screen`)
+      .then((res) => {
+        const map: Record<string, number> = {};
+        for (const s of res.data?.stocks || []) map[s.ticker] = s.passed;
+        setQualityMap(map);
+      })
+      .catch(() => { /* non-fatal */ });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -262,13 +273,30 @@ export default function Dashboard() {
     }
   };
 
-  // Handle Remove Position
+  // Handle Sell / Remove Position — records the sale + realized P&L server-side
   const handleRemovePosition = async (ticker: string) => {
-    if (!confirm(`Remove ${ticker} from portfolio?`)) return;
-    
+    const item = portfolio.find((p) => p.ticker === ticker);
+    const suggested = item?.current_price ? String(item.current_price) : '';
+    const input = prompt(
+      `Sell ${ticker} — enter your actual sell price (tk).\n` +
+      `The sale is journaled with realized P&L so your track record survives.`,
+      suggested,
+    );
+    if (input === null) return; // cancelled
+    const sellPrice = parseFloat(input);
+    if (Number.isNaN(sellPrice) || sellPrice <= 0) {
+      alert('❌ Sell price must be a number greater than 0.');
+      return;
+    }
+
     try {
-      await axios.delete(`${API_URL}/api/trade/${ticker}`);
-      alert(`✅ ${ticker} removed from portfolio`);
+      const res = await axios.delete(`${API_URL}/api/trade/${ticker}`, {
+        params: { sell_price: sellPrice },
+      });
+      const sale = res.data?.sale;
+      alert(sale
+        ? `✅ Sold ${ticker} @ ${sale.sell_price} — realized ${sale.realized_pnl >= 0 ? '+' : ''}${sale.realized_pnl} tk (${sale.realized_pct >= 0 ? '+' : ''}${sale.realized_pct}%)`
+        : `✅ ${ticker} removed from portfolio`);
       fetchData();
     } catch (err: unknown) {
       const maybeAxiosError = err as { response?: { data?: { detail?: string } }; message?: string };
@@ -337,6 +365,7 @@ export default function Dashboard() {
             loading={loading || histLoading}
             marketHealthy={!!marketHealth?.healthy}
             marketBreadth={marketHealth?.breadth_pct ?? null}
+            qualityMap={qualityMap}
             onVolumeClick={(signal) => setVolumeModalSignal(signal)}
             onInfoClick={(signal) => setActiveModal(signals.indexOf(signal))}
             onBreakoutInfoClick={(signal) => setBreakoutModalSignal(signal)}
@@ -393,8 +422,10 @@ export default function Dashboard() {
           />
           
           <SystemInfoBox />
-          
+
           {portfolio.length > 0 && <PortfolioSummary portfolio={portfolio} />}
+
+          <RealizedPnl apiUrl={API_URL} refreshKey={portfolio.length} />
         </div>
       </div>
 

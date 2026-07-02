@@ -294,17 +294,64 @@ class PortfolioManager:
         finally:
             conn.close()
     
-    def remove_position(self, user_id: int, ticker: str):
+    def remove_position(self, user_id: int, ticker: str,
+                        sell_price: Optional[float] = None,
+                        notes: str = "") -> Optional[Dict]:
         """
-        Remove a position from portfolio (after selling)
+        Remove a position from portfolio (after selling), journaling the sale
+        into sale_history with realized P&L so the track record survives.
 
         Args:
             user_id: Owner of the position
             ticker: Stock ticker to remove
+            sell_price: Actual sell price. Falls back to the latest close.
+            notes: Optional sell note (e.g. exit reason)
+
+        Returns:
+            Dict with realized P&L details, or None if no position existed.
         """
+        COMMISSION_RATE = 0.004  # 0.40%, same as the buy side
         conn = self.get_db_connection()
         cursor = conn.cursor()
+        result = None
         try:
+            cursor.execute(
+                "SELECT buy_price, quantity, total_cost, commission_paid, purchase_date "
+                "FROM portfolio WHERE user_id = %s AND ticker = %s",
+                (user_id, ticker),
+            )
+            row = cursor.fetchone()
+            if row:
+                buy_price, quantity = float(row[0]), int(row[1])
+                total_cost = float(row[2]) if row[2] else buy_price * quantity * (1 + COMMISSION_RATE)
+                purchase_date = row[4]
+                if sell_price is None:
+                    cursor.execute(
+                        "SELECT close FROM stock_data WHERE ticker = %s AND close > 0 "
+                        "AND is_final = 1 ORDER BY date DESC LIMIT 1",
+                        (ticker,),
+                    )
+                    px = cursor.fetchone()
+                    sell_price = float(px[0]) if px else buy_price
+                gross = float(sell_price) * quantity
+                commission = gross * COMMISSION_RATE
+                proceeds = gross - commission
+                realized = proceeds - total_cost
+                sale_date = datetime.now().strftime('%Y-%m-%d')
+                cursor.execute("""
+                    INSERT INTO sale_history (user_id, ticker, sell_price, quantity, commission,
+                        proceeds, cost_basis, realized_pnl, buy_price, purchase_date, sale_date, notes)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (user_id, ticker, float(sell_price), quantity, round(commission, 2),
+                      round(proceeds, 2), round(total_cost, 2), round(realized, 2),
+                      buy_price, purchase_date, sale_date, notes))
+                result = {
+                    'ticker': ticker, 'sell_price': float(sell_price), 'quantity': quantity,
+                    'proceeds': round(proceeds, 2), 'cost_basis': round(total_cost, 2),
+                    'realized_pnl': round(realized, 2),
+                    'realized_pct': round(realized / total_cost * 100, 2) if total_cost else None,
+                    'sale_date': sale_date,
+                }
             cursor.execute(
                 "DELETE FROM portfolio WHERE user_id = %s AND ticker = %s",
                 (user_id, ticker),
@@ -316,7 +363,9 @@ class PortfolioManager:
         finally:
             conn.close()
 
-        logger.info(f"Removed {ticker} from portfolio")
+        logger.info(f"Removed {ticker} from portfolio"
+                    + (f" — realized {result['realized_pnl']:+.2f} tk" if result else ""))
+        return result
     
     def get_portfolio(self, user_id: int) -> pd.DataFrame:
         """

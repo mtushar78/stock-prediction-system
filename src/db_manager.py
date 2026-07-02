@@ -349,6 +349,29 @@ class DatabaseManager:
                 "CREATE INDEX IF NOT EXISTS idx_purchase_history_ticker "
                 "ON purchase_history(ticker)"
             )
+            # Realized-P&L journal: every sell is recorded here (portfolio rows
+            # are deleted on exit, so without this the track record vanishes).
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS sale_history (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    ticker TEXT NOT NULL,
+                    sell_price DOUBLE PRECISION NOT NULL,
+                    quantity INTEGER NOT NULL,
+                    commission DOUBLE PRECISION NOT NULL,
+                    proceeds DOUBLE PRECISION NOT NULL,
+                    cost_basis DOUBLE PRECISION NOT NULL,
+                    realized_pnl DOUBLE PRECISION NOT NULL,
+                    buy_price DOUBLE PRECISION,
+                    purchase_date TEXT,
+                    sale_date TEXT NOT NULL,
+                    notes TEXT
+                )
+            """)
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sale_history_user "
+                "ON sale_history(user_id)"
+            )
 
             # Chart-analysis output — a second, INDEPENDENT scoring engine.
             # Each row = one ticker's classical candlestick-pattern verdict for

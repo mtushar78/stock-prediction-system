@@ -9,6 +9,8 @@ interface SignalsTableProps {
   loading: boolean;
   marketHealthy?: boolean;
   marketBreadth?: number | null;
+  /** ticker → 6-step Graham quality score (0–6), from /api/quality-screen */
+  qualityMap?: Record<string, number>;
   onVolumeClick: (signal: Signal) => void;
   onInfoClick: (signal: Signal) => void;
   onBreakoutInfoClick: (signal: Signal) => void;
@@ -84,6 +86,7 @@ export default function SignalsTable({
   loading,
   marketHealthy,
   marketBreadth,
+  qualityMap,
   onVolumeClick,
   onInfoClick,
   onBreakoutInfoClick,
@@ -93,7 +96,10 @@ export default function SignalsTable({
   activeTicker,
 }: SignalsTableProps) {
   const [legacy, setLegacy] = useState(false);
-  const [list, setList] = useState<'BREAKOUT' | 'REVERSAL' | 'OVERHEATED' | 'MOVERS'>('BREAKOUT');
+  // REVERSAL is the default list: it is the one signal with a strong edge net
+  // of commission (+5.1%/trade, 65% win vs breakout's +0.3%) — see
+  // docs/PROFITABILITY_AUDIT.md.
+  const [list, setList] = useState<'BREAKOUT' | 'REVERSAL' | 'OVERHEATED' | 'MOVERS'>('REVERSAL');
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState<ViewTab>('ALL');
   const [sortKey, setSortKey] = useState<SortKey>('Score');
@@ -188,19 +194,19 @@ export default function SignalsTable({
       {/* ---- LIST SWITCH: Breakouts (momentum) | Reversals (mean-reversion) ---- */}
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
         <div className="flex items-center gap-2 flex-wrap">
-          <button onClick={() => setList('BREAKOUT')}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg font-bold text-sm transition-colors border ${
-              list === 'BREAKOUT' ? 'bg-sky-900/40 text-sky-200 border-sky-600' : 'bg-gray-900/40 text-gray-400 border-gray-700 hover:text-gray-200'}`}
-            title="Momentum — buy strength breaking to new highs">
-            <Rocket className="w-4 h-4" /> Breakouts
-            <span className={`text-xs rounded-full px-2 py-0.5 font-bold ${list === 'BREAKOUT' ? 'bg-sky-800 text-sky-100' : 'bg-gray-800 text-gray-400'}`}>{breakouts.length}</span>
-          </button>
           <button onClick={() => setList('REVERSAL')}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-lg font-bold text-sm transition-colors border ${
               list === 'REVERSAL' ? 'bg-amber-900/40 text-amber-200 border-amber-600' : 'bg-gray-900/40 text-gray-400 border-gray-700 hover:text-gray-200'}`}
-            title="Mean-reversion — buy a confirmed bottom with room to run">
+            title="Mean-reversion — buy a confirmed bottom with room to run. The strongest measured edge: +5.1%/trade net of commission, 65% win.">
             <TrendingDown className="w-4 h-4" /> Reversals
             <span className={`text-xs rounded-full px-2 py-0.5 font-bold ${list === 'REVERSAL' ? 'bg-amber-800 text-amber-100' : 'bg-gray-800 text-gray-400'}`}>{reversals.length}</span>
+          </button>
+          <button onClick={() => setList('BREAKOUT')}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg font-bold text-sm transition-colors border ${
+              list === 'BREAKOUT' ? 'bg-sky-900/40 text-sky-200 border-sky-600' : 'bg-gray-900/40 text-gray-400 border-gray-700 hover:text-gray-200'}`}
+            title="Momentum watchlist — nets only ~+0.3%/trade after commission. Watch, don't chase.">
+            <Rocket className="w-4 h-4" /> Breakouts
+            <span className={`text-xs rounded-full px-2 py-0.5 font-bold ${list === 'BREAKOUT' ? 'bg-sky-800 text-sky-100' : 'bg-gray-800 text-gray-400'}`}>{breakouts.length}</span>
           </button>
           <button onClick={() => setList('OVERHEATED')}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-lg font-bold text-sm transition-colors border ${
@@ -228,14 +234,17 @@ export default function SignalsTable({
 
       {list === 'BREAKOUT' && (
         <p className="text-xs text-gray-500 mb-3">
-          Momentum signal with a proven, regime-robust edge — ranked best-first by <b className="text-gray-400">quality grade (A–D)</b>.
-          Grade A historically wins ~54% vs ~42% for D. Click <Info className="inline w-3 h-3" /> on any row for the breakdown.
+          <b className="text-amber-300">⚠ Watchlist, not a buy list.</b> Net of the 0.8% round-trip commission this signal
+          historically earns only <b className="text-amber-300">~+0.3%/trade (41% win)</b> — ৳33 on a ৳10,000 position — and buys at the
+          20-day high by construction. Edge improves when market breadth ≥ 55% (+0.9% net). Ranked by quality grade (A–D);
+          even Grade A nets just ~+0.7%. The Reversals list is where the real edge is.
         </p>
       )}
       {list === 'REVERSAL' && (
         <p className="text-xs text-gray-500 mb-3">
           Mean-reversion signal — buy a <b className="text-gray-400">confirmed bottom</b> (deeply oversold, first green day, room to run).
-          Ranked by quality grade. Backtest: Grade A wins ~<b className="text-amber-300/80">82%</b> (+10.5%/10d) vs ~58% for D; overall ~68% win.
+          The strongest measured edge: <b className="text-amber-300/80">+5.1%/trade net of commission, 65% win</b> (+10d, n=525, 2019–26);
+          DEEP VALUE subset +6.4% net, 68%. Grade A won ~82% gross in the study vs ~58% for D.
         </p>
       )}
       {list === 'OVERHEATED' && (
@@ -255,14 +264,15 @@ export default function SignalsTable({
 
       {showLegend && list === 'BREAKOUT' && (
         <div className="mb-3 bg-gray-900 border border-sky-800/50 rounded p-3 text-xs text-gray-300 space-y-1.5">
-          <div><span className="text-sky-300 font-bold">🚀 BREAKOUT</span> fires only when a stock (1) breaks its 20-day high, (2) isn&apos;t already extended (&lt;12%/20d), (3) trades above its 200-day average, (4) has real volume (RVOL ≥ 1.5×), and (5) is liquid. In a 2019–2026 backtest it beat the market every year.</div>
+          <div><span className="text-sky-300 font-bold">🚀 BREAKOUT</span> fires only when a stock (1) breaks its 20-day high, (2) isn&apos;t already extended (&lt;12%/20d), (3) trades above its 200-day average, (4) has real volume (RVOL ≥ 1.5×), and (5) is liquid.</div>
+          <div className="text-amber-300/80">⚠ Honest numbers (2019–2026, net of 0.8% commission): <b>+0.33%/trade, 41% win</b>, negative in 4 of 8 years. It beat the raw market average gross, but the edge is too thin to survive costs — DSE rarely rewards buying strength. Treat as a watchlist; buying the same names later as <b>Reversals</b> paid ~15× more per trade.</div>
           <div className="text-gray-500">It&apos;s normal to see <b>0</b> on quiet days — that just means nothing is breaking out. Don&apos;t force a trade.</div>
         </div>
       )}
       {showLegend && list === 'REVERSAL' && (
         <div className="mb-3 bg-gray-900 border border-amber-800/50 rounded p-3 text-xs text-gray-300 space-y-1.5">
           <div><span className="text-amber-300 font-bold">📉 REVERSAL</span> fires when a stock is (1) deeply oversold (RSI &lt; 30), (2) prints its first green day (the turn), (3) on real volume (RVOL ≥ 1.5×), (4) sits ≥ 15% below its 120-day high (room to run), and (5) is liquid. The buy-low edge in a mean-reverting market.</div>
-          <div className="text-amber-300/70">⚠️ Edge case: in a sustained market downtrend, oversold can get more oversold (2023 &amp; 2025 backtest were weak). Honor the −7% stop; don&apos;t average down.</div>
+          <div className="text-amber-300/70">⚠️ Edge case: in a sustained market downtrend, oversold can get more oversold (2023 &amp; 2025 backtest were weak). Exit plan: <b>−10% stop</b> (wider than breakouts — the entry is a falling knife by design), +25% target, or time out after ~20 trading days; don&apos;t average down.</div>
           <div className="text-gray-500">Empty on calm days — reversals cluster around selloffs.</div>
         </div>
       )}
@@ -285,7 +295,7 @@ export default function SignalsTable({
         <table className="text-left text-sm min-w-[640px] w-full">
           <thead>
             <tr className="text-gray-500 text-xs border-b border-gray-700">
-              <th className="pb-3 pr-3" title="Quality grade A–D. Higher = historically better odds (A ~54% win vs D ~42%). From market regime + base tightness + low volatility + non-extreme volume.">GRADE</th>
+              <th className="pb-3 pr-3" title="Quality grade A–D, driven mainly by market breadth (the only factor with real predictive weight). Net of commission even Grade A earns only ~+0.7%/trade (48% win) vs ~0% for D.">GRADE</th>
               <th className="pb-3 pr-4">TICKER</th>
               <th className="pb-3 pr-4">PRICE</th>
               <th className="pb-3 pr-4">TREND</th>
@@ -370,6 +380,12 @@ export default function SignalsTable({
                     {sig.ReversalChecks?.deep_value && (
                       <span className="text-[9px] bg-emerald-600 text-white px-1 py-0.5 rounded font-bold"
                         title="DEEP VALUE — near its 1-year low with big room to its lifetime high. Historically wins ~70% vs ~63% for a regular reversal.">DEEP VALUE</span>
+                    )}
+                    {(qualityMap?.[sig.Ticker] ?? 0) >= 4 && (
+                      <span className="text-[9px] bg-teal-700 text-teal-100 px-1 py-0.5 rounded font-bold"
+                        title={`Fundamental quality ${qualityMap![sig.Ticker]}/6 on the Graham screen — a falling knife with sound fundamentals (the Lynch setup: quality on sale)`}>
+                        Q{qualityMap![sig.Ticker]}/6
+                      </span>
                     )}
                     {!!sig.IsFreshReversal && (
                       <span className="text-[9px] bg-amber-600 text-white px-1 py-0.5 rounded font-bold" title="First day this reversal fired">FRESH</span>
@@ -538,8 +554,9 @@ export default function SignalsTable({
 
         {legacy && (
           <div className="mt-3">
-            <div className="mb-2 text-[11px] text-amber-300/70 bg-amber-900/10 border border-amber-800/40 rounded px-2 py-1">
-              ⚠️ These signals were inversely related to forward returns in backtest. Shown for reference only — trade the breakouts above.
+            <div className="mb-2 text-[11px] text-red-300/80 bg-red-900/10 border border-red-800/40 rounded px-2 py-1">
+              🚫 Do NOT trade these. Backtest: <b>−1.2%/trade, 20% win</b> — the score is inversely related to forward returns.
+              Shown for reference only; the Reversals list above is the one with a real edge.
             </div>
             <div className="flex gap-1 text-xs flex-wrap mb-3">
               <button onClick={() => setTab('ALL')} className={`px-3 py-1 rounded ${tab === 'ALL' ? 'bg-emerald-700 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>ALL ({signals.length})</button>

@@ -42,7 +42,7 @@ export default function BreakoutDetailModal({ signal, breadth, onClose }: Props)
               <span className={`inline-flex items-center justify-center w-8 h-7 rounded font-bold ${gradeColor(q.grade)}`}>{q.grade}</span>
               <span className="text-sm font-bold text-gray-200">Quality grade — {q.score}/100</span>
               <span className="text-xs text-gray-500">
-                {q.grade === 'A' ? '(~54% win historically)' : q.grade === 'D' ? '(~42% win)' : '(mid-tier)'}
+                {q.grade === 'A' ? '(~+0.7%/trade net of costs, 48% win)' : q.grade === 'D' ? '(~0% net — skip)' : '(mid-tier)'}
               </span>
             </div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
@@ -54,7 +54,8 @@ export default function BreakoutDetailModal({ signal, breadth, onClose }: Props)
               ))}
             </div>
             <div className="text-[11px] text-gray-500 mt-2">
-              Higher grade = historically better odds (not a guarantee). Drivers: market regime, tighter base, calmer volatility, non-extreme volume.
+              Higher grade = historically better odds (not a guarantee). Market breadth is the only factor with real
+              predictive weight; base/ATR are shown for information only.
             </div>
           </div>
 
@@ -64,11 +65,12 @@ export default function BreakoutDetailModal({ signal, breadth, onClose }: Props)
 
           <BreakoutCriteria checks={signal.BreakoutChecks} fallbackPrice={signal.Price} />
 
-          <div className="mt-4 text-xs text-sky-200/80 bg-sky-900/20 border border-sky-800/50 rounded-lg p-3">
-            <b className="text-sky-300">Why trust this:</b> in a 2019–2026 walk-forward backtest, this
-            breakout rule was the only entry signal with a positive edge in <b>every year</b>
-            (+1.1%/trade, 42% win) — while the legacy Score/Early signals were inversely related to
-            forward returns. This is the list to act on.
+          <div className="mt-4 text-xs text-amber-200/80 bg-amber-900/20 border border-amber-800/50 rounded-lg p-3">
+            <b className="text-amber-300">Honest expectation (2019–2026 backtest, net of the 0.8% round-trip
+            commission):</b> +0.33%/trade, 41% win — about ৳33 on a ৳10,000 position, and negative in 4 of 8
+            years. This entry buys at the 20-day high by construction, which DSE rarely rewards. Treat it as a
+            <b> watchlist</b>: the same stocks pay ~15× more per trade when bought later as <b>Reversals</b>
+            (+5.1% net, 65% win). If you do trade it, require market breadth ≥ 55% and Grade A.
           </div>
         </div>
       </div>

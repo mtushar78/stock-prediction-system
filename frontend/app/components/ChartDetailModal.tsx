@@ -121,6 +121,13 @@ export default function ChartDetailModal({ apiUrl, ticker, onClose }: ChartDetai
   );
   const summary = signal?.chart_pattern_summary ?? null;
 
+  // Bars with missing OHLC are dropped before rendering — surface that instead
+  // of silently drawing a shorter chart (pattern geometry can look misaligned).
+  const droppedBars = useMemo(
+    () => ohlcv.filter((b) => b.open === null || b.high === null || b.low === null || b.close === null).length,
+    [ohlcv],
+  );
+
   // Fetch signal + OHLCV in parallel. 300 bars so multi-month patterns fit.
   useEffect(() => {
     let cancelled = false;
@@ -413,6 +420,14 @@ export default function ChartDetailModal({ apiUrl, ticker, onClose }: ChartDetai
             </div>
           )}
 
+          {!loading && droppedBars > 0 && (
+            <div className="bg-amber-900/30 border border-amber-700/50 text-amber-200/90 rounded p-2 text-xs flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              {droppedBars} bar{droppedBars === 1 ? '' : 's'} with missing price data were omitted from this
+              chart — pattern lines/targets touching those dates may look incomplete.
+            </div>
+          )}
+
           {/* Dead-cat-bounce warning banner */}
           {summary?.has_dead_cat_bounce && (
             <div className="bg-red-950/70 border border-red-600 text-red-100 rounded p-3 flex items-start gap-2">
@@ -430,6 +445,36 @@ export default function ChartDetailModal({ apiUrl, ticker, onClose }: ChartDetai
             <div className="bg-gray-800 border border-purple-800/40 rounded p-3 text-sm text-gray-200 flex items-start gap-2">
               <Info className="w-4 h-4 mt-0.5 text-purple-300 shrink-0" />
               <span>{summary.headline}</span>
+            </div>
+          )}
+
+          {/* Wyckoff structure context — annotation only, never a buy call */}
+          {signal?.wyckoff?.in_structure && (
+            <div className="bg-gray-800 border border-teal-800/50 rounded p-3 text-xs">
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="text-teal-300 font-bold text-sm">Wyckoff structure</span>
+                <span className="text-gray-500">accumulation trading range</span>
+                {signal.wyckoff.event && (
+                  <span className="text-[10px] bg-teal-800 text-teal-100 px-1.5 py-0.5 rounded font-bold"
+                    title="Event detected on the latest bar — context only, not a buy signal">
+                    {signal.wyckoff.event.replace('_', ' ')}
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1 text-gray-300">
+                <div><span className="text-gray-500">Support </span>{signal.wyckoff.checks.support ?? '–'}</div>
+                <div><span className="text-gray-500">Resistance (creek) </span>{signal.wyckoff.checks.resistance ?? '–'}</div>
+                <div><span className="text-gray-500">Range height </span>{signal.wyckoff.checks.range_height_pct != null ? `${signal.wyckoff.checks.range_height_pct}%` : '–'}</div>
+                <div><span className="text-gray-500">Decline into range </span>{signal.wyckoff.checks.decline_into_range_pct != null ? `${signal.wyckoff.checks.decline_into_range_pct}%` : '–'}</div>
+                {signal.wyckoff.checks.spring_low != null && (
+                  <>
+                    <div><span className="text-gray-500">Spring low </span>{signal.wyckoff.checks.spring_low}</div>
+                    <div><span className="text-gray-500">Spring volume </span>{signal.wyckoff.checks.spring_rvol != null ? `${signal.wyckoff.checks.spring_rvol}×` : '–'}
+                      {signal.wyckoff.checks.spring_type ? ` (type #${signal.wyckoff.checks.spring_type})` : ''}</div>
+                  </>
+                )}
+              </div>
+              <div className="text-[10px] text-gray-500 mt-1.5">{signal.wyckoff.note}</div>
             </div>
           )}
 

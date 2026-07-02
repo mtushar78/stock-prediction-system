@@ -527,6 +527,30 @@ export interface ChartSignal {
   // v14: Bulkowski chart patterns
   chart_patterns?: DetectedChartPattern[];
   chart_pattern_summary?: ChartPatternSummary | null;
+  // v15: Wyckoff structure context (annotation only — never a buy trigger)
+  wyckoff?: WyckoffContext | null;
+}
+
+/** Wyckoff structure context — annotation only, never a buy trigger
+ *  (2019–26 DSE backtest: these entries showed no net edge; see
+ *  docs/PROFITABILITY_AUDIT.md §7). */
+export interface WyckoffContext {
+  event: 'SPRING' | 'SPRING_TEST' | 'BUEC' | null;
+  in_structure: boolean;
+  note: string;
+  checks: {
+    support?: number | null;
+    resistance?: number | null;
+    range_height_pct?: number | null;
+    decline_into_range_pct?: number | null;
+    spring_low?: number | null;
+    spring_depth_pct?: number | null;
+    spring_rvol?: number | null;
+    spring_type?: number | null;
+    stop?: number | null;
+    target?: number | null;
+    [k: string]: unknown;
+  };
 }
 
 export interface ChartOhlcvBar {

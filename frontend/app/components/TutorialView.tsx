@@ -11,7 +11,7 @@
 
 import { useMemo } from 'react';
 import { TUTORIALS, TUTORIAL_ORDER, Tutorial } from '../tutorials';
-import PatternSchematic from './PatternSchematic';
+import PatternCandleDiagram from './PatternCandleDiagram';
 import { BookOpen, Target, Search, Cpu, Ruler, TrendingUp, AlertTriangle, Quote, Lightbulb, ExternalLink } from 'lucide-react';
 
 const biasColor = (b: string) => (b === 'bullish' ? '#34d399' : b === 'bearish' ? '#f87171' : '#cbd5e1');
@@ -97,7 +97,7 @@ export default function TutorialView({
         </div>
 
         <div className="grid md:grid-cols-2 gap-4 items-start">
-          <PatternSchematic schematic={t.schematic} />
+          <PatternCandleDiagram schematic={t.schematic} />
           {/* Bulkowski stats */}
           <div>
             <div className="text-xs font-bold text-purple-300 uppercase tracking-wide mb-1.5 flex items-center gap-1.5">

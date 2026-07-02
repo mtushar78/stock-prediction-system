@@ -84,3 +84,20 @@ $RECYCLE.BIN/
 *.temp
 temp/
 tmp/
+
+# Local helpers with credentials — never commit
+_ssh_*.py
+
+# Local artifacts: audit screenshots, browser traces, scratch notes, study dumps
+.playwright-mcp/
+/*.png
+snap.md
+wyckoff_fires.csv
+pattern_pit_rows.csv
+
+# Reference books (copyrighted) + extracted text — keep local only
+docs/*.pdf
+docs/_encyc.txt
+docs/_encyc_toc.txt
+docs/_lynch.txt
+docs/_wyckoff.txt

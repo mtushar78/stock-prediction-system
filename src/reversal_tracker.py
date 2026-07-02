@@ -2,7 +2,7 @@
 
 Logs every reversal the moment it fires (entry price + the checks) and, on every
 analysis cycle, recomputes each signal's REAL forward outcome from price history
-under a fixed ruleset (-7% stop / +25% target / 40-trading-day expiry). No
+under a fixed ruleset (-10% stop / +25% target / 20-trading-day expiry). No
 backtest assumptions — this is the prospective record that answers "does the
 reversal signal actually work in live trading?"
 
@@ -15,9 +15,13 @@ from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
-STOP_PCT = -7.0      # hard stop
+# Exit ruleset tuned for reversals (docs/PROFITABILITY_AUDIT.md §6-M5): the
+# breakout-style -7% stop shook out recoveries (live sample: 2 of 5 stopped at
+# -7% then rallied double digits) and cost ~1.3%/trade in backtest. Reversals
+# enter falling knives — give the turn room and cap the wait instead.
+STOP_PCT = -10.0     # hard stop (wider — the entry is a bottom-fish by design)
 TARGET_PCT = 25.0    # take-profit target
-EXPIRE_DAYS = 40     # trading days to give the move
+EXPIRE_DAYS = 20     # trading days to give the move (edge is realized by +10..+20d)
 
 DDL = """
 CREATE TABLE IF NOT EXISTS reversal_tracker (
@@ -165,11 +169,11 @@ def update_outcomes(engine, get_stock_data):
             for j in range(days):
                 ret = (float(closes[j]) - entry) / entry * 100
                 if ret <= STOP_PCT:
-                    status, exit_date, exit_ret, exit_reason = 'STOPPED', dates[j], ret, '-7% stop'; break
+                    status, exit_date, exit_ret, exit_reason = 'STOPPED', dates[j], ret, f'{STOP_PCT:.0f}% stop'; break
                 if ret >= TARGET_PCT:
-                    status, exit_date, exit_ret, exit_reason = 'TARGET', dates[j], ret, '+25% target'; break
+                    status, exit_date, exit_ret, exit_reason = 'TARGET', dates[j], ret, f'+{TARGET_PCT:.0f}% target'; break
                 if j + 1 >= EXPIRE_DAYS:
-                    status, exit_date, exit_ret, exit_reason = 'EXPIRED', dates[j], ret, '40d expiry'; break
+                    status, exit_date, exit_ret, exit_reason = 'EXPIRED', dates[j], ret, f'{EXPIRE_DAYS}d expiry'; break
 
             with engine.begin() as c:  # per-row commit so one bad row can't roll back all
                 c.execute(text(

@@ -666,8 +666,15 @@ def get_sniper_signals():
                 where += " OR overheated_signal = 1"   # v11 take-profit warning
             if has_momentum:
                 where += " OR momentum_signal = 1"      # v13 cheap movers
+            # Rank by measured net-of-cost edge, not the legacy score: reversal
+            # (+5.1%/trade net) first, breakout (+0.3% net) second, legacy
+            # BUY/EARLY (negative edge) last (docs/PROFITABILITY_AUDIT.md §6-M2).
+            order = "ORDER BY signal_strength DESC"
+            if has_reversal and has_breakout:
+                order = ("ORDER BY reversal_signal DESC, breakout_signal DESC, "
+                         "signal_strength DESC")
             df = pd.read_sql_query(
-                text(f"SELECT * FROM signals_today {where} ORDER BY signal_strength DESC"),
+                text(f"SELECT * FROM signals_today {where} {order}"),
                 db.engine,
             )
         else:
@@ -1099,13 +1106,19 @@ def get_chart_pattern_signals():
             edge = int(r['edge']) if ('edge' in r and r['edge'] is not None) else 0
             grade = r['grade'] if 'grade' in r else None
             verdict = r['verdict'] if 'verdict' in r else None
-            # A confirmed pattern that agrees with the quant engine gets a real
-            # bump and, if it was only a WATCH, is promoted to a BUY SETUP.
-            if confluence:
+            # Only REVERSAL confluence earns a bump: the quant reversal is the
+            # one signal with a strong net-of-cost edge (+5.1%/trade, 65% win),
+            # while the quant breakout nets ~+0.3% — agreeing with it proves
+            # nothing (docs/PROFITABILITY_AUDIT.md §3.2, §6-M7). Breakout
+            # confluence is still reported for information, unboosted.
+            verdict_reason = r['verdict_reason'] if 'verdict_reason' in r else None
+            if confluence == 'reversal':
                 edge = min(100, edge + 12)
                 grade = 'A' if edge >= 75 else 'B' if edge >= 60 else 'C' if edge >= 45 else 'D' if edge >= 30 else 'F'
                 if verdict == 'WATCH':
                     verdict = 'BUY SETUP'
+                    verdict_reason = ('Bullish pattern + the quant REVERSAL signal fired on the same stock — '
+                                      'the one combination with a validated net edge (+5.1%/trade, 65% win).')
             out.append({
                 'ticker': tk,
                 'analysis_date': r['analysis_date'],
@@ -1116,7 +1129,7 @@ def get_chart_pattern_signals():
                 'edge': edge,
                 'grade': grade,
                 'verdict': verdict,
-                'verdict_reason': r['verdict_reason'] if 'verdict_reason' in r else None,
+                'verdict_reason': verdict_reason,
                 'room_pct': _f(r['room_pct']) if 'room_pct' in r else None,
                 'confluence': confluence,
                 'top_code': r['top_code'],
@@ -1175,6 +1188,27 @@ def get_chart_signal_detail(ticker: str):
         except Exception as _pe:
             logger.warning(f"pattern engine failed for {ticker_u}: {_pe}")
 
+        # Wyckoff structure CONTEXT (annotation only — validated 2019-26:
+        # these entries have no net edge on DSE, so this never says "buy";
+        # it describes the accumulation structure. PROFITABILITY_AUDIT §7.)
+        wyckoff = None
+        try:
+            from src.wyckoff_analyzer import detect_wyckoff_long
+            if hist is not None and not hist.empty:
+                w = detect_wyckoff_long(hist)
+                if w['checks'].get('support') is not None or w['event']:
+                    wyckoff = {
+                        'event': w['event'],
+                        'in_structure': w['checks'].get('support') is not None,
+                        'checks': w['checks'],
+                        'note': ('Structure context only — a 2019–2026 DSE backtest of '
+                                 'these Wyckoff entries showed no positive edge net of '
+                                 'costs. Use the range/spring info as context, not as a '
+                                 'buy trigger.'),
+                    }
+        except Exception as _we:
+            logger.warning(f"wyckoff context failed for {ticker_u}: {_we}")
+
         db.close()
 
         if not sig:
@@ -1186,6 +1220,7 @@ def get_chart_signal_detail(ticker: str):
                     'confidence': 'NONE', 'pattern_count': 0, 'price': None,
                     'patterns': [], 'context': {}, 'explanation': '',
                     'chart_patterns': chart_patterns, 'chart_pattern_summary': chart_summary,
+                    'wyckoff': wyckoff,
                 }
             raise HTTPException(
                 status_code=404,
@@ -1193,6 +1228,7 @@ def get_chart_signal_detail(ticker: str):
             )
         sig['chart_patterns'] = chart_patterns
         sig['chart_pattern_summary'] = chart_summary
+        sig['wyckoff'] = wyckoff
         return sig
     except HTTPException:
         raise
@@ -1673,19 +1709,51 @@ def get_price_history(ticker: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/trade/{ticker}")
-def remove_trade(ticker: str, user_id: int = Depends(auth.current_user_id)):
-    """Remove a position from portfolio"""
+def remove_trade(ticker: str, sell_price: Optional[float] = None, notes: str = "",
+                 user_id: int = Depends(auth.current_user_id)):
+    """Sell/remove a position — journals the sale + realized P&L in sale_history.
+
+    sell_price is the actual fill; if omitted the latest final close is used.
+    """
     try:
         pm = PortfolioManager()
-        pm.remove_position(user_id, ticker.upper())
-        
+        sale = pm.remove_position(user_id, ticker.upper(), sell_price=sell_price, notes=notes)
+
         return {
             "success": True,
-            "message": f"Removed {ticker.upper()} from portfolio"
+            "message": f"Removed {ticker.upper()} from portfolio",
+            "sale": sale,
         }
-    
+
     except Exception as e:
         logger.error(f"Error removing trade: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/sale-history")
+def get_sale_history(user_id: int = Depends(auth.current_user_id)):
+    """Realized-P&L journal: every recorded sell + aggregate stats."""
+    try:
+        db = DatabaseManager()
+        from sqlalchemy import text as _text
+        df = pd.read_sql_query(
+            _text("SELECT ticker, sell_price, quantity, commission, proceeds, cost_basis, "
+                  "realized_pnl, buy_price, purchase_date, sale_date, notes "
+                  "FROM sale_history WHERE user_id = :u ORDER BY sale_date DESC, id DESC"),
+            db.engine, params={"u": user_id})
+        db.close()
+        sales = df.where(pd.notna(df), None).to_dict(orient='records')
+        total = float(df['realized_pnl'].sum()) if len(df) else 0.0
+        wins = int((df['realized_pnl'] > 0).sum()) if len(df) else 0
+        return {
+            "sales": sales,
+            "total_realized_pnl": round(total, 2),
+            "trades": len(sales),
+            "wins": wins,
+            "win_rate_pct": round(100.0 * wins / len(sales), 1) if sales else None,
+        }
+    except Exception as e:
+        logger.error(f"Error getting sale history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/alerts")

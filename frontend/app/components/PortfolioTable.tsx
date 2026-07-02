@@ -132,11 +132,12 @@ export default function PortfolioTable({
                   </div>
                 </td>
                 <td className="py-3">
-                  <button 
+                  <button
                     onClick={() => onRemove(item.ticker)}
                     className="text-red-400 hover:text-red-300 text-xs underline"
+                    title="Sell this position — the sale is journaled with realized P&L"
                   >
-                    Remove
+                    Sell
                   </button>
                 </td>
               </tr>

@@ -386,7 +386,14 @@ def _make(df: pd.DataFrame, code: str, name: str, category: str, bias: str,
         if room is None or room < 2:
             verdict, vreason = 'PLAYED OUT', 'Breakout already ran to its target — the easy money is gone.'
         elif edge >= 62 and (age is None or age <= 10):
-            verdict, vreason = 'BUY SETUP', f'Fresh confirmed breakout, ~{room:.0f}% room to target, grade {grade}.'
+            # DSE calibration (docs/PROFITABILITY_AUDIT.md §4.2): point-in-time
+            # 2023-26, bullish pattern confirmations returned -3.0% gross / 25%
+            # win at +20d — Bulkowski's US bull-market stats don't transfer.
+            # So a fresh confirmation is a WATCH, never a standalone buy; it
+            # only becomes a BUY SETUP with quant-reversal confluence (main.py).
+            verdict, vreason = 'WATCH', (f'Fresh confirmed breakout, ~{room:.0f}% room to target — but bullish pattern '
+                                         'confirmations alone have shown no positive edge on DSE net of costs. '
+                                         'Buy only with reversal-signal confluence.')
         else:
             verdict, vreason = 'WATCH', (f'Confirmed but {"getting old" if (age and age > 10) else "middling edge"} — ~{room:.0f}% room left.')
     else:
