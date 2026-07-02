@@ -1,6 +1,9 @@
+'use client';
+
 import Link from 'next/link';
-import { TrendingUp, RefreshCw, Activity } from 'lucide-react';
+import { TrendingUp, RefreshCw, Activity, LogOut } from 'lucide-react';
 import { SystemStatus } from '../types';
+import { useAuth } from './AuthProvider';
 
 interface HeaderProps {
   systemStatus: SystemStatus | null;
@@ -9,6 +12,7 @@ interface HeaderProps {
 }
 
 export default function Header({ systemStatus, loading, onRefresh }: HeaderProps) {
+  const { user, logout } = useAuth();
   return (
     <header className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center border-b border-gray-700 pb-4 gap-4">
       <div>
@@ -58,6 +62,20 @@ export default function Header({ systemStatus, loading, onRefresh }: HeaderProps
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           Refresh
         </button>
+        {user && (
+          <div className="flex items-center gap-2 bg-gray-800 px-3 py-1.5 rounded border border-gray-700">
+            <span className="text-gray-300 text-xs hidden sm:inline" title={user.email}>
+              {user.email}
+            </span>
+            <button
+              onClick={logout}
+              title="Sign out"
+              className="text-red-400 hover:text-red-300 flex items-center gap-1 text-sm"
+            >
+              <LogOut className="w-4 h-4" /> Logout
+            </button>
+          </div>
+        )}
       </div>
     </header>
   );

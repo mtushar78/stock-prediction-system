@@ -41,19 +41,22 @@ class PortfolioManager:
         try:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS portfolio (
-                    ticker TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    ticker TEXT NOT NULL,
                     buy_price DOUBLE PRECISION NOT NULL,
                     quantity INTEGER NOT NULL,
                     highest_seen DOUBLE PRECISION NOT NULL,
                     purchase_date TEXT NOT NULL,
                     notes TEXT,
                     total_cost DOUBLE PRECISION DEFAULT 0,
-                    commission_paid DOUBLE PRECISION DEFAULT 0
+                    commission_paid DOUBLE PRECISION DEFAULT 0,
+                    PRIMARY KEY (user_id, ticker)
                 )
             """)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS purchase_history (
                     id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
                     ticker TEXT NOT NULL,
                     buy_price DOUBLE PRECISION NOT NULL,
                     quantity INTEGER NOT NULL,
@@ -72,12 +75,13 @@ class PortfolioManager:
         finally:
             conn.close()
     
-    def add_trade(self, ticker: str, buy_price: float, quantity: int, 
+    def add_trade(self, user_id: int, ticker: str, buy_price: float, quantity: int,
                   date: Optional[str] = None, notes: str = "", budget: Optional[float] = None) -> Dict:
         """
         Add a new trade to portfolio with commission calculation
-        
+
         Args:
+            user_id: Owner of the position
             ticker: Stock ticker
             buy_price: Purchase price
             quantity: Number of shares
@@ -102,17 +106,21 @@ class PortfolioManager:
 
         try:
             # Check if position exists
-            cursor.execute("SELECT * FROM portfolio WHERE ticker = %s", (ticker,))
+            cursor.execute(
+                "SELECT * FROM portfolio WHERE user_id = %s AND ticker = %s",
+                (user_id, ticker),
+            )
             existing = cursor.fetchone()
 
             if existing:
                 # Update existing position - calculate new average price.
-                # Column order matches CREATE TABLE: ticker, buy_price, quantity,
-                # highest_seen, purchase_date, notes, total_cost, commission_paid.
-                old_qty = existing[2]
-                old_avg_price = existing[1]
-                old_total_cost = existing[6] if len(existing) > 6 and existing[6] is not None else (old_qty * old_avg_price)
-                old_commission = existing[7] if len(existing) > 7 and existing[7] is not None else 0
+                # Column order matches CREATE TABLE: user_id, ticker, buy_price,
+                # quantity, highest_seen, purchase_date, notes, total_cost,
+                # commission_paid.
+                old_qty = existing[3]
+                old_avg_price = existing[2]
+                old_total_cost = existing[7] if len(existing) > 7 and existing[7] is not None else (old_qty * old_avg_price)
+                old_commission = existing[8] if len(existing) > 8 and existing[8] is not None else 0
 
                 new_qty = old_qty + quantity
                 new_total_cost = old_total_cost + total_cost
@@ -125,24 +133,24 @@ class PortfolioManager:
                 cursor.execute("""
                     UPDATE portfolio
                     SET quantity = %s, buy_price = %s, total_cost = %s, commission_paid = %s, purchase_date = %s
-                    WHERE ticker = %s
-                """, (new_qty, new_avg_price, new_total_cost, new_commission_total, date, ticker))
+                    WHERE user_id = %s AND ticker = %s
+                """, (new_qty, new_avg_price, new_total_cost, new_commission_total, date, user_id, ticker))
 
                 logger.info(f"✅ Updated {ticker}: Added {quantity} shares @ {buy_price} BDT. New avg: {new_avg_price:.2f}, Total qty: {new_qty}, Purchase date reset to {date}")
             else:
                 # Insert new position
                 cursor.execute("""
-                    INSERT INTO portfolio (ticker, buy_price, quantity, highest_seen, purchase_date, notes, total_cost, commission_paid)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                """, (ticker, buy_price, quantity, buy_price, date, notes, total_cost, commission))
+                    INSERT INTO portfolio (user_id, ticker, buy_price, quantity, highest_seen, purchase_date, notes, total_cost, commission_paid)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (user_id, ticker, buy_price, quantity, buy_price, date, notes, total_cost, commission))
 
                 logger.info(f"✅ Added {ticker}: {quantity} shares @ {buy_price} BDT on {date}")
 
             # Record in purchase history
             cursor.execute("""
-                INSERT INTO purchase_history (ticker, buy_price, quantity, commission, total_cost, purchase_date, notes)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """, (ticker, buy_price, quantity, commission, total_cost, date, notes))
+                INSERT INTO purchase_history (user_id, ticker, buy_price, quantity, commission, total_cost, purchase_date, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (user_id, ticker, buy_price, quantity, commission, total_cost, date, notes))
 
             conn.commit()
             
@@ -225,35 +233,38 @@ class PortfolioManager:
             'signal_strength': signal_strength
         }
     
-    def get_purchase_history(self, ticker: Optional[str] = None) -> pd.DataFrame:
+    def get_purchase_history(self, user_id: int, ticker: Optional[str] = None) -> pd.DataFrame:
         """
-        Get purchase history for a ticker or all tickers
-        
+        Get purchase history for a ticker or all tickers (scoped to a user)
+
         Args:
+            user_id: Owner of the history
             ticker: Optional ticker to filter by
-            
+
         Returns:
             DataFrame with purchase history
         """
         from sqlalchemy import text
         if ticker:
             df = pd.read_sql_query(
-                text("SELECT * FROM purchase_history WHERE ticker = :ticker ORDER BY purchase_date DESC"),
+                text("SELECT * FROM purchase_history WHERE user_id = :user_id AND ticker = :ticker ORDER BY purchase_date DESC"),
                 self._db.engine,
-                params={"ticker": ticker},
+                params={"user_id": user_id, "ticker": ticker},
             )
         else:
             df = pd.read_sql_query(
-                text("SELECT * FROM purchase_history ORDER BY purchase_date DESC"),
+                text("SELECT * FROM purchase_history WHERE user_id = :user_id ORDER BY purchase_date DESC"),
                 self._db.engine,
+                params={"user_id": user_id},
             )
         return df
     
-    def update_position(self, ticker: str, quantity: int, avg_price: Optional[float] = None):
+    def update_position(self, user_id: int, ticker: str, quantity: int, avg_price: Optional[float] = None):
         """
         Update an existing position (e.g., adding more shares)
-        
+
         Args:
+            user_id: Owner of the position
             ticker: Stock ticker
             quantity: New total quantity
             avg_price: New average price (optional)
@@ -266,14 +277,14 @@ class PortfolioManager:
                 cursor.execute("""
                     UPDATE portfolio
                     SET quantity = %s, buy_price = %s
-                    WHERE ticker = %s
-                """, (quantity, avg_price, ticker))
+                    WHERE user_id = %s AND ticker = %s
+                """, (quantity, avg_price, user_id, ticker))
             else:
                 cursor.execute("""
                     UPDATE portfolio
                     SET quantity = %s
-                    WHERE ticker = %s
-                """, (quantity, ticker))
+                    WHERE user_id = %s AND ticker = %s
+                """, (quantity, user_id, ticker))
 
             conn.commit()
             logger.info(f"Updated {ticker}: {quantity} shares")
@@ -283,17 +294,21 @@ class PortfolioManager:
         finally:
             conn.close()
     
-    def remove_position(self, ticker: str):
+    def remove_position(self, user_id: int, ticker: str):
         """
         Remove a position from portfolio (after selling)
-        
+
         Args:
+            user_id: Owner of the position
             ticker: Stock ticker to remove
         """
         conn = self.get_db_connection()
         cursor = conn.cursor()
         try:
-            cursor.execute("DELETE FROM portfolio WHERE ticker = %s", (ticker,))
+            cursor.execute(
+                "DELETE FROM portfolio WHERE user_id = %s AND ticker = %s",
+                (user_id, ticker),
+            )
             conn.commit()
         except Exception:
             conn.rollback()
@@ -303,17 +318,18 @@ class PortfolioManager:
 
         logger.info(f"Removed {ticker} from portfolio")
     
-    def get_portfolio(self) -> pd.DataFrame:
+    def get_portfolio(self, user_id: int) -> pd.DataFrame:
         """
-        Get current portfolio
+        Get current portfolio for a user
 
         Returns:
             DataFrame with portfolio positions
         """
         from sqlalchemy import text
         return pd.read_sql_query(
-            text("SELECT * FROM portfolio ORDER BY ticker"),
+            text("SELECT * FROM portfolio WHERE user_id = :user_id ORDER BY ticker"),
             self._db.engine,
+            params={"user_id": user_id},
         )
     
     def calculate_atr(self, df: pd.DataFrame, period: int = 14) -> float:
@@ -397,21 +413,26 @@ class PortfolioManager:
         # Return latest RSI value
         return rsi.iloc[-1] if not pd.isna(rsi.iloc[-1]) else 50.0
     
-    def check_sell_signals(self, verbose: bool = True) -> List[Dict]:
+    def check_sell_signals(self, user_id: int, verbose: bool = True) -> List[Dict]:
         """
         Run daily check for sell signals (The Harvest Module core logic)
-        
+
         Args:
+            user_id: Owner whose positions to scan
             verbose: Print detailed output
-            
+
         Returns:
             List of dictionaries with sell signals
         """
         from sqlalchemy import text
         conn = self.get_db_connection()
 
-        # Load portfolio
-        portfolio = pd.read_sql_query(text("SELECT * FROM portfolio"), self._db.engine)
+        # Load portfolio (scoped to the user)
+        portfolio = pd.read_sql_query(
+            text("SELECT * FROM portfolio WHERE user_id = :user_id"),
+            self._db.engine,
+            params={"user_id": user_id},
+        )
 
         if portfolio.empty:
             conn.close()
@@ -481,8 +502,8 @@ class PortfolioManager:
                 cursor = conn.cursor()
                 try:
                     cursor.execute(
-                        "UPDATE portfolio SET highest_seen = %s WHERE ticker = %s",
-                        (new_highest, ticker)
+                        "UPDATE portfolio SET highest_seen = %s WHERE user_id = %s AND ticker = %s",
+                        (new_highest, user_id, ticker)
                     )
                     conn.commit()
                 except Exception:
@@ -611,15 +632,19 @@ class PortfolioManager:
         
         return sell_signals
     
-    def get_portfolio_summary(self) -> Dict:
+    def get_portfolio_summary(self, user_id: int) -> Dict:
         """
-        Get portfolio summary statistics
+        Get portfolio summary statistics for a user
 
         Returns:
             Dictionary with portfolio stats
         """
         from sqlalchemy import text
-        portfolio = pd.read_sql_query(text("SELECT * FROM portfolio"), self._db.engine)
+        portfolio = pd.read_sql_query(
+            text("SELECT * FROM portfolio WHERE user_id = :user_id"),
+            self._db.engine,
+            params={"user_id": user_id},
+        )
 
         if portfolio.empty:
             return {
@@ -673,19 +698,20 @@ def main():
     parser.add_argument('--price', type=float, help='Buy price')
     parser.add_argument('--quantity', type=int, help='Number of shares')
     parser.add_argument('--date', help='Purchase date (YYYY-MM-DD)')
-    
+    parser.add_argument('--user-id', type=int, default=1, help='Owner user id (default: 1)')
+
     args = parser.parse_args()
-    
+
     pm = PortfolioManager()
-    
+
     if args.action == 'add':
         if not all([args.ticker, args.price, args.quantity]):
             print("Error: --ticker, --price, and --quantity required for 'add'")
             return
-        pm.add_trade(args.ticker, args.price, args.quantity, args.date)
-    
+        pm.add_trade(args.user_id, args.ticker, args.price, args.quantity, args.date)
+
     elif args.action == 'check':
-        signals = pm.check_sell_signals(verbose=True)
+        signals = pm.check_sell_signals(args.user_id, verbose=True)
         if signals:
             print("\n🚨 URGENT ACTIONS REQUIRED:")
             for signal in signals:
@@ -693,7 +719,7 @@ def main():
                 print(f"  {signal['reason']}")
     
     elif args.action == 'list':
-        portfolio = pm.get_portfolio()
+        portfolio = pm.get_portfolio(args.user_id)
         if portfolio.empty:
             print("Portfolio is empty")
         else:
@@ -704,10 +730,10 @@ def main():
         if not args.ticker:
             print("Error: --ticker required for 'remove'")
             return
-        pm.remove_position(args.ticker)
-    
+        pm.remove_position(args.user_id, args.ticker)
+
     elif args.action == 'summary':
-        stats = pm.get_portfolio_summary()
+        stats = pm.get_portfolio_summary(args.user_id)
         print("\nPortfolio Summary:")
         print(f"  Total Positions: {stats['total_positions']}")
         print(f"  Total Invested: {stats['total_invested']:,.2f} BDT")

@@ -3,7 +3,7 @@ DSE Sniper API - FastAPI Backend
 Professional full-stack architecture for stock analysis and portfolio management
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 from typing import List, Optional, Dict
@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 from src.db_manager import DatabaseManager
+from src import auth
 from src.analyzer import StockAnalyzer
 from src.chart_analyzer import ChartAnalyzer
 from src.portfolio_manager import PortfolioManager
@@ -517,12 +518,17 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown()
     logger.info("✅ Scheduler stopped")
 
-# Create FastAPI app
+# Create FastAPI app.
+# The global `authenticate` dependency protects EVERY route by default — it
+# only lets through CORS preflight and the login endpoint (see src/auth.py).
+# This fail-closed design means new routes are authenticated unless explicitly
+# added to auth._PUBLIC_PATHS.
 app = FastAPI(
     title="DSE Sniper API",
     description="Algorithmic Volume Analysis System for Dhaka Stock Exchange",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    dependencies=[Depends(auth.authenticate)],
 )
 
 # Configure CORS
@@ -537,6 +543,34 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Authentication routes
+# ---------------------------------------------------------------------------
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/api/auth/login")
+def login(body: LoginRequest):
+    """Exchange email + password for a JWT bearer token. (Public route.)"""
+    user = auth.authenticate_user(body.email, body.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    token = auth.create_access_token(user)
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": {"id": user["id"], "email": user["email"]},
+    }
+
+
+@app.get("/api/auth/me")
+def read_me(user: dict = Depends(auth.current_user)):
+    """Return the currently authenticated user."""
+    return {"id": user["id"], "email": user["email"]}
+
 
 # Routes
 
@@ -1284,11 +1318,11 @@ def get_score_history(ticker: str, days: int = 20):
 
 
 @app.get("/api/portfolio")
-def get_portfolio():
+def get_portfolio(user_id: int = Depends(auth.current_user_id)):
     """Get current portfolio holdings with live P/L and Level 2 sell logic details"""
     try:
         pm = PortfolioManager()
-        portfolio_df = pm.get_portfolio()
+        portfolio_df = pm.get_portfolio(user_id)
         
         if portfolio_df.empty:
             return []
@@ -1442,12 +1476,13 @@ def get_portfolio():
         return []
 
 @app.post("/api/trade")
-def add_trade(trade: Trade):
+def add_trade(trade: Trade, user_id: int = Depends(auth.current_user_id)):
     """Add a new trade to portfolio with commission calculation"""
     try:
         pm = PortfolioManager()
-        
+
         result = pm.add_trade(
+            user_id=user_id,
             ticker=trade.ticker.upper(),
             buy_price=trade.buy_price,
             quantity=trade.quantity,
@@ -1557,11 +1592,11 @@ def get_entry_guidance(ticker: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/purchase-history/{ticker}")
-def get_purchase_history(ticker: str):
+def get_purchase_history(ticker: str, user_id: int = Depends(auth.current_user_id)):
     """Get purchase history for a specific ticker"""
     try:
         pm = PortfolioManager()
-        history_df = pm.get_purchase_history(ticker.upper())
+        history_df = pm.get_purchase_history(user_id, ticker.upper())
         
         if history_df.empty:
             return []
@@ -1638,11 +1673,11 @@ def get_price_history(ticker: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/trade/{ticker}")
-def remove_trade(ticker: str):
+def remove_trade(ticker: str, user_id: int = Depends(auth.current_user_id)):
     """Remove a position from portfolio"""
     try:
         pm = PortfolioManager()
-        pm.remove_position(ticker.upper())
+        pm.remove_position(user_id, ticker.upper())
         
         return {
             "success": True,
@@ -1654,11 +1689,11 @@ def remove_trade(ticker: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/alerts")
-def get_alerts():
+def get_alerts(user_id: int = Depends(auth.current_user_id)):
     """Get SELL signals (Stop Loss / Take Profit / Climax)"""
     try:
         pm = PortfolioManager()
-        signals = pm.check_sell_signals(verbose=False)
+        signals = pm.check_sell_signals(user_id, verbose=False)
         
         # Format for frontend
         alerts = []
@@ -1682,11 +1717,11 @@ def get_alerts():
         return []
 
 @app.get("/api/portfolio/summary")
-def get_portfolio_summary():
+def get_portfolio_summary(user_id: int = Depends(auth.current_user_id)):
     """Get portfolio summary statistics"""
     try:
         pm = PortfolioManager()
-        stats = pm.get_portfolio_summary()
+        stats = pm.get_portfolio_summary(user_id)
         return stats
     
     except Exception as e:

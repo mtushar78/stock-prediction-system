@@ -309,21 +309,33 @@ class DatabaseManager:
                     except Exception:
                         pass
 
+            # Users (multi-user auth). Credentials are bcrypt-hashed; see src/auth.py.
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS portfolio (
-                    ticker TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    ticker TEXT NOT NULL,
                     buy_price DOUBLE PRECISION NOT NULL,
                     quantity INTEGER NOT NULL,
                     highest_seen DOUBLE PRECISION NOT NULL,
                     purchase_date TEXT NOT NULL,
                     notes TEXT,
                     total_cost DOUBLE PRECISION DEFAULT 0,
-                    commission_paid DOUBLE PRECISION DEFAULT 0
+                    commission_paid DOUBLE PRECISION DEFAULT 0,
+                    PRIMARY KEY (user_id, ticker)
                 )
             """)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS purchase_history (
                     id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
                     ticker TEXT NOT NULL,
                     buy_price DOUBLE PRECISION NOT NULL,
                     quantity INTEGER NOT NULL,

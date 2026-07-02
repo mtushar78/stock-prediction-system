@@ -20,7 +20,7 @@ def main():
     print(" 🏥 PORTFOLIO HEALTH CHECK - v4 ENHANCED RULES")
     print("="*90)
     
-    holdings = portfolio.get_portfolio()
+    holdings = portfolio.get_portfolio(user_id=1)  # owner account (see backend/migrate_auth.py)
     
     if holdings.empty:
         print("\n✅ No current holdings found in database.")
