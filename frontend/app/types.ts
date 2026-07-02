@@ -451,6 +451,8 @@ export interface DetectedChartPattern {
   category: 'reversal' | 'continuation' | 'event' | string;
   bias: 'bullish' | 'bearish' | 'neutral' | string;
   status: 'confirmed' | 'forming' | string;
+  /** DSE-measured outcome of buying this pattern's confirmation (+20d, net). */
+  dse_stats?: { net_20d: number; win_pct: number; n: number } | null;
   start_date: string;
   end_date: string;
   breakout_date: string | null;
@@ -488,6 +490,12 @@ export interface ChartPatternScanRow {
   verdict_reason: string | null;
   room_pct: number | null;
   confluence: 'breakout' | 'reversal' | null;
+  /** Late-stage / untradeable warnings from live quant state (overbought,
+   *  already ran, stretched, climax volume, thin) — the decliner anatomy. */
+  risk_tags?: string[];
+  /** DSE-measured reality for this pattern (+20d net of costs, 2023-26
+   *  point-in-time validation) — vs the US book stats. */
+  dse_stats?: { net_20d: number; win_pct: number; n: number } | null;
   top_code: string;
   top_name: string;
   status: 'confirmed' | 'forming' | string;

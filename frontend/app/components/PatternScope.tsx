@@ -307,6 +307,16 @@ export default function PatternScope({ apiUrl, onRowClick, onLearn }: PatternSco
                       )}
                       {r.has_dcb && <ShieldAlert className="w-3.5 h-3.5 text-red-400" />}
                     </span>
+                    {(r.risk_tags?.length ?? 0) > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1 max-w-[240px]"
+                        title="Live-state warnings — this is how tops look the day before they fall (see the decliner study). A rising chart + big target does NOT override these.">
+                        {r.risk_tags!.map((t) => (
+                          <span key={t} className="text-[9px] bg-red-900/50 text-red-300 border border-red-800/60 px-1 py-0.5 rounded font-bold whitespace-nowrap">
+                            ⚠ {t}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </td>
                   <td className="py-2 pr-3 whitespace-nowrap text-gray-200">{r.price?.toFixed(1) ?? '-'}</td>
                   <td className="py-2 pr-3 whitespace-nowrap text-gray-100">
@@ -349,6 +359,12 @@ export default function PatternScope({ apiUrl, onRowClick, onLearn }: PatternSco
                       </span>
                     ) : (
                       <span className="text-gray-600">—</span>
+                    )}
+                    {r.bias === 'bullish' && r.dse_stats && (
+                      <div className={`text-[10px] mt-0.5 font-bold ${r.dse_stats.net_20d > 0 ? 'text-emerald-400/80' : 'text-red-400/90'}`}
+                        title={`What buying this pattern's confirmation ACTUALLY returned on DSE (point-in-time 2023–26, +20 trading days, net of 0.8% commission, n=${r.dse_stats.n}). The target above is the US book's projection — this is the local reality.`}>
+                        DSE reality: {r.dse_stats.net_20d > 0 ? '+' : ''}{r.dse_stats.net_20d}% net · {r.dse_stats.win_pct}% win
+                      </div>
                     )}
                   </td>
                 </tr>

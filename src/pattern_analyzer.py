@@ -111,6 +111,24 @@ STATS: Dict[str, Dict[str, Optional[float]]] = {
     'dead_cat_bounce':  {'avg_move': 18, 'fail': None, 'throwback': None, 'meet': None, 'rank': None},
 }
 
+# DSE-measured reality per bullish pattern — point-in-time validation 2023-26
+# (validate_patterns_pit.py, +20 trading days, NET of 0.8% round-trip costs).
+# Bulkowski's US numbers above describe identification; THESE numbers describe
+# what buying the confirmation actually returned on DSE. Only patterns with
+# enough samples are listed; shown next to book stats so users aren't misled.
+DSE_STATS: Dict[str, Dict[str, float]] = {
+    'double_bottom_ee':     {'net_20d': -0.9, 'win_pct': 40, 'n': 159},
+    'falling_wedge':        {'net_20d': -0.8, 'win_pct': 43, 'n': 113},
+    'triple_bottom':        {'net_20d': +1.7, 'win_pct': 38, 'n': 82},
+    'double_bottom_ae':     {'net_20d': -1.0, 'win_pct': 41, 'n': 54},
+    'pipe_bottom':          {'net_20d': -4.4, 'win_pct': 21, 'n': 53},
+    'double_bottom_ea':     {'net_20d': +2.2, 'win_pct': 51, 'n': 45},
+    'three_rising_valleys': {'net_20d': -2.3, 'win_pct': 36, 'n': 28},
+    'double_bottom_aa':     {'net_20d': -1.6, 'win_pct': 45, 'n': 22},
+    'hs_bottom':            {'net_20d': -4.1, 'win_pct': 24, 'n': 21},
+    'descending_triangle':  {'net_20d': -1.1, 'win_pct': 47, 'n': 17},
+}
+
 
 # --------------------------------------------------------------------------- #
 # OHLC sanity + zigzag pivot extraction
@@ -431,6 +449,7 @@ def _make(df: pd.DataFrame, code: str, name: str, category: str, bias: str,
             'meet_target_pct': st.get('meet'),
             'rank': st.get('rank'),
         },
+        'dse_stats': DSE_STATS.get(code),
         'plain': plain,
         'quality_notes': quality_notes,
         '_start_idx': start_idx,      # internal, stripped before serialization

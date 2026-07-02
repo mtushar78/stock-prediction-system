@@ -708,6 +708,17 @@ function ChartPatternCard({
         </div>
       </div>
 
+      {pattern.bias === 'bullish' && pattern.dse_stats && (
+        <div className={`text-[11px] rounded px-2 py-1 border font-bold ${
+          pattern.dse_stats.net_20d > 0
+            ? 'text-emerald-300 bg-emerald-950/30 border-emerald-900/40'
+            : 'text-red-300 bg-red-950/30 border-red-900/40'}`}>
+          DSE reality (not the US book): buying this confirmation returned{' '}
+          {pattern.dse_stats.net_20d > 0 ? '+' : ''}{pattern.dse_stats.net_20d}% net at +20 days,{' '}
+          {pattern.dse_stats.win_pct}% win rate (n={pattern.dse_stats.n}, 2023–26 point-in-time).
+        </div>
+      )}
+
       {pattern.quality_notes && pattern.quality_notes.length > 0 && (
         <ul className="text-[11px] text-amber-300/80 list-disc pl-4 space-y-0.5">
           {pattern.quality_notes.map((n, i) => (

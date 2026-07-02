@@ -1049,6 +1049,7 @@ def get_chart_pattern_signals():
         # reversal signals? When a chart pattern agrees with the engine that has
         # the only positive edge in every backtest, that's the strongest tell.
         breakout_tickers, reversal_tickers = set(), set()
+        risk_info = {}   # ticker -> live state for the DON'T-CHASE tags
         try:
             from sqlalchemy import text as _text
             cols = pd.read_sql_query(_text("SELECT * FROM signals_today LIMIT 1"), db.engine).columns.tolist()
@@ -1058,11 +1059,58 @@ def get_chart_pattern_signals():
             if 'reversal_signal' in cols:
                 rdf = pd.read_sql_query(_text("SELECT ticker FROM signals_today WHERE reversal_signal = 1"), db.engine)
                 reversal_tickers = set(rdf['ticker'].tolist())
+            # Live state so a "rising, big target" row can warn when the stock
+            # is actually LATE (overbought / extended / climax volume / thin) —
+            # the decliner-anatomy markers (docs/WINNER_ANATOMY.md part 2).
+            if 'overheated_checks' in cols:
+                sdf = pd.read_sql_query(
+                    _text("SELECT ticker, rvol, avg_volume_20, overheated_checks FROM signals_today"),
+                    db.engine)
+                import json as _j
+                for _, sr in sdf.iterrows():
+                    try:
+                        oc = _j.loads(sr['overheated_checks']) if sr['overheated_checks'] else {}
+                    except Exception:
+                        oc = {}
+                    risk_info[sr['ticker']] = {
+                        'rvol': sr.get('rvol'), 'av20': sr.get('avg_volume_20'),
+                        'rsi': oc.get('rsi'), 'ret20': oc.get('ret20'),
+                        'ext20': oc.get('ext20'), 'heat': oc.get('heat_score'),
+                    }
         except Exception as _ce:
             logger.debug(f"confluence lookup skipped: {_ce}")
         db.close()
+
+        def _risk_tags(tk, bias):
+            """Late-stage / untradeable warnings for a bullish pattern row."""
+            if bias != 'bullish':
+                return []
+            ri = risk_info.get(tk)
+            if ri is None:
+                return ['NO QUANT DATA — not tracked (too thin or invalid)'] if risk_info else []
+            tags = []
+            def _n(x):
+                try:
+                    v = float(x)
+                    return v if v == v else None
+                except (TypeError, ValueError):
+                    return None
+            av20, rsi = _n(ri['av20']), _n(ri['rsi'])
+            ret20, ext20, rvol = _n(ri['ret20']), _n(ri['ext20']), _n(ri['rvol'])
+            if av20 is not None and av20 < 50000:
+                tags.append(f'THIN {av20/1000:.0f}k shares/day — untradeable size')
+            if rsi is not None and rsi >= 65:
+                tags.append(f'OVERBOUGHT RSI {rsi:.0f}')
+            if ret20 is not None and ret20 >= 15:
+                tags.append(f'ALREADY RAN +{ret20:.0f}%/20d — you would be late')
+            if ext20 is not None and ext20 >= 12:
+                tags.append(f'STRETCHED +{ext20:.0f}% above 20-SMA')
+            if rvol is not None and rvol >= 3:
+                tags.append(f'CLIMAX VOLUME {rvol:.1f}x — how tops form')
+            return tags
         if df.empty:
             return []
+        from src.pattern_analyzer import DSE_STATS as _DSE_STATS
         import json as _json
         import math as _math
 
@@ -1132,6 +1180,8 @@ def get_chart_pattern_signals():
                 'verdict_reason': verdict_reason,
                 'room_pct': _f(r['room_pct']) if 'room_pct' in r else None,
                 'confluence': confluence,
+                'risk_tags': _risk_tags(tk, r['bias']),
+                'dse_stats': _DSE_STATS.get(r['top_code']),
                 'top_code': r['top_code'],
                 'top_name': r['top_name'],
                 'status': r['status'],

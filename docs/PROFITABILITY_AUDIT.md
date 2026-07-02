@@ -198,6 +198,14 @@ No book-faithful quality cut rescues it (absorption volume, slight-reach springs
 
 **The pattern across all three audits is now unambiguous:** quant breakouts (+0.33% net), Bulkowski bullish confirmations (−3.78% net), Wyckoff structural entries (−0.72% net) — every "buy strength/confirmation" style fails after costs on DSE, while buying deep capitulation (+5.13% net) works. The books describe markets correctly; DSE simply pays a different entry.
 
+### 7.1 Ignition (catch-the-rise-early) validation — also no edge
+
+`ignition_study.py` tested the WINNER_ANATOMY "catchable launch": a quiet coil (10-day range ≤10%, subdued prior volume, not extended) printing its first strong up-day on ≥2× volume — the pattern 36% of real winners showed at launch. Result: **best variant +0.11% net at +10d (41% win, n=1,978), negative in 4 of 8 years** — indistinguishable from zero across every anatomy-faithful cut (above-200-SMA, upper-half-of-range, quiet-volume, strong-trigger). The anatomy study's conclusion survives its own implementation: for every winner that ignites, dozens of identical igniters fizzle, and the difference is external news that isn't in the chart. **The earliest tradeable moment of a rise on DSE remains the reversal fire** (buying the capitulation turn — e.g. ALARABANK's fire day was the literal first day of its +31% run).
+
+### 7.2 In-list honesty layer (shipped)
+
+The pattern scanner rows now carry: (a) **risk tags** computed from live quant state — OVERBOUGHT / ALREADY RAN / STRETCHED / CLIMAX VOLUME / THIN — i.e. the decliner-anatomy markers, shown in red on the row so a "rising, big target" stock like ZEALBANGLA self-labels as late; and (b) **DSE reality** per bullish pattern (measured +20d net return and win rate from §4.2's validation, e.g. pipe bottom: −4.4% net, 21% win) displayed directly under the US-book target so the two are never confused.
+
 ## 8. Methodology & honesty notes
 
 - All backtests filter `close>0` (DSE non-trading stub rows), require 20d avg volume ≥ 50k and price ≥ 5, and compute features from prior bars only. Entries 2019-01 → 2026-04.
