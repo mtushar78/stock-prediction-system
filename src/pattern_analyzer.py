@@ -391,9 +391,9 @@ def _make(df: pd.DataFrame, code: str, name: str, category: str, bias: str,
             # win at +20d — Bulkowski's US bull-market stats don't transfer.
             # So a fresh confirmation is a WATCH, never a standalone buy; it
             # only becomes a BUY SETUP with quant-reversal confluence (main.py).
-            verdict, vreason = 'WATCH', (f'Fresh confirmed breakout, ~{room:.0f}% room to target — but bullish pattern '
-                                         'confirmations alone have shown no positive edge on DSE net of costs. '
-                                         'Buy only with reversal-signal confluence.')
+            verdict, vreason = 'WATCH', (f'Fresh confirmed breakout, ~{room:.0f}% room to target. Bullish patterns alone '
+                                         'have no buy edge on DSE net of costs — this upgrades to BUY SETUP only on a '
+                                         'day the quant Reversal signal ALSO fires on this stock (🚀 REV badge).')
         else:
             verdict, vreason = 'WATCH', (f'Confirmed but {"getting old" if (age and age > 10) else "middling edge"} — ~{room:.0f}% room left.')
     else:
