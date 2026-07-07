@@ -1000,6 +1000,178 @@ def get_quality_screen():
         db.close()
 
 
+# ====================================================================== #
+# LONG-TERM INVESTING — "Dividend Fortress" list
+#
+# Thesis (docs/LONG_TERM_STRATEGY.md): in a manipulated, mean-reverting
+# market, a long unbroken CASH-dividend record is the strongest honesty
+# signal available — sponsors can paint prices, but a cash dividend costs
+# them real taka every year. The list ranks liquid, dividend-paying
+# companies by reliability, yield, growth and balance-sheet quality.
+# NOT a trading signal — a buy-and-hold shortlist refreshed weekly with
+# the fundamentals scrape (dividend_history table).
+# ====================================================================== #
+
+def _compute_long_term_list():
+    from sqlalchemy import text as _t
+    import math as _m
+    db = DatabaseManager()
+    try:
+        fund = pd.read_sql_query(_t("SELECT * FROM fundamentals"), db.engine)
+        divs = pd.read_sql_query(
+            _t("SELECT ticker, year, cash_pct, stock_pct FROM dividend_history ORDER BY ticker, year"),
+            db.engine)
+        # latest close + 20d avg volume per ticker (one 40-day window scan)
+        mx = pd.read_sql_query(_t("SELECT MAX(date) m FROM stock_data"), db.engine)
+        maxd = str(mx['m'].iloc[0])[:10]
+        dts = pd.read_sql_query(
+            _t("SELECT DISTINCT date FROM stock_data WHERE date <= :d ORDER BY date DESC LIMIT 25"),
+            db.engine, params={"d": maxd})
+        start = str(dts['date'].min())[:10]
+        px = pd.read_sql_query(
+            _t("SELECT ticker, date, close, volume FROM stock_data "
+               "WHERE date BETWEEN :s AND :e AND close > 0"),
+            db.engine, params={"s": start, "e": maxd})
+    finally:
+        db.close()
+
+    latest = px.sort_values('date').groupby('ticker').agg(
+        close=('close', 'last'), avg_vol20=('volume', 'mean')).reset_index()
+    div_by_tk = {tk: g.set_index('year') for tk, g in divs.groupby('ticker')}
+    cur_year = int(maxd[:4])
+
+    def _n(x):
+        try:
+            v = float(x)
+            return v if (v == v and not _m.isinf(v)) else None
+        except (TypeError, ValueError):
+            return None
+
+    rows = []
+    for _, f in fund.merge(latest, on='ticker', how='inner').iterrows():
+        tk = f['ticker']
+        g = div_by_tk.get(tk)
+        if g is None or len(g) == 0:
+            continue
+        price, av20 = _n(f['close']), _n(f['avg_vol20'])
+        face = _n(f.get('face_value'))
+        eps, pe, nav = _n(f.get('eps')), _n(f.get('pe_ratio')), _n(f.get('nav'))
+        roe, de, sp = _n(f.get('roe')), _n(f.get('debt_to_equity')), _n(f.get('sponsor_pct'))
+        cat = (f.get('market_category') or '').strip().upper()
+        mcap = _n(f.get('market_cap'))
+
+        cash = {int(y): _n(r['cash_pct']) or 0.0 for y, r in g.iterrows()}
+        years = sorted(cash)
+        last_div_year = max((y for y in years if cash[y] > 0), default=None)
+
+        # --- HARD GATES (must pass to appear at all) ---
+        if price is None or face is None or face <= 0 or price <= 0:
+            continue
+        if cat == 'Z':
+            continue                          # junk category
+        if last_div_year is None or last_div_year < cur_year - 1:
+            continue                          # must have paid recently
+        # last-5-declared-years reliability window (uses the years DSE reports)
+        win5 = [y for y in range(cur_year - 5, cur_year)]
+        paid5 = sum(1 for y in win5 if cash.get(y, 0) > 0)
+        if paid5 < 3:
+            continue                          # too unreliable for "long-term"
+        if eps is None or eps <= 0:
+            continue                          # loss-makers don't compound
+        if av20 is None or av20 < 10000:
+            continue                          # must be sellable
+
+        # streak of consecutive payout years ending at the last paid year
+        streak = 0
+        y = last_div_year
+        while cash.get(y, 0) > 0:
+            streak += 1
+            y -= 1
+
+        latest_cash = cash[last_div_year]
+        latest_stock = _n(g.loc[last_div_year, 'stock_pct']) if last_div_year in g.index else None
+        dps = latest_cash / 100.0 * face                 # taka per share
+        yield_pct = dps / price * 100.0
+        payout_pct = (dps / eps * 100.0) if eps and eps > 0 else None
+        cash_5ago = cash.get(cur_year - 5, None)
+        div_growth = ((latest_cash / cash_5ago - 1) * 100.0
+                      if cash_5ago and cash_5ago > 0 else None)
+        p_nav = (price / nav) if nav and nav > 0 else None
+
+        # --- SCORE (0-100) ---
+        parts = {}
+        parts['reliability'] = (25 if paid5 == 5 else 15 if paid5 == 4 else 5)
+        parts['streak'] = 15 if streak >= 10 else 10 if streak >= 7 else 5 if streak >= 5 else 0
+        parts['yield'] = (20 if yield_pct >= 8 else 16 if yield_pct >= 6 else
+                          10 if yield_pct >= 4 else 5 if yield_pct >= 2.5 else 0)
+        parts['growth'] = (10 if div_growth is not None and div_growth >= 25 else
+                           6 if div_growth is not None and div_growth >= 0 else 0)
+        parts['earnings'] = ((5)
+                             + (8 if payout_pct is not None and payout_pct <= 80 else
+                                4 if payout_pct is not None and payout_pct <= 100 else 0)
+                             + (7 if roe is not None and roe >= 12 else
+                                4 if roe is not None and roe >= 8 else 0))
+        parts['balance'] = ((4 if de is not None and de < 50 else 0)
+                            + (3 if sp is not None and sp >= 30 else 0)
+                            + (3 if cat == 'A' else 0))
+        score = sum(parts.values())
+        grade = 'A' if score >= 75 else 'B' if score >= 60 else 'C' if score >= 45 else 'D'
+
+        hist5 = [{'year': y, 'cash': cash.get(y) if cash.get(y, 0) > 0 else None,
+                  'stock': _n(g.loc[y, 'stock_pct']) if y in g.index else None}
+                 for y in range(cur_year - 5, cur_year + 1)]
+
+        rows.append({
+            'ticker': tk, 'sector': f.get('sector'), 'category': cat or None,
+            'price': round(price, 2), 'face_value': face,
+            'latest_div_year': last_div_year,
+            'latest_cash_pct': latest_cash, 'latest_stock_pct': latest_stock,
+            'dps': round(dps, 2), 'yield_pct': round(yield_pct, 2),
+            'paid_5y': paid5, 'streak_years': streak,
+            'div_growth_5y_pct': round(div_growth, 1) if div_growth is not None else None,
+            'payout_pct': round(payout_pct, 1) if payout_pct is not None else None,
+            'eps': eps, 'pe': pe, 'nav': nav,
+            'p_nav': round(p_nav, 2) if p_nav is not None else None,
+            'roe': roe, 'debt_to_equity': de, 'sponsor_pct': sp,
+            'market_cap_cr': round(mcap / 10, 0) if mcap else None,   # mn -> Cr
+            'avg_vol20': int(av20),
+            'history_5y': hist5, 'total_div_years': len([y for y in years if cash[y] > 0]),
+            'score': score, 'grade': grade, 'score_parts': parts,
+        })
+
+    rows.sort(key=lambda r: (-r['score'], -r['yield_pct']))
+    return {'as_of': maxd, 'universe': int(len(fund)), 'qualified': len(rows), 'stocks': rows}
+
+
+@app.get("/api/long-term")
+def get_long_term():
+    """Dividend-fortress long-term investing list (see docs/LONG_TERM_STRATEGY.md)."""
+    try:
+        return _compute_long_term_list()
+    except Exception as e:
+        logger.error(f"long-term list failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/long-term/{ticker}/dividends")
+def get_dividend_history(ticker: str):
+    """Full per-year dividend history for one ticker (modal drill-down)."""
+    from sqlalchemy import text as _t
+    db = DatabaseManager()
+    try:
+        df = pd.read_sql_query(
+            _t("SELECT year, cash_pct, stock_pct FROM dividend_history "
+               "WHERE ticker = :t ORDER BY year"),
+            db.engine, params={"t": ticker.upper()})
+        return {'ticker': ticker.upper(),
+                'history': df.where(pd.notna(df), None).to_dict(orient='records')}
+    except Exception as e:
+        logger.error(f"dividend history failed for {ticker}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
 @app.get("/api/reversal-tracker")
 def get_reversal_tracker():
     """Live journal of every reversal signal + its real forward outcome.

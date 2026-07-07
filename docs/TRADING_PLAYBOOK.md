@@ -181,4 +181,10 @@ Written up in `docs/PROFITABILITY_AUDIT.md` (see §9 for the chart-pattern verdi
 
 ---
 
+## 12. The other half: long-term investing
+
+Everything above is the **trading** bucket (days–weeks, seasonal). The app also has an **investing** bucket — the 🏛️ **Long-Term page**: a "Dividend Fortress" shortlist of companies with long unbroken cash-dividend records, ranked by reliability + yield + quality. Different money, different clock (years), different rules — see **`docs/LONG_TERM_STRATEGY.md`**. Decide your split between the two buckets first (e.g., 60% long-term / 30% swing / 10% cash) and never let one raid the other. Bonus synergy: Reversal Season is the best time to *add* to fortress names — panic prices, fatter yields.
+
+---
+
 *Bottom line: wait for green, buy panic small, set your exits, and sit on your hands the rest of the time. That's the whole game on DSE.*

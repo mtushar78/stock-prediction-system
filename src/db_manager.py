@@ -309,6 +309,21 @@ class DatabaseManager:
                     except Exception:
                         pass
 
+            # Per-year declared dividends scraped from the DSE company page
+            # ("Cash Dividend" / "Bonus Issue" rows — goes back to the 1990s for
+            # older listings). cash_pct/stock_pct are % OF FACE VALUE (a 120%
+            # cash dividend on a 10tk face value = 12tk/share). Drives the
+            # long-term investing list (docs/LONG_TERM_STRATEGY.md).
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS dividend_history (
+                    ticker TEXT NOT NULL,
+                    year INTEGER NOT NULL,
+                    cash_pct DOUBLE PRECISION,
+                    stock_pct DOUBLE PRECISION,
+                    PRIMARY KEY (ticker, year)
+                )
+            """)
+
             # Users (multi-user auth). Credentials are bcrypt-hashed; see src/auth.py.
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS users (

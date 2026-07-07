@@ -47,6 +47,45 @@ def _parse_number(text: str):
         return None
 
 
+def _parse_dividend_series(text: str) -> dict:
+    """Parse a DSE dividend history cell like
+    ``"120% 2025, 110% 2024, ... 20%2006, 25%  96"`` into {year: pct}.
+
+    Handles the page's real quirks: missing spaces ("20%2006"), double spaces,
+    decimal percents ("12.50% 2015") and 2-digit years ("96" == 1996).
+    Keeps the MAX per year (rare duplicate mentions)."""
+    out = {}
+    if not text:
+        return out
+    for pct_s, yr_s in re.findall(r'(\d+(?:\.\d+)?)\s*%\s*(\d{2,4})', text):
+        yr = int(yr_s)
+        if yr < 100:                       # 2-digit year: 96 -> 1996, 05 -> 2005
+            yr += 1900 if yr >= 50 else 2000
+        if not (1990 <= yr <= 2035):
+            continue
+        pct = float(pct_s)
+        out[yr] = max(pct, out.get(yr, 0.0))
+    return out
+
+
+def _extract_dividends(soup) -> dict:
+    """Pull the 'Cash Dividend' + 'Bonus Issue (Stock Dividend)' history rows
+    from a DSE company page. Returns {year: {'cash': pct, 'stock': pct}}."""
+    cash_txt = stock_txt = None
+    for cell in soup.find_all(['th', 'td']):
+        label = cell.get_text(strip=True).lower()
+        if label == 'cash dividend' and cash_txt is None:
+            sib = cell.find_next_sibling()
+            cash_txt = sib.get_text(' ', strip=True) if sib else None
+        elif label.startswith('bonus issue') and stock_txt is None:
+            sib = cell.find_next_sibling()
+            stock_txt = sib.get_text(' ', strip=True) if sib else None
+    cash = _parse_dividend_series(cash_txt or '')
+    stock = _parse_dividend_series(stock_txt or '')
+    years = sorted(set(cash) | set(stock))
+    return {y: {'cash': cash.get(y), 'stock': stock.get(y)} for y in years}
+
+
 def scrape_ticker_fundamentals(ticker: str) -> dict:
     """Scrape a single ticker's company page from DSE.
 
@@ -202,8 +241,30 @@ def scrape_ticker_fundamentals(ticker: str) -> dict:
         'debt_to_equity': debt_to_equity,
         'eps_growth_pa': eps_growth_pa,
         'roe': roe,
+        # per-year declared dividends (% of face value) — long-term list input
+        'dividends': _extract_dividends(soup),
     }
     return result
+
+
+def save_dividends(db: DatabaseManager, ticker: str, dividends: dict):
+    """UPSERT per-year dividend rows. `dividends` = {year: {'cash','stock'}}."""
+    if not dividends:
+        return
+    cursor = db.conn.cursor()
+    try:
+        for year, d in dividends.items():
+            cursor.execute("""
+                INSERT INTO dividend_history (ticker, year, cash_pct, stock_pct)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (ticker, year) DO UPDATE SET
+                    cash_pct = EXCLUDED.cash_pct,
+                    stock_pct = EXCLUDED.stock_pct
+            """, (ticker, int(year), d.get('cash'), d.get('stock')))
+        db.conn.commit()
+    except Exception:
+        db.conn.rollback()
+        raise
 
 
 def save_fundamentals(db: DatabaseManager, data: dict):
@@ -310,9 +371,11 @@ def scrape_all(tickers: list = None, delay: float = 1.5, retry_failed: bool = Fa
         try:
             data = scrape_ticker_fundamentals(ticker)
             save_fundamentals(db, data)
+            save_dividends(db, ticker, data.get('dividends') or {})
             cap = data.get('paid_up_capital_cr')
             sector = data.get('sector', '?')
-            print(f"OK (cap={cap} Cr, sector={sector})")
+            ndiv = len(data.get('dividends') or {})
+            print(f"OK (cap={cap} Cr, sector={sector}, div_years={ndiv})")
             success += 1
         except Exception as e:
             print(f"FAILED: {e}")

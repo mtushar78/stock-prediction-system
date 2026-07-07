@@ -327,6 +327,12 @@ export default function Dashboard() {
         >
           🧮 Manual Analyze
         </Link>
+        <Link
+          href="/long-term"
+          className="bg-gray-800 hover:bg-gray-700 border border-emerald-800/60 px-4 py-2 rounded text-sm transition text-emerald-300"
+        >
+          🏛️ Long-Term Investing
+        </Link>
       </div>
 
       {/* Last Update Info */}
