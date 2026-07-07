@@ -76,6 +76,14 @@ Design choices, stated honestly:
 
 ---
 
+### 4.1 In the product
+
+- Every stock is flagged **`>FDR`** when its cash yield alone clears the ~8% bank fixed-deposit rate (`LT_FDR_RATE` in `backend/main.py`) — the §1 benchmark, made visible.
+- The list is **sortable** by Score (default), **Yield**, or Streak — so the §6.1 finding (weight yield among reliable payers) is one click away.
+- A **Suggested Starter Basket** is computed server-side (`starter_basket` in the API): the highest-yielding Grade A/B fortresses, **max 2 per sector, up to 10 names, equal-weighted** — the §5.2 diversification rule and the §6.1 yield-tilt turned into a ready-to-buy portfolio, with its blended yield shown against the FDR bar.
+
+---
+
 ## 5. How to actually use the list (the operating rules)
 
 1. **This is the *investing* bucket — separate money from the *trading* bucket.** Decide the split first (e.g., 60% long-term / 30% swing / 10% cash) and never let one raid the other.

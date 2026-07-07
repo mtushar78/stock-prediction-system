@@ -1012,6 +1012,14 @@ def get_quality_screen():
 # the fundamentals scrape (dividend_history table).
 # ====================================================================== #
 
+# Bank FDR (fixed-deposit) reference rate — the risk-free bar a dividend yield
+# must clear to be worth the equity risk (docs/LONG_TERM_STRATEGY.md §1). Update
+# as rates move.
+LT_FDR_RATE = 8.0
+LT_BASKET_SIZE = 10             # §5.2: 8-12 names
+LT_BASKET_MAX_PER_SECTOR = 2    # §5.2: diversify across >=4 sectors
+
+
 def _compute_long_term_list():
     from sqlalchemy import text as _t
     import math as _m
@@ -1137,10 +1145,45 @@ def _compute_long_term_list():
             'avg_vol20': int(av20),
             'history_5y': hist5, 'total_div_years': len([y for y in years if cash[y] > 0]),
             'score': score, 'grade': grade, 'score_parts': parts,
+            # §1 benchmark: does the cash yield clear a risk-free bank FDR?
+            'beats_fdr': yield_pct >= LT_FDR_RATE,
         })
 
     rows.sort(key=lambda r: (-r['score'], -r['yield_pct']))
-    return {'as_of': maxd, 'universe': int(len(fund)), 'qualified': len(rows), 'stocks': rows}
+
+    # STARTER BASKET (docs/LONG_TERM_STRATEGY.md §5.2 + §6.1): the actionable
+    # output of the whole list. §6.1 validated that weighting YIELD among the
+    # reliable payers (the "FORT-HY" subset) was the strategy's best risk profile
+    # (positive 6/6 years incl. both bears). §5.2 says diversify across >=4
+    # sectors. So: from fortress-grade (A/B) names, take highest-yield first,
+    # capped at 2 per sector, up to 10 names — a ready-to-buy, diversified,
+    # yield-tilted portfolio. Equal-weighted, so blended yield = simple mean.
+    basket, per_sector = [], {}
+    for r in sorted([x for x in rows if x['grade'] in ('A', 'B')],
+                    key=lambda r: -r['yield_pct']):
+        sec = r['sector'] or 'Other'
+        if per_sector.get(sec, 0) >= LT_BASKET_MAX_PER_SECTOR:
+            continue
+        basket.append(r)
+        per_sector[sec] = per_sector.get(sec, 0) + 1
+        if len(basket) >= LT_BASKET_SIZE:
+            break
+    blended_yield = round(sum(b['yield_pct'] for b in basket) / len(basket), 2) if basket else None
+    basket_summary = {
+        'count': len(basket),
+        'sectors': sorted(per_sector.keys()),
+        'sector_count': len(per_sector),
+        'blended_yield_pct': blended_yield,
+        'beats_fdr': bool(blended_yield is not None and blended_yield >= LT_FDR_RATE),
+        # equal-weight tickers with their share of a 100% allocation
+        'tickers': [{'ticker': b['ticker'], 'sector': b['sector'], 'grade': b['grade'],
+                     'yield_pct': b['yield_pct'], 'price': b['price'], 'dps': b['dps'],
+                     'weight_pct': round(100.0 / len(basket), 1)} for b in basket],
+    }
+
+    return {'as_of': maxd, 'universe': int(len(fund)), 'qualified': len(rows),
+            'fdr_rate': LT_FDR_RATE, 'beats_fdr_count': sum(1 for r in rows if r['beats_fdr']),
+            'starter_basket': basket_summary, 'stocks': rows}
 
 
 @app.get("/api/long-term")

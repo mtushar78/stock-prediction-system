@@ -15,7 +15,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import axios from 'axios';
-import { Landmark, RefreshCw, ChevronDown, ChevronUp, BadgeCheck } from 'lucide-react';
+import { Landmark, RefreshCw, ChevronDown, ChevronUp, BadgeCheck, ShoppingBasket, ArrowDownWideNarrow } from 'lucide-react';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -54,14 +54,39 @@ interface LtStock {
   score: number;
   grade: string;
   score_parts: Record<string, number>;
+  beats_fdr: boolean;
+}
+
+interface BasketTicker {
+  ticker: string;
+  sector: string | null;
+  grade: string;
+  yield_pct: number;
+  price: number;
+  dps: number;
+  weight_pct: number;
+}
+
+interface StarterBasket {
+  count: number;
+  sectors: string[];
+  sector_count: number;
+  blended_yield_pct: number | null;
+  beats_fdr: boolean;
+  tickers: BasketTicker[];
 }
 
 interface LtResponse {
   as_of: string;
   universe: number;
   qualified: number;
+  fdr_rate: number;
+  beats_fdr_count: number;
+  starter_basket: StarterBasket;
   stocks: LtStock[];
 }
+
+type SortKey = 'score' | 'yield_pct' | 'streak_years';
 
 interface FullDivHistory {
   ticker: string;
@@ -89,6 +114,12 @@ export default function LongTermPage() {
   const [error, setError] = useState<string | null>(null);
   const [openRow, setOpenRow] = useState<string | null>(null);
   const [fullHist, setFullHist] = useState<Record<string, FullDivHistory>>({});
+  const [sortBy, setSortBy] = useState<SortKey>('score');
+
+  const sortedStocks = data
+    ? [...data.stocks].sort((a, b) => (b[sortBy] as number) - (a[sortBy] as number)
+        || b.yield_pct - a.yield_pct)
+    : [];
 
   const fetchList = () => {
     setLoading(true);
@@ -149,9 +180,71 @@ export default function LongTermPage() {
 
       {data && (
         <>
-          <div className="mb-3 text-xs text-gray-500">
-            {data.qualified} of {data.universe} listed companies pass the gates (liquid · non-Z · EPS &gt; 0 ·
-            paid ≥3 of last 5 years · paid last year).
+          {/* STARTER BASKET — the actionable output (§5.2 diversify + §6.1 yield-tilt) */}
+          {data.starter_basket && data.starter_basket.count > 0 && (
+            <div className="mb-4 bg-gray-800/60 border border-emerald-700/50 rounded-lg p-4">
+              <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+                <span className="font-bold text-emerald-300 flex items-center gap-2">
+                  <ShoppingBasket className="w-5 h-5" /> Suggested Starter Basket
+                </span>
+                <span className="text-xs text-gray-400">
+                  {data.starter_basket.count} names · {data.starter_basket.sector_count} sectors · blended yield{' '}
+                  <b className={data.starter_basket.beats_fdr ? 'text-emerald-300' : 'text-yellow-300'}>
+                    {data.starter_basket.blended_yield_pct}%
+                  </b>{' '}
+                  {data.starter_basket.beats_fdr
+                    ? `(beats the ${data.fdr_rate}% FDR)`
+                    : `(vs ${data.fdr_rate}% bank FDR)`}
+                </span>
+              </div>
+              <p className="text-xs text-gray-500 mb-3">
+                A ready-to-buy, <b>equal-weighted</b>, sector-diversified (max 2 per sector) portfolio of the
+                highest-yielding <b>Grade A/B</b> fortresses — the yield-tilted, diversified approach the backtest
+                found safest (positive in all 6 years, incl. both bear markets). Buy gradually and reinvest the
+                dividends: a {data.starter_basket.blended_yield_pct}% yield reinvested roughly doubles your money
+                in ~{data.starter_basket.blended_yield_pct ? Math.round(72 / data.starter_basket.blended_yield_pct) : 9}{' '}
+                years before any price gain.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {data.starter_basket.tickers.map((t) => (
+                  <div key={t.ticker} className="bg-gray-900/70 border border-gray-700 rounded px-2.5 py-1.5 text-xs">
+                    <span className="font-bold text-emerald-300">{t.ticker}</span>
+                    <span className={`ml-1.5 ${t.yield_pct >= data.fdr_rate ? 'text-emerald-300' : 'text-gray-300'}`}>
+                      {t.yield_pct}%
+                    </span>
+                    <span className="text-gray-500"> · {t.weight_pct}%</span>
+                    <div className="text-gray-600 text-[10px]">{t.sector}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="mb-3 flex items-center justify-between flex-wrap gap-2">
+            <div className="text-xs text-gray-500">
+              {data.qualified} of {data.universe} listed companies pass the gates (liquid · non-Z · EPS &gt; 0 ·
+              paid ≥3 of last 5 years · paid last year). <b className="text-emerald-300">{data.beats_fdr_count}</b>{' '}
+              clear the {data.fdr_rate}% bank-FDR bar.
+            </div>
+            <div className="flex items-center gap-1.5 text-xs">
+              <ArrowDownWideNarrow className="w-4 h-4 text-gray-500" />
+              <span className="text-gray-500 mr-1">Sort:</span>
+              {([['score', 'Score'], ['yield_pct', 'Yield'], ['streak_years', 'Streak']] as [SortKey, string][]).map(
+                ([key, label]) => (
+                  <button
+                    key={key}
+                    onClick={() => setSortBy(key)}
+                    className={`px-2 py-1 rounded border transition ${
+                      sortBy === key
+                        ? 'bg-emerald-800 text-emerald-100 border-emerald-600'
+                        : 'bg-gray-800 text-gray-400 border-gray-700 hover:bg-gray-700'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ),
+              )}
+            </div>
           </div>
 
           <div className="overflow-x-auto bg-gray-800/40 border border-gray-700 rounded-lg">
@@ -174,7 +267,7 @@ export default function LongTermPage() {
                 </tr>
               </thead>
               <tbody>
-                {data.stocks.map((s) => (
+                {sortedStocks.map((s) => (
                   <>
                     <tr
                       key={s.ticker}
@@ -194,7 +287,15 @@ export default function LongTermPage() {
                       </td>
                       <td className="p-3 text-gray-400 text-xs max-w-[130px] truncate">{s.sector || '—'}</td>
                       <td className="p-3">{s.price}</td>
-                      <td className="p-3 font-bold text-emerald-200">{s.yield_pct}%</td>
+                      <td className="p-3 font-bold text-emerald-200 whitespace-nowrap">
+                        {s.yield_pct}%
+                        {s.beats_fdr && (
+                          <span className="ml-1 text-[9px] bg-emerald-700 text-emerald-100 px-1 py-0.5 rounded align-middle"
+                            title={`Beats the ${data.fdr_rate}% bank FDR — the yield alone pays you more than a fixed deposit`}>
+                            &gt;FDR
+                          </span>
+                        )}
+                      </td>
                       <td className="p-3 whitespace-nowrap">
                         {s.latest_cash_pct}%{s.latest_stock_pct ? ` +${s.latest_stock_pct}%B` : ''}
                         <span className="text-gray-500 text-xs"> ({s.dps} tk)</span>
