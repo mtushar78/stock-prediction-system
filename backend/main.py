@@ -1200,14 +1200,28 @@ def get_long_term():
 def get_dividend_history(ticker: str):
     """Full per-year dividend history for one ticker (modal drill-down)."""
     from sqlalchemy import text as _t
+    import math as _m
     db = DatabaseManager()
+
+    def _sf(v):
+        # NaN/inf -> None. df.where(notna, None) does NOT work on float columns
+        # (pandas re-coerces None back to NaN), and NaN is invalid JSON -> 500.
+        try:
+            f = float(v)
+            return None if (f != f or _m.isinf(f)) else f
+        except (TypeError, ValueError):
+            return None
+
     try:
         df = pd.read_sql_query(
             _t("SELECT year, cash_pct, stock_pct FROM dividend_history "
                "WHERE ticker = :t ORDER BY year"),
             db.engine, params={"t": ticker.upper()})
-        return {'ticker': ticker.upper(),
-                'history': df.where(pd.notna(df), None).to_dict(orient='records')}
+        history = [{'year': int(r['year']),
+                    'cash_pct': _sf(r['cash_pct']),
+                    'stock_pct': _sf(r['stock_pct'])}
+                   for _, r in df.iterrows()]
+        return {'ticker': ticker.upper(), 'history': history}
     except Exception as e:
         logger.error(f"dividend history failed for {ticker}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
