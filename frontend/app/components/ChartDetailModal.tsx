@@ -82,6 +82,102 @@ const verdictCls = (v?: string) =>
     ? 'bg-gray-800 text-gray-500'
     : 'bg-gray-600 text-gray-100';
 
+// ------------------------------------------------------------------ //
+// BOTTOM LINE — the one plain-English answer to "should I buy this?"
+//
+// The user's problem: the list only flags DANGERS, and the header badge
+// shows candlestick "confidence" (how clean the shape is) which reads like
+// a buy score but is NOT one. So a stock with no warning + a HIGH badge
+// looks buyable when the engine never said so. This synthesizes the top
+// chart pattern's verdict into one explicit call — positive OR negative —
+// so absence-of-warning is never mistaken for a green light.
+// ------------------------------------------------------------------ //
+type Tone = 'good' | 'watch' | 'bad' | 'neutral';
+interface BottomLine {
+  action: string;      // short chip, e.g. "WATCH ONLY"
+  tone: Tone;
+  headline: string;    // one sentence answering buy-or-not
+}
+
+const TONE_CLS: Record<Tone, { box: string; chip: string; icon: string }> = {
+  good: { box: 'bg-emerald-950/60 border-emerald-600', chip: 'bg-emerald-600 text-white', icon: 'text-emerald-400' },
+  watch: { box: 'bg-amber-950/50 border-amber-600/70', chip: 'bg-amber-500 text-black', icon: 'text-amber-400' },
+  bad: { box: 'bg-red-950/70 border-red-600', chip: 'bg-red-700 text-white', icon: 'text-red-400' },
+  neutral: { box: 'bg-gray-800 border-gray-600', chip: 'bg-gray-600 text-gray-100', icon: 'text-gray-400' },
+};
+
+function bottomLineFor(signal: ChartSignal, top: DetectedChartPattern | undefined): BottomLine {
+  // No multi-week chart pattern at all — only candlesticks (or nothing).
+  if (!top) {
+    const hasCandles = (signal.patterns?.length ?? 0) > 0;
+    if (hasCandles) {
+      return {
+        action: 'NOT A BUY',
+        tone: 'neutral',
+        headline:
+          'Only short-term candlestick signals here — no multi-week chart pattern. Candlesticks alone ' +
+          'have no proven buy edge on DSE; treat them as context, not a reason to buy.',
+      };
+    }
+    return {
+      action: 'NOTHING HERE',
+      tone: 'neutral',
+      headline: 'No actionable chart pattern right now — nothing to buy or avoid on this chart.',
+    };
+  }
+
+  const dseBad = top.dse_stats && top.dse_stats.net_20d <= 0;
+  switch (top.verdict) {
+    case 'BUY SETUP':
+      return {
+        action: 'BUYABLE',
+        tone: 'good',
+        headline:
+          `Buyable — ${top.name} is a fresh, high-edge breakout and the proven quant engine agrees (🚀 REV). ` +
+          'Buy near support and respect the stop.',
+      };
+    case 'WATCH':
+      return {
+        action: 'WATCH — NOT A BUY YET',
+        tone: 'watch',
+        headline:
+          `The ${top.name} is real and confirmed, but a bullish chart pattern ALONE has no proven edge on DSE` +
+          (dseBad ? ` (this pattern historically returned ${top.dse_stats!.net_20d}% net at +20d here)` : '') +
+          '. Do NOT buy on the pattern by itself — it only becomes a buy on a day the quant Reversal signal also fires (🚀 REV badge).',
+      };
+    case 'EXIT / AVOID':
+      return {
+        action: 'DO NOT BUY',
+        tone: 'bad',
+        headline: `Do not buy — ${top.name} is a confirmed topping pattern with downside to target. Exit or reduce if you already hold.`,
+      };
+    case 'DANGER':
+      return {
+        action: 'AVOID',
+        tone: 'bad',
+        headline: `Avoid — ${top.name}: a falling knife that usually breaks lower. Not a buy for ~6 months.`,
+      };
+    case 'WAIT':
+      return {
+        action: 'WAIT',
+        tone: 'neutral',
+        headline: `Wait — the ${top.name} shape is complete but has NOT broken out yet. No action until it closes beyond the line.`,
+      };
+    case 'PLAYED OUT':
+      return {
+        action: 'NO EDGE LEFT',
+        tone: 'neutral',
+        headline: `The move already ran to its target — the easy money is gone. Nothing to buy here.`,
+      };
+    default:
+      return {
+        action: 'NO CLEAR EDGE',
+        tone: 'neutral',
+        headline: `${top.name} detected, but direction isn't resolved into a buy or avoid yet.`,
+      };
+  }
+}
+
 // Colours for the geometry we overlay on the candles.
 const LINE_COLORS: Record<string, string> = {
   neckline: '#f59e0b',
@@ -391,8 +487,11 @@ export default function ChartDetailModal({ apiUrl, ticker, onClose }: ChartDetai
             </span>
             {signal && (
               <>
-                <span className={`px-2 py-0.5 rounded text-xs font-bold ${confidenceClass(signal.confidence)}`}>
-                  {signal.confidence}
+                <span
+                  className={`px-2 py-0.5 rounded text-xs font-bold ${confidenceClass(signal.confidence)}`}
+                  title="How clearly a candlestick pattern is formed on the latest bars — NOT a buy/sell call. Read the BOTTOM LINE banner below for whether to buy."
+                >
+                  {signal.confidence} <span className="font-normal opacity-70">signal clarity</span>
                 </span>
                 <span className="text-sm text-gray-400">
                   bias{' '}
@@ -419,6 +518,63 @@ export default function ChartDetailModal({ apiUrl, ticker, onClose }: ChartDetai
               <AlertCircle className="w-5 h-5" /> {error}
             </div>
           )}
+
+          {/* Stale-analysis guard — a verdict computed on old bars is not a
+              verdict on today's price. Surface the age loudly. */}
+          {!loading && !error && signal?.analysis_date && (() => {
+            const days = Math.floor((Date.now() - Date.parse(signal.analysis_date)) / 86400000);
+            if (!(days > 5)) return null;
+            return (
+              <div className="bg-amber-900/40 border border-amber-600 text-amber-100 rounded p-3 text-sm flex items-start gap-2">
+                <AlertTriangle className="w-5 h-5 mt-0.5 shrink-0 text-amber-400" />
+                <div>
+                  <b>Stale analysis — last bar is {signal.analysis_date} ({days} days old).</b>{' '}
+                  Every verdict below was computed on that data, not today&apos;s price. Patterns may have
+                  broken out, failed, or expired since. Refresh the price data before acting.
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ---- BOTTOM LINE: the one plain answer — buy or not? ---- */}
+          {!loading && !error && signal && (() => {
+            const bl = bottomLineFor(signal, chartPatterns[0]);
+            const t = TONE_CLS[bl.tone];
+            return (
+              <div className={`rounded-lg border p-3 flex items-start gap-3 ${t.box}`}>
+                {bl.tone === 'good' ? (
+                  <TrendingUp className={`w-6 h-6 mt-0.5 shrink-0 ${t.icon}`} />
+                ) : bl.tone === 'bad' ? (
+                  <AlertTriangle className={`w-6 h-6 mt-0.5 shrink-0 ${t.icon}`} />
+                ) : (
+                  <Info className={`w-6 h-6 mt-0.5 shrink-0 ${t.icon}`} />
+                )}
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                    <span className="text-[10px] uppercase tracking-wider text-gray-400 font-bold">Bottom line</span>
+                    <span className={`px-2 py-0.5 rounded text-xs font-black ${t.chip}`}>{bl.action}</span>
+                    {signal.confluence === 'reversal' && (
+                      <span className="text-[10px] bg-emerald-600 text-white px-1.5 py-0.5 rounded font-bold"
+                        title="Quant REVERSAL signal also fires here — the one confluence with a validated net edge (+5.1%/trade, 65% win)">
+                        🚀 REV confluence
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-sm text-gray-100">{bl.headline}</div>
+                  {(signal.risk_tags?.length ?? 0) > 0 && bl.tone !== 'bad' && (
+                    <div className="flex flex-wrap gap-1 mt-1.5"
+                      title="Live-state warnings — this is how tops look the day before they fall. A rising chart + big target does NOT override these.">
+                      {signal.risk_tags!.map((tag) => (
+                        <span key={tag} className="text-[10px] bg-red-900/50 text-red-300 border border-red-800/60 px-1.5 py-0.5 rounded font-bold whitespace-nowrap">
+                          ⚠ {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
           {!loading && droppedBars > 0 && (
             <div className="bg-amber-900/30 border border-amber-700/50 text-amber-200/90 rounded p-2 text-xs flex items-center gap-2">
@@ -708,7 +864,7 @@ function ChartPatternCard({
         </div>
       </div>
 
-      {pattern.bias === 'bullish' && pattern.dse_stats && (
+      {pattern.bias === 'bullish' && (pattern.dse_stats ? (
         <div className={`text-[11px] rounded px-2 py-1 border font-bold ${
           pattern.dse_stats.net_20d > 0
             ? 'text-emerald-300 bg-emerald-950/30 border-emerald-900/40'
@@ -717,7 +873,13 @@ function ChartPatternCard({
           {pattern.dse_stats.net_20d > 0 ? '+' : ''}{pattern.dse_stats.net_20d}% net at +20 days,{' '}
           {pattern.dse_stats.win_pct}% win rate (n={pattern.dse_stats.n}, 2023–26 point-in-time).
         </div>
-      )}
+      ) : (
+        <div className="text-[11px] rounded px-2 py-1 border font-bold text-amber-300 bg-amber-950/30 border-amber-900/40">
+          DSE reality: UNPROVEN — this pattern occurred too rarely on DSE (2023–26) to backtest.
+          The Bulkowski stats above are US bull-market numbers and the target is a projection;
+          neither is validated on this market.
+        </div>
+      ))}
 
       {pattern.quality_notes && pattern.quality_notes.length > 0 && (
         <ul className="text-[11px] text-amber-300/80 list-disc pl-4 space-y-0.5">

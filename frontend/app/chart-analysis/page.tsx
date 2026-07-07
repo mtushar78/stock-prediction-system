@@ -15,6 +15,7 @@ import { Activity, RefreshCw, TrendingUp, Search, Crosshair, CandlestickChart, G
 import ChartScope from '../components/ChartScope';
 import PatternScope from '../components/PatternScope';
 import ChartDetailModal from '../components/ChartDetailModal';
+import DataFreshnessBadge from '../components/DataFreshnessBadge';
 import TutorialView from '../components/TutorialView';
 import { TUTORIAL_ORDER } from '../tutorials';
 import { SystemStatus } from '../types';
@@ -116,6 +117,7 @@ export default function ChartAnalysisPage() {
               ● {systemStatus?.status || 'LOADING'}
             </span>
           </div>
+          <DataFreshnessBadge systemStatus={systemStatus} />
           <button
             onClick={() => setRefreshKey((k) => k + 1)}
             className="bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded flex items-center gap-2 transition text-sm"
@@ -125,6 +127,16 @@ export default function ChartAnalysisPage() {
           </button>
         </div>
       </header>
+
+      {/* Stale-data kill-switch banner: if the newest bar is old, every row,
+          grade and verdict below is old too — say it before the user reads them. */}
+      {systemStatus?.data_stale && (
+        <div className="mb-4 bg-red-950/70 border border-red-600 text-red-100 rounded-lg p-3 text-sm">
+          <b>⚠ Price data is {systemStatus.data_age_days} days old (last bar {String(systemStatus.last_update).slice(0, 10)}).</b>{' '}
+          Every setup, grade and verdict on this page was computed on that data — patterns may have broken
+          out, failed or expired since. Update the data before acting on anything here.
+        </div>
+      )}
 
       <section className="mb-4 bg-gray-800 border border-gray-700 rounded-lg p-4">
         <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
@@ -200,6 +212,19 @@ export default function ChartAnalysisPage() {
           <GraduationCap className="w-4 h-4" /> Tutorial
         </button>
       </div>
+
+      {view !== 'tutorial' && (
+        <div className="mb-4 bg-amber-950/25 border border-amber-700/50 rounded-lg p-3 text-xs text-amber-200/90 leading-relaxed">
+          <b className="text-amber-200">📊 Read this as context, not a buy/sell list.</b>{' '}
+          A dense DSE validation (24,781 point-in-time samples, 2022–2026) found that <b>confirmed bullish
+          chart patterns returned the same as a random stock</b> (−0.2% before costs, ≈−1.0% after) — the
+          pattern layer carries no tradable edge here, and it does not improve in any market regime. Patterns
+          feel like they work in a strong market because <i>everything</i> rises. Use this page to <b>read structure,
+          support/resistance, and risk</b>, and to learn the shapes — then take actual buys from the{' '}
+          <Link href="/" className="underline hover:text-amber-100">Reversals list</Link>, the one signal with a
+          validated net edge. Each pattern below shows its real DSE-measured return, not just the US textbook target.
+        </div>
+      )}
 
       {view === 'patterns' && (
         <PatternScope

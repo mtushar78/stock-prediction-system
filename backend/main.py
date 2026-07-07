@@ -87,6 +87,11 @@ class SystemStatus(BaseModel):
     market_status: str
     last_update: Optional[str] = None
     next_update: Optional[str] = None
+    # Data freshness: age of the newest OHLCV bar. Every signal/verdict in the
+    # app is computed from this data, so staleness here means every page is
+    # showing yesterday's (or last month's) conclusions.
+    data_age_days: Optional[int] = None
+    data_stale: Optional[bool] = None
 
 
 class TickerAnalyzeRequest(BaseModel):
@@ -608,17 +613,32 @@ def health_check() -> SystemStatus:
         now = datetime.now(BANGLADESH_TZ)
         hour = now.hour
         minute = now.minute
-        
+
         if 10 <= hour < 14 or (hour == 14 and minute <= 30):
             market_status = "OPEN"
         else:
             market_status = "CLOSED"
-        
+
+        # Data freshness — calendar days since the newest bar. DSE trades
+        # Sun–Thu, so >3 days means we've missed at least one full session
+        # (2-day Fri/Sat weekend + buffer for a holiday).
+        data_age_days = None
+        data_stale = None
+        if last_update:
+            try:
+                last_dt = datetime.strptime(str(last_update)[:10], '%Y-%m-%d')
+                data_age_days = (now.date() - last_dt.date()).days
+                data_stale = data_age_days > 3
+            except ValueError:
+                pass
+
         return SystemStatus(
             status="ONLINE",
             market_status=market_status,
             last_update=last_update,
-            next_update=next_update
+            next_update=next_update,
+            data_age_days=data_age_days,
+            data_stale=data_stale
         )
     except Exception as e:
         logger.error(f"Health check failed: {e}")
@@ -842,17 +862,77 @@ def _compute_market_breadth(as_of: str = None):
         breadth = round(above / total * 100, 1) if total else None
         label = ('HEALTHY' if breadth is not None and breadth >= 65
                  else 'MIXED' if breadth is not None and breadth >= 45 else 'WEAK')
+        # SEASON = the master switch found in the 2026-07 weekly-system + regime
+        # studies (docs/PROFITABILITY_AUDIT.md §9, [[weekly-system-regime-study]]).
+        # The reversal edge — the ONLY validated net-of-cost edge on DSE — is
+        # breadth-gated: it PAYS in weak tape (breadth <45: +2.5% to +7.9% net)
+        # and is ≈0 in strong tape (breadth >=45). So <45 = harvest ("REVERSAL"),
+        # >=45 = capital-preservation ("PRESERVATION"). This deliberately INVERTS
+        # the old "high breadth = good for buying" framing, which was measured
+        # backwards for the strategy that actually makes money.
+        season = None
+        season_note = None
+        if breadth is not None:
+            if breadth < 45:
+                season = 'REVERSAL'
+                season_note = ('Reversal season — deep-oversold bounces have a real net edge in '
+                               'weak tape. Trade reversal fires; this is where the money is made.')
+            else:
+                season = 'PRESERVATION'
+                season_note = ('Preservation season — the reversal edge is ≈0 when the market is this '
+                               'strong. Ride existing winners, build the watchlist, do NOT force new buys.')
         return {'date': maxd, 'breadth_pct': breadth, 'above': above, 'total': total,
-                'label': label, 'healthy': bool(breadth is not None and breadth >= 65)}
+                'label': label, 'healthy': bool(breadth is not None and breadth >= 65),
+                'season': season, 'season_note': season_note}
     finally:
         db.close()
 
 
+# Prior (immutable) trading days are safe to cache forever; the current day is
+# always recomputed. Lets the season-change flag be cheap without a new table.
+_BREADTH_PRIOR_CACHE: dict = {}
+
+
+def _prior_breadth(before_date: str):
+    """Breadth for the latest trading day strictly before `before_date` (cached)."""
+    if not before_date:
+        return None
+    if before_date in _BREADTH_PRIOR_CACHE:
+        return _BREADTH_PRIOR_CACHE[before_date]
+    from sqlalchemy import text as _t
+    db = DatabaseManager()
+    try:
+        pv = pd.read_sql_query(
+            _t("SELECT MAX(date) m FROM stock_data WHERE date < :d"),
+            db.engine, params={"d": before_date})
+        pd_date = str(pv['m'].iloc[0])[:10] if pv['m'].iloc[0] is not None else None
+    finally:
+        db.close()
+    res = _compute_market_breadth(pd_date) if pd_date else None
+    _BREADTH_PRIOR_CACHE[before_date] = res
+    return res
+
+
 @app.get("/api/market-health")
 def get_market_health(date: str = None):
-    """Market breadth / regime gauge (optionally as-of a past date for replay)."""
+    """Market breadth / regime gauge (optionally as-of a past date for replay).
+
+    Adds `season_changed` when today's season differs from the previous trading
+    day's — the 'season just opened' bell so the user never has to watch breadth
+    manually (weekly-system study: reversal season = the whole edge)."""
     try:
-        return _compute_market_breadth(date)
+        cur = _compute_market_breadth(date)
+        try:
+            prev = _prior_breadth(cur.get('date')) if cur.get('season') else None
+            prev_season = prev.get('season') if prev else None
+            cur['prev_season'] = prev_season
+            cur['season_changed'] = bool(prev_season and cur.get('season')
+                                         and prev_season != cur['season'])
+        except Exception as _se:
+            logger.debug(f"season-change check skipped: {_se}")
+            cur['prev_season'] = None
+            cur['season_changed'] = False
+        return cur
     except Exception as e:
         logger.error(f"market-health failed: {e}")
         return {'date': None, 'breadth_pct': None, 'above': 0, 'total': 0, 'label': 'UNKNOWN', 'healthy': False}
@@ -1154,19 +1234,20 @@ def get_chart_pattern_signals():
             edge = int(r['edge']) if ('edge' in r and r['edge'] is not None) else 0
             grade = r['grade'] if 'grade' in r else None
             verdict = r['verdict'] if 'verdict' in r else None
-            # Only REVERSAL confluence earns a bump: the quant reversal is the
-            # one signal with a strong net-of-cost edge (+5.1%/trade, 65% win),
-            # while the quant breakout nets ~+0.3% — agreeing with it proves
-            # nothing (docs/PROFITABILITY_AUDIT.md §3.2, §6-M7). Breakout
-            # confluence is still reported for information, unboosted.
             verdict_reason = r['verdict_reason'] if 'verdict_reason' in r else None
+            # 2026-07-07: confluence NO LONGER boosts edge/grade/verdict in EITHER
+            # direction. The dense pattern re-validation (24,781 PIT samples,
+            # docs/PROFITABILITY_AUDIT.md §9) showed confirmed bullish patterns
+            # return EXACTLY the universe baseline (−0.21% gross, −1.0% net) — the
+            # pattern layer carries no information, so a pattern verdict must never
+            # be upgraded to a buy. The reversal confluence tag is kept purely as
+            # INFORMATION ("this charted stock also fired the quant reversal");
+            # the buy decision belongs to the Reversals list, not this page.
             if confluence == 'reversal':
-                edge = min(100, edge + 12)
-                grade = 'A' if edge >= 75 else 'B' if edge >= 60 else 'C' if edge >= 45 else 'D' if edge >= 30 else 'F'
-                if verdict == 'WATCH':
-                    verdict = 'BUY SETUP'
-                    verdict_reason = ('Bullish pattern + the quant REVERSAL signal fired on the same stock — '
-                                      'the one combination with a validated net edge (+5.1%/trade, 65% win).')
+                verdict_reason = ((verdict_reason + '  ') if verdict_reason else '') + (
+                    'Note: the quant REVERSAL signal also fired on this stock — that is the '
+                    'validated edge (+3–4%/trade net). Act on it from the Reversals list; the '
+                    'chart pattern here is visual context only.')
             out.append({
                 'ticker': tk,
                 'analysis_date': r['analysis_date'],
@@ -1238,6 +1319,72 @@ def get_chart_signal_detail(ticker: str):
         except Exception as _pe:
             logger.warning(f"pattern engine failed for {ticker_u}: {_pe}")
 
+        # Confluence + live-state risk tags — the SAME logic the list endpoint
+        # applies, so the modal never disagrees with the row the user clicked
+        # (list said "BUY SETUP 🚀 REV" → modal must too, and vice versa).
+        confluence = None
+        risk_tags = []
+        try:
+            from sqlalchemy import text as _text
+            srow = pd.read_sql_query(
+                _text("SELECT * FROM signals_today WHERE ticker = :t"),
+                db.engine, params={'t': ticker_u})
+            if not srow.empty:
+                sr = srow.iloc[0]
+                if 'reversal_signal' in srow.columns and sr.get('reversal_signal') == 1:
+                    confluence = 'reversal'
+                elif 'breakout_signal' in srow.columns and sr.get('breakout_signal') == 1:
+                    confluence = 'breakout'
+                # Decliner-anatomy tags (docs/WINNER_ANATOMY.md part 2).
+                import json as _j
+                import math as _m
+                try:
+                    oc = _j.loads(sr['overheated_checks']) if ('overheated_checks' in srow.columns and sr['overheated_checks']) else {}
+                except Exception:
+                    oc = {}
+                def _n(x):
+                    try:
+                        v = float(x)
+                        return v if (v == v and not _m.isinf(v)) else None
+                    except (TypeError, ValueError):
+                        return None
+                av20 = _n(sr.get('avg_volume_20'))
+                rsi, ret20 = _n(oc.get('rsi')), _n(oc.get('ret20'))
+                ext20, rvol = _n(oc.get('ext20')), _n(sr.get('rvol'))
+                if av20 is not None and av20 < 50000:
+                    risk_tags.append(f'THIN {av20/1000:.0f}k shares/day — untradeable size')
+                if rsi is not None and rsi >= 65:
+                    risk_tags.append(f'OVERBOUGHT RSI {rsi:.0f}')
+                if ret20 is not None and ret20 >= 15:
+                    risk_tags.append(f'ALREADY RAN +{ret20:.0f}%/20d — you would be late')
+                if ext20 is not None and ext20 >= 12:
+                    risk_tags.append(f'STRETCHED +{ext20:.0f}% above 20-SMA')
+                if rvol is not None and rvol >= 3:
+                    risk_tags.append(f'CLIMAX VOLUME {rvol:.1f}x — how tops form')
+            else:
+                # Same tag the list shows: the quant engine skipped this ticker
+                # entirely (too thin / broken data), so none of the live-state
+                # checks above could even run. Only meaningful if the quant
+                # scan ran at all today.
+                nrow = pd.read_sql_query(_text("SELECT COUNT(*) AS c FROM signals_today"), db.engine)
+                if int(nrow.iloc[0]['c']) > 0:
+                    risk_tags.append('NO QUANT DATA — not tracked (too thin or invalid)')
+        except Exception as _cfe:
+            logger.debug(f"detail confluence lookup skipped for {ticker_u}: {_cfe}")
+
+        # 2026-07-07: no confluence upgrade in either direction (mirrors the list
+        # endpoint). The dense pattern re-validation (PROFITABILITY_AUDIT §9)
+        # showed bullish patterns carry no net edge, so a pattern verdict is never
+        # upgraded to a buy. Reversal confluence stays an informational note only;
+        # the buy belongs to the Reversals list.
+        if confluence == 'reversal':
+            for p in chart_patterns:
+                if p.get('bias') == 'bullish':
+                    p['verdict_reason'] = ((p.get('verdict_reason') + '  ') if p.get('verdict_reason') else '') + (
+                        'Note: the quant REVERSAL signal also fired on this stock — that is the '
+                        'validated edge. Act on it from the Reversals list; this pattern is visual '
+                        'context only.')
+
         # Wyckoff structure CONTEXT (annotation only — validated 2019-26:
         # these entries have no net edge on DSE, so this never says "buy";
         # it describes the accumulation structure. PROFITABILITY_AUDIT §7.)
@@ -1271,6 +1418,7 @@ def get_chart_signal_detail(ticker: str):
                     'patterns': [], 'context': {}, 'explanation': '',
                     'chart_patterns': chart_patterns, 'chart_pattern_summary': chart_summary,
                     'wyckoff': wyckoff,
+                    'confluence': confluence, 'risk_tags': risk_tags,
                 }
             raise HTTPException(
                 status_code=404,
@@ -1279,6 +1427,8 @@ def get_chart_signal_detail(ticker: str):
         sig['chart_patterns'] = chart_patterns
         sig['chart_pattern_summary'] = chart_summary
         sig['wyckoff'] = wyckoff
+        sig['confluence'] = confluence
+        sig['risk_tags'] = risk_tags
         return sig
     except HTTPException:
         raise

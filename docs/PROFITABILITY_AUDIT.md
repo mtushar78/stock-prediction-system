@@ -212,3 +212,15 @@ The pattern scanner rows now carry: (a) **risk tags** computed from live quant s
 - **Not modeled:** slippage/spread (thin DSE books make small +edges worse, strengthening the breakout conclusion), circuit-breaker/floor-price regimes (2022–23 floor period suppresses both strategies' samples), overlapping forward windows (a stock can fire repeatedly within 10 days — win rates are per-fire, not per-independent-trade).
 - **Sample-size warnings:** pattern BUY SETUP n=40 (grade A n=7) — the direction is clear but the magnitude is noisy; reversal fires cluster in 2024 (n=300 of 525) — its worst year (2025, n=35) was −2.9% net, so it is not immune to regime.
 - Reproduce with: `python breakout_cost_audit.py`, `python breakout_grade_audit.py`, `python validate_patterns_pit.py` (writes `pattern_pit_rows.csv`).
+
+## 9. Chart-pattern DENSE re-validation (2026-07-07) — bullish layer is baseline-minus-costs
+
+`validate_patterns_regime.py` (STEP=10, 2022-01 → 2026-07-06, 24,781 PIT samples, breadth-bucketed) — ~100× the bullish sample of §4:
+
+- **Bullish confirmed (n=4,115): −0.21% gross — IDENTICAL to the universe baseline (−0.21%)** → NET −1.01%, 37% win. The bullish pattern layer adds zero information; net of costs it is a commission machine. WATCH verdicts (n=3,512): NET −1.12%.
+- **Regime does NOT rescue patterns** (unlike the quant reversal): weak tape −1.84% NET, strong tape −0.42% NET — both ≈ baseline − costs.
+- **§4's small-n survivors collapsed**: triple_bottom +1.68% → **+0.42% NET** (n=487, 38% win — noise-tier); double_bottom_ea +2.24% → **−0.87% NET** (n=368). Confirms the multiple-comparison caution in §8.
+- **Bearish side no longer validates**: EXIT/AVOID −0.30% gross vs −0.21% baseline (≈0 edge, n=3,528); DANGER/DCB actually *outperformed* (+1.55% NET, n=213). §4's "mild bearish validity" was small-sample.
+- **Why it feels like it works right now**: 2026 YTD bullish confirmed = **+2.17% NET, 52% win** (n=632) — the only positive year of five. It's the breadth-68% tape lifting everything, not the patterns: the same layer did **−4.50% NET in 2024**. Following chart patterns feels smart in a bull tape and bleeds worst right after it turns.
+
+**Disposition:** Chart Analyst = visualization/education/context layer only. Not a buy list, not a sell list, no confluence weight. Raw rows: `pattern_pit_rows_regime.csv`.

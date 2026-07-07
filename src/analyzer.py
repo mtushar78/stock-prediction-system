@@ -150,7 +150,13 @@ class StockAnalyzer:
         # stock with real volume prints its FIRST green day, well below its
         # 120-day high (room to run), and is liquid. See measure_reversal study.
         self.reversal_max_rsi = 30.0           # deeply oversold (Wilder RSI<30)
-        self.reversal_min_rvol = 1.5           # capitulation/turn volume
+        # v10.2 (2026-07-07): relaxed 1.5 -> 1.25. The weekly-system study
+        # (weekly_system_study.py, non-overlapping trades, next-open fills, NET
+        # of 0.8%) showed rvol>=1.25 yields ~33% MORE fires (+467 vs +350 indep
+        # trades over 2019-26) at essentially the same edge (+3.6% vs +3.9% net).
+        # More seasons-in-play without diluting the signal. See
+        # docs/PROFITABILITY_AUDIT.md and [[weekly-system-regime-study]].
+        self.reversal_min_rvol = 1.25          # capitulation/turn volume
         self.reversal_min_room_pct = 15.0      # >= this % below the 120d high
         self.reversal_min_avg_vol20 = 50000    # same liquidity floor as breakout
         self.reversal_min_price = 5.0          # exclude sub-5 penny / MF units

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { TrendingUp, RefreshCw, Activity, LogOut } from 'lucide-react';
 import { SystemStatus } from '../types';
 import { useAuth } from './AuthProvider';
+import DataFreshnessBadge from './DataFreshnessBadge';
 
 interface HeaderProps {
   systemStatus: SystemStatus | null;
@@ -54,6 +55,7 @@ export default function Header({ systemStatus, loading, onRefresh }: HeaderProps
             {systemStatus?.market_status || 'UNKNOWN'}
           </span>
         </div>
+        <DataFreshnessBadge systemStatus={systemStatus} />
         <button
           onClick={onRefresh}
           disabled={loading}

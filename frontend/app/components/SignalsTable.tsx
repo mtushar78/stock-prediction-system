@@ -271,9 +271,9 @@ export default function SignalsTable({
       )}
       {showLegend && list === 'REVERSAL' && (
         <div className="mb-3 bg-gray-900 border border-amber-800/50 rounded p-3 text-xs text-gray-300 space-y-1.5">
-          <div><span className="text-amber-300 font-bold">📉 REVERSAL</span> fires when a stock is (1) deeply oversold (RSI &lt; 30), (2) prints its first green day (the turn), (3) on real volume (RVOL ≥ 1.5×), (4) sits ≥ 15% below its 120-day high (room to run), and (5) is liquid. The buy-low edge in a mean-reverting market.</div>
-          <div className="text-amber-300/70">⚠️ Edge case: in a sustained market downtrend, oversold can get more oversold (2023 &amp; 2025 backtest were weak). Exit plan: <b>−10% stop</b> (wider than breakouts — the entry is a falling knife by design), +25% target, or time out after ~20 trading days; don&apos;t average down.</div>
-          <div className="text-gray-500">Empty on calm days — reversals cluster around selloffs.</div>
+          <div><span className="text-amber-300 font-bold">📉 REVERSAL</span> fires when a stock is (1) deeply oversold (RSI &lt; 30), (2) prints its first green day (the turn), (3) on real volume (RVOL ≥ 1.25×), (4) sits ≥ 15% below its 120-day high (room to run), and (5) is liquid. The buy-low edge in a mean-reverting market — the one signal with a validated net-of-cost edge (<b className="text-amber-200">+3–4%/trade, ~57% win</b>, non-overlapping trades, realistic next-day fills, 2019–2026).</div>
+          <div className="text-amber-300/70">🗓️ <b>It is seasonal.</b> This edge only shows up in <b>weak tape (breadth &lt; 45% = Reversal Season)</b>; when the market is strong it is ≈0. That is why the list sits empty for weeks then clusters around selloffs — the emptiness IS the strategy. Don&apos;t force a trade to stay busy; wait for the season.</div>
+          <div className="text-amber-300/70">⚠️ Exit plan: <b>−10% stop</b> (wider than breakouts — the entry is a falling knife by design), +25% target, or time out after ~20 trading days; don&apos;t average down.</div>
         </div>
       )}
       {showLegend && list === 'OVERHEATED' && (
@@ -348,6 +348,16 @@ export default function SignalsTable({
           </tbody>
         </table>
       </div>
+      )}
+
+      {/* Preservation-season notice: reversal edge is ≈0 when breadth >= 45%.
+          Info-only — fires are still shown, but flagged as out-of-season. */}
+      {list === 'REVERSAL' && typeof marketBreadth === 'number' && marketBreadth >= 45 && (
+        <div className="mb-3 bg-amber-950/30 border border-amber-600/50 rounded p-3 text-xs text-amber-200/90">
+          🛡️ <b>Preservation season</b> (breadth {marketBreadth}% ≥ 45%). Historically the reversal edge is
+          <b> ≈0</b> in tape this strong — any fires below are <b>information only, not high-conviction buys</b>.
+          Better use of today: ride existing winners and add names to your watchlist for when Reversal Season returns.
+        </div>
       )}
 
       {/* ---- REVERSAL TABLE (mean-reversion / buy-the-bottom) ---- */}

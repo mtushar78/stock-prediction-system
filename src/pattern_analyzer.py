@@ -116,17 +116,25 @@ STATS: Dict[str, Dict[str, Optional[float]]] = {
 # Bulkowski's US numbers above describe identification; THESE numbers describe
 # what buying the confirmation actually returned on DSE. Only patterns with
 # enough samples are listed; shown next to book stats so users aren't misled.
+#
+# UPDATED 2026-07-07 from the DENSE re-validation (validate_patterns_regime.py,
+# STEP=10, 24,781 PIT samples 2022→2026-07 — ~100× the first audit's n). The
+# larger sample confirmed the bullish layer ≈ the universe baseline (−0.21%
+# gross); even the two former "survivors" (triple_bottom, double_bottom_ea)
+# collapsed to noise-tier. See docs/PROFITABILITY_AUDIT.md §9.
 DSE_STATS: Dict[str, Dict[str, float]] = {
-    'double_bottom_ee':     {'net_20d': -0.9, 'win_pct': 40, 'n': 159},
-    'falling_wedge':        {'net_20d': -0.8, 'win_pct': 43, 'n': 113},
-    'triple_bottom':        {'net_20d': +1.7, 'win_pct': 38, 'n': 82},
-    'double_bottom_ae':     {'net_20d': -1.0, 'win_pct': 41, 'n': 54},
-    'pipe_bottom':          {'net_20d': -4.4, 'win_pct': 21, 'n': 53},
-    'double_bottom_ea':     {'net_20d': +2.2, 'win_pct': 51, 'n': 45},
-    'three_rising_valleys': {'net_20d': -2.3, 'win_pct': 36, 'n': 28},
-    'double_bottom_aa':     {'net_20d': -1.6, 'win_pct': 45, 'n': 22},
-    'hs_bottom':            {'net_20d': -4.1, 'win_pct': 24, 'n': 21},
-    'descending_triangle':  {'net_20d': -1.1, 'win_pct': 47, 'n': 17},
+    'double_bottom_ee':     {'net_20d': -0.9, 'win_pct': 37, 'n': 1089},
+    'falling_wedge':        {'net_20d': -1.1, 'win_pct': 38, 'n': 600},
+    'triple_bottom':        {'net_20d': +0.4, 'win_pct': 38, 'n': 487},
+    'double_bottom_ae':     {'net_20d': -1.4, 'win_pct': 37, 'n': 427},
+    'double_bottom_ea':     {'net_20d': -0.9, 'win_pct': 38, 'n': 368},
+    'pipe_bottom':          {'net_20d': -3.9, 'win_pct': 32, 'n': 308},
+    'descending_triangle':  {'net_20d': +0.2, 'win_pct': 41, 'n': 177},
+    'double_bottom_aa':     {'net_20d': -1.1, 'win_pct': 37, 'n': 177},
+    'three_rising_valleys': {'net_20d': -1.1, 'win_pct': 30, 'n': 137},
+    'hs_bottom':            {'net_20d': -0.7, 'win_pct': 38, 'n': 121},
+    'symmetrical_triangle': {'net_20d': -1.7, 'win_pct': 34, 'n': 85},
+    'rising_wedge':         {'net_20d': -1.5, 'win_pct': 42, 'n': 48},
 }
 
 

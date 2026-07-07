@@ -54,13 +54,6 @@ const gradeCls = (g: string | null) => {
   }
 };
 
-const biasBadge = (bias: string) =>
-  bias === 'bullish'
-    ? 'bg-emerald-700/40 text-emerald-300 border-emerald-700'
-    : bias === 'bearish'
-    ? 'bg-red-900/40 text-red-300 border-red-800'
-    : 'bg-gray-700 text-gray-300 border-gray-600';
-
 const isSetup = (r: ChartPatternScanRow) => r.verdict === 'BUY SETUP' || r.verdict === 'WATCH';
 const isWarn = (r: ChartPatternScanRow) => r.has_dcb || r.verdict === 'DANGER' || r.verdict === 'EXIT / AVOID';
 
@@ -251,6 +244,33 @@ export default function PatternScope({ apiUrl, onRowClick, onLearn }: PatternSco
             <span className="text-sky-300 font-bold">🚀 confluence</span> = your proven quant breakout/reversal
             engine ALSO fires here. That&apos;s the strongest agreement — it bumps the grade.
           </div>
+          <div className="border-t border-gray-700 pt-2">
+            <b className="text-gray-200">DSE reality</b> — what buying this pattern&apos;s confirmation and holding
+            <b> 20 trading days</b> actually returned on DSE (2023–26, net of 0.8% costs).{' '}
+            <span className="text-emerald-400 font-bold">+2.2% net · 51% win</span> = the average trade made +2.2%
+            after costs and 51% of trades were profitable — a small real edge.{' '}
+            <span className="text-red-400 font-bold">−0.8% net · 43% win</span> = the average trade LOST money and
+            most trades lost — the pattern looks bullish but doesn&apos;t pay here.{' '}
+            <span className="text-amber-400 font-bold">unproven</span> = too few local occurrences to measure; the
+            book stats and target are US numbers, not validated on DSE.
+          </div>
+          <div className="border-t border-gray-700 pt-2">
+            <b className="text-gray-200">⚠ risk tags</b> — live-state checks from the decliner study (how tops look
+            the day before they fall). These fire on <b>price</b>, not volume:
+            <ul className="list-disc pl-5 mt-1 space-y-0.5">
+              <li><b className="text-red-300">OVERBOUGHT RSI ≥65</b> — price rose too fast vs its own history. On DSE
+                that mean-reverts: buyers are exhausted, not &quot;trending&quot;.</li>
+              <li><b className="text-red-300">ALREADY RAN +X%/20d</b> — the move you&apos;d be buying already happened;
+                you&apos;d be the exit liquidity.</li>
+              <li><b className="text-red-300">STRETCHED above 20-SMA</b> — price far above its average snaps back
+                more often than it keeps going.</li>
+              <li><b className="text-red-300">CLIMAX VOLUME ≥3×</b> — huge volume AFTER a run is distribution
+                (holders selling to latecomers), the opposite of quiet accumulation volume BEFORE a move.</li>
+              <li><b className="text-red-300">THIN</b> — too few shares trade per day to enter/exit at fair prices.</li>
+              <li><b className="text-red-300">NO QUANT DATA</b> — the quant engine skipped this ticker (too thin or
+                broken data), so none of the checks above could even run. Treat as untracked, not as safe.</li>
+            </ul>
+          </div>
         </div>
       )}
 
@@ -360,12 +380,17 @@ export default function PatternScope({ apiUrl, onRowClick, onLearn }: PatternSco
                     ) : (
                       <span className="text-gray-600">—</span>
                     )}
-                    {r.bias === 'bullish' && r.dse_stats && (
+                    {r.bias === 'bullish' && (r.dse_stats ? (
                       <div className={`text-[10px] mt-0.5 font-bold ${r.dse_stats.net_20d > 0 ? 'text-emerald-400/80' : 'text-red-400/90'}`}
                         title={`What buying this pattern's confirmation ACTUALLY returned on DSE (point-in-time 2023–26, +20 trading days, net of 0.8% commission, n=${r.dse_stats.n}). The target above is the US book's projection — this is the local reality.`}>
                         DSE reality: {r.dse_stats.net_20d > 0 ? '+' : ''}{r.dse_stats.net_20d}% net · {r.dse_stats.win_pct}% win
                       </div>
-                    )}
+                    ) : (
+                      <div className="text-[10px] mt-0.5 font-bold text-amber-400/80"
+                        title="Too few historical occurrences of this pattern on DSE (2023–26) to measure what buying it actually returns. The US book stats and the target are UNVERIFIED here — don't assume they transfer.">
+                        DSE reality: unproven — no local backtest data
+                      </div>
+                    ))}
                   </td>
                 </tr>
               );

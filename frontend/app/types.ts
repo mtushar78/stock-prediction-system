@@ -236,6 +236,11 @@ export interface SystemStatus {
   market_status: string;
   last_update: string | null;
   next_update: string | null;
+  /** Calendar days since the newest OHLCV bar — every verdict in the app is
+   *  computed from that data, so staleness here poisons every page. */
+  data_age_days?: number | null;
+  /** true when data_age_days > 3 (DSE weekend is Fri/Sat + holiday buffer). */
+  data_stale?: boolean | null;
 }
 
 // ----------------------------
@@ -532,6 +537,11 @@ export interface ChartSignal {
   detected_at?: string;
   // v9: confluence — the quant engine ALSO flags a breakout for this ticker
   breakout?: boolean;
+  /** Which quant signal also fires here (reversal is the validated edge). */
+  confluence?: 'breakout' | 'reversal' | null;
+  /** Live-state warnings (overbought / already ran / stretched / climax /
+   *  thin) — same decliner-anatomy tags as the scanner list. */
+  risk_tags?: string[];
   // v14: Bulkowski chart patterns
   chart_patterns?: DetectedChartPattern[];
   chart_pattern_summary?: ChartPatternSummary | null;
