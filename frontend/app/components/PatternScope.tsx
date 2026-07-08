@@ -65,6 +65,7 @@ export default function PatternScope({ apiUrl, onRowClick, onLearn }: PatternSco
   const [sortKey, setSortKey] = useState<SortKey>('edge');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [showHelp, setShowHelp] = useState(false);
+  const [sectorFilter, setSectorFilter] = useState<string>('ALL');
 
   useEffect(() => {
     let cancelled = false;
@@ -89,15 +90,31 @@ export default function PatternScope({ apiUrl, onRowClick, onLearn }: PatternSco
     };
   }, [apiUrl]);
 
-  const setups = useMemo(() => rows.filter(isSetup), [rows]);
-  const warnings = useMemo(() => rows.filter(isWarn), [rows]);
+  // Distinct sectors present today (for the category filter), most-common first.
+  const sectorList = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const r of rows) {
+      const s = r.sector || 'Unknown';
+      counts.set(s, (counts.get(s) || 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  }, [rows]);
+
+  // Sector filter applies FIRST, so the tab counts reflect the chosen category.
+  const sectorRows = useMemo(
+    () => (sectorFilter === 'ALL' ? rows : rows.filter((r) => (r.sector || 'Unknown') === sectorFilter)),
+    [rows, sectorFilter],
+  );
+
+  const setups = useMemo(() => sectorRows.filter(isSetup), [sectorRows]);
+  const warnings = useMemo(() => sectorRows.filter(isWarn), [sectorRows]);
 
   const filtered = useMemo(() => {
     if (tab === 'SETUPS') return setups;
     if (tab === 'WARNINGS') return warnings;
-    if (tab === 'CONFIRMED') return rows.filter((r) => r.status === 'confirmed');
-    return rows;
-  }, [rows, tab, setups, warnings]);
+    if (tab === 'CONFIRMED') return sectorRows.filter((r) => r.status === 'confirmed');
+    return sectorRows;
+  }, [sectorRows, tab, setups, warnings]);
 
   const sorted = useMemo(() => {
     const copy = [...filtered];
@@ -149,7 +166,7 @@ export default function PatternScope({ apiUrl, onRowClick, onLearn }: PatternSco
     [setups],
   );
   // Only reversal confluence counts — it's the one with a validated net edge.
-  const confluenceCount = rows.filter((r) => r.confluence === 'reversal').length;
+  const confluenceCount = sectorRows.filter((r) => r.confluence === 'reversal').length;
 
   const TabBtn = ({ id, label, count, cls }: { id: Tab; label: string; count: number; cls?: string }) => (
     <button
@@ -176,13 +193,31 @@ export default function PatternScope({ apiUrl, onRowClick, onLearn }: PatternSco
             <Info className="w-4 h-4" />
           </button>
         </div>
-        <div className="flex gap-1 flex-wrap">
+        <div className="flex gap-1 flex-wrap items-center">
+          {/* Category (sector) filter */}
+          <select
+            value={sectorFilter}
+            onChange={(e) => setSectorFilter(e.target.value)}
+            title="Filter by sector / category"
+            className="bg-gray-700 text-gray-200 text-xs rounded px-2 py-1 border border-gray-600 mr-1 max-w-[170px]"
+          >
+            <option value="ALL">All sectors ({rows.length})</option>
+            {sectorList.map(([s, n]) => (
+              <option key={s} value={s}>{s} ({n})</option>
+            ))}
+          </select>
           <TabBtn id="SETUPS" label="🎯 SETUPS" count={setups.length} cls="bg-emerald-700 text-white" />
           <TabBtn id="WARNINGS" label="⚠ WARNINGS" count={warnings.length} cls="bg-red-800 text-white" />
-          <TabBtn id="CONFIRMED" label="CONFIRMED" count={rows.filter((r) => r.status === 'confirmed').length} />
-          <TabBtn id="ALL" label="ALL" count={rows.length} />
+          <TabBtn id="CONFIRMED" label="CONFIRMED" count={sectorRows.filter((r) => r.status === 'confirmed').length} />
+          <TabBtn id="ALL" label="ALL" count={sectorRows.length} />
         </div>
       </div>
+      {sectorFilter !== 'ALL' && (
+        <div className="mb-2 text-xs text-cyan-300/80">
+          Showing <b>{sectorFilter}</b> only ·{' '}
+          <button onClick={() => setSectorFilter('ALL')} className="underline hover:text-cyan-200">clear filter</button>
+        </div>
+      )}
 
       {/* ---- Takeaway banner: the decision at a glance ---- */}
       {!loading && rows.length > 0 && (
@@ -327,6 +362,9 @@ export default function PatternScope({ apiUrl, onRowClick, onLearn }: PatternSco
                       )}
                       {r.has_dcb && <ShieldAlert className="w-3.5 h-3.5 text-red-400" />}
                     </span>
+                    {r.sector && (
+                      <div className="text-[10px] text-gray-500 mt-0.5 font-normal">{r.sector}</div>
+                    )}
                     {(r.risk_tags?.length ?? 0) > 0 && (
                       <div className="flex flex-wrap gap-1 mt-1 max-w-[240px]"
                         title="Live-state warnings — this is how tops look the day before they fall (see the decliner study). A rising chart + big target does NOT override these.">

@@ -9,6 +9,7 @@ import AlertsSection from './components/AlertsSection';
 import SignalsTable from './components/SignalsTable';
 import DateReplayBar from './components/DateReplayBar';
 import MarketHealthMeter, { MarketHealth } from './components/MarketHealthMeter';
+import SectorHealth from './components/SectorHealth';
 import PortfolioTable from './components/PortfolioTable';
 import TradeForm from './components/TradeForm';
 import SystemInfoBox from './components/SystemInfoBox';
@@ -366,6 +367,7 @@ export default function Dashboard() {
             onLive={goLive}
           />
           <MarketHealthMeter data={marketHealth} asOf={histDate} />
+          {histDate === null && <SectorHealth apiUrl={API_URL} />}
           <SignalsTable
             signals={signals}
             loading={loading || histLoading}

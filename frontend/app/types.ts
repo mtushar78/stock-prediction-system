@@ -481,9 +481,32 @@ export interface DetectedChartPattern {
   quality_notes: string[];
 }
 
+// Sector-rotation snapshot (dashboard SectorHealth panel).
+export interface SectorHealthRow {
+  sector: string;
+  stocks: number;
+  turnover_mn: number;
+  turnover_share: number;
+  breadth_pct: number;
+  advancers_pct: number;
+  ret5: number | null;
+  ret20: number | null;
+  rvol: number;
+  strength: number;
+  condition: 'STRONG' | 'FIRM' | 'SOFT' | 'WEAK';
+  trend: 'up' | 'down' | 'flat';
+}
+
+export interface SectorHealth {
+  as_of: string | null;
+  total_turnover_mn: number;
+  sectors: SectorHealthRow[];
+}
+
 // One row of the multi-week chart-pattern scanner (list view).
 export interface ChartPatternScanRow {
   ticker: string;
+  sector?: string | null;
   analysis_date: string;
   price: number | null;
   bias: string;

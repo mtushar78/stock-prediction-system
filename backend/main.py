@@ -938,6 +938,110 @@ def get_market_health(date: str = None):
         return {'date': None, 'breadth_pct': None, 'above': 0, 'total': 0, 'label': 'UNKNOWN', 'healthy': False}
 
 
+def _compute_sector_health(as_of: str = None):
+    """Per-sector 'where is the money and how healthy is it' snapshot.
+
+    For each sector (fundamentals.sector), over its LIQUID stocks:
+      - turnover_mn / turnover_share : today's traded value — 'most trades'
+      - breadth_pct                  : % above their 50-day average (health)
+      - ret5 / ret20 (median)        : recent trend
+      - adv_pct                      : % green today (today's direction)
+      - rvol                         : today's volume vs its own 20d avg (activity)
+      - strength (0-100) + condition : 0.6*breadth + 0.4*scaled-20d-momentum
+    Sector breadth is just the market-breadth regime dial (the one validated
+    switch) sliced by sector — descriptive context, NOT a per-sector buy edge.
+    """
+    from sqlalchemy import text as _t
+    import numpy as _np
+    db = DatabaseManager()
+    try:
+        sec = pd.read_sql_query(
+            _t("SELECT ticker, sector FROM fundamentals WHERE sector IS NOT NULL"), db.engine)
+        if as_of:
+            mx = pd.read_sql_query(_t("SELECT MAX(date) m FROM stock_data WHERE date <= :d"),
+                                   db.engine, params={"d": as_of})
+        else:
+            mx = pd.read_sql_query(_t("SELECT MAX(date) m FROM stock_data"), db.engine)
+        maxd = str(mx['m'].iloc[0])[:10] if mx['m'].iloc[0] is not None else None
+        if not maxd:
+            return {'as_of': None, 'sectors': [], 'total_turnover_mn': 0}
+        dts = pd.read_sql_query(
+            _t("SELECT DISTINCT date FROM stock_data WHERE date <= :d ORDER BY date DESC LIMIT 55"),
+            db.engine, params={"d": maxd})
+        start = str(dts['date'].min())[:10]
+        df = pd.read_sql_query(
+            _t("SELECT date, ticker, close, volume, value_mn FROM stock_data "
+               "WHERE date BETWEEN :s AND :e"),
+            db.engine, params={"s": start, "e": maxd})
+    finally:
+        db.close()
+
+    df = df[df['close'] > 0].sort_values(['ticker', 'date'])
+    sector_of = dict(zip(sec['ticker'], sec['sector']))
+    per = []
+    for tk, g in df.groupby('ticker', sort=False):
+        if len(g) < 25 or tk not in sector_of:
+            continue
+        close = g['close'].to_numpy(float)
+        vol = g['volume'].to_numpy(float)
+        val = g['value_mn'].to_numpy(float)
+        sma50 = float(_np.mean(close[-50:])) if len(close) >= 50 else float(_np.mean(close))
+        avgv20 = float(_np.mean(vol[-21:-1])) if len(vol) >= 21 else float(_np.mean(vol[:-1])) if len(vol) > 1 else 0.0
+        c = close[-1]
+        if avgv20 < 50000 or c < 5:            # same liquidity floor as market breadth
+            continue
+        prev = close[-2] if len(close) >= 2 else c
+        ret5 = (c / close[-6] - 1) * 100 if len(close) >= 6 and close[-6] > 0 else _np.nan
+        ret20 = (c / close[-21] - 1) * 100 if len(close) >= 21 and close[-21] > 0 else _np.nan
+        tv = val[-1]
+        if not (tv == tv) or tv <= 0:          # value_mn missing → approximate
+            tv = vol[-1] * c / 1e6
+        rvol = (vol[-1] / avgv20) if avgv20 > 0 else _np.nan
+        per.append(dict(sector=sector_of[tk], above=c > sma50, green=c > prev,
+                        ret5=ret5, ret20=ret20, turnover=tv, rvol=rvol))
+
+    if not per:
+        return {'as_of': maxd, 'sectors': [], 'total_turnover_mn': 0}
+    p = pd.DataFrame(per)
+    total_turnover = float(p['turnover'].sum()) or 1.0
+    out = []
+    for sname, g in p.groupby('sector'):
+        n = len(g)
+        breadth = round(100.0 * g['above'].mean(), 1)
+        ret20 = float(_np.nanmedian(g['ret20']))
+        ret5 = float(_np.nanmedian(g['ret5']))
+        turnover = float(g['turnover'].sum())
+        mom = max(0.0, min(100.0, (ret20 + 15.0) / 30.0 * 100.0))   # -15%..+15% → 0..100
+        strength = round(0.6 * breadth + 0.4 * mom, 1)
+        condition = ('STRONG' if strength >= 65 else 'FIRM' if strength >= 50
+                     else 'SOFT' if strength >= 35 else 'WEAK')
+        trend = ('up' if ret5 > 1 else 'down' if ret5 < -1 else 'flat')
+        out.append({
+            'sector': sname, 'stocks': n,
+            'turnover_mn': round(turnover, 1),
+            'turnover_share': round(100.0 * turnover / total_turnover, 1),
+            'breadth_pct': breadth, 'advancers_pct': round(100.0 * g['green'].mean(), 1),
+            'ret5': round(ret5, 2) if ret5 == ret5 else None,
+            'ret20': round(ret20, 2) if ret20 == ret20 else None,
+            'rvol': round(float(_np.nanmedian(g['rvol'])), 2),
+            'strength': strength, 'condition': condition, 'trend': trend,
+        })
+    out.sort(key=lambda s: -s['turnover_mn'])   # most trades first
+    return {'as_of': maxd, 'total_turnover_mn': round(total_turnover, 1),
+            'sectors': out}
+
+
+@app.get("/api/sector-health")
+def get_sector_health(date: str = None):
+    """Sector-rotation snapshot: which sectors have the most trades + their
+    condition, so the user knows where to focus (see SectorHealth on the dash)."""
+    try:
+        return _compute_sector_health(date)
+    except Exception as e:
+        logger.error(f"sector-health failed: {e}")
+        return {'as_of': None, 'sectors': [], 'total_turnover_mn': 0}
+
+
 @app.get("/api/analyzed-dates")
 def get_analyzed_dates():
     """Dates already cached in signals_history — these replay INSTANTLY with no
@@ -1359,6 +1463,13 @@ def get_chart_pattern_signals():
         # the only positive edge in every backtest, that's the strongest tell.
         breakout_tickers, reversal_tickers = set(), set()
         risk_info = {}   # ticker -> live state for the DON'T-CHASE tags
+        sector_map = {}  # ticker -> sector (for the chart-page category filter)
+        try:
+            sdf = pd.read_sql_query(
+                "SELECT ticker, sector FROM fundamentals WHERE sector IS NOT NULL", db.engine)
+            sector_map = dict(zip(sdf['ticker'], sdf['sector']))
+        except Exception:
+            sector_map = {}
         try:
             from sqlalchemy import text as _text
             cols = pd.read_sql_query(_text("SELECT * FROM signals_today LIMIT 1"), db.engine).columns.tolist()
@@ -1479,6 +1590,7 @@ def get_chart_pattern_signals():
                     'chart pattern here is visual context only.')
             out.append({
                 'ticker': tk,
+                'sector': sector_map.get(tk),
                 'analysis_date': r['analysis_date'],
                 'price': _f(r['price']),
                 'bias': r['bias'],
