@@ -199,7 +199,13 @@ const patternBars = (name: string): number => {
   return 1;
 };
 
-export default function ChartDetailModal({ apiUrl, ticker, onClose }: ChartDetailModalProps) {
+/**
+ * ChartAnalysisBody — the full chart-analysis content (data fetch, chart,
+ * pattern cards, bottom-line verdict) with NO modal chrome. Used both by
+ * ChartDetailModal (wrapped in an overlay) and embedded directly at the
+ * bottom of the /analyze page.
+ */
+export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: string }) {
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstanceRef = useRef<IChartApi | null>(null);
   const [signal, setSignal] = useState<ChartSignal | null>(null);
@@ -254,15 +260,6 @@ export default function ChartDetailModal({ apiUrl, ticker, onClose }: ChartDetai
       cancelled = true;
     };
   }, [apiUrl, ticker]);
-
-  // Esc to close
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
 
   // Build the chart whenever data or the selected pattern changes.
   useEffect(() => {
@@ -473,45 +470,29 @@ export default function ChartDetailModal({ apiUrl, ticker, onClose }: ChartDetai
 
   return (
     <>
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-2" onClick={onClose}>
-      <div
-        className="bg-gray-900 rounded-lg shadow-2xl border border-purple-800/40 w-full max-w-[1200px] max-h-[95vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="p-4 border-b border-gray-700 flex items-center justify-between sticky top-0 bg-gray-900 z-10">
-          <div className="flex items-center gap-3 flex-wrap">
-            <h2 className="text-2xl font-bold text-purple-300">{ticker}</h2>
-            <span className="text-xs text-gray-500 border border-purple-800/60 rounded px-1.5 py-0.5">
-              Chart Analyst
-            </span>
-            {signal && (
-              <>
-                <span
-                  className={`px-2 py-0.5 rounded text-xs font-bold ${confidenceClass(signal.confidence)}`}
-                  title="How clearly a candlestick pattern is formed on the latest bars — NOT a buy/sell call. Read the BOTTOM LINE banner below for whether to buy."
-                >
-                  {signal.confidence} <span className="font-normal opacity-70">signal clarity</span>
-                </span>
-                <span className="text-sm text-gray-400">
-                  bias{' '}
-                  <span className="font-bold" style={{ color: biasColor(signal.overall_bias) }}>
-                    {signal.overall_bias.toUpperCase()}
-                  </span>
-                </span>
-                {signal.analysis_date && (
-                  <span className="text-xs text-gray-500">{signal.analysis_date}</span>
-                )}
-              </>
-            )}
-          </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white">
-            <X className="w-6 h-6" />
-          </button>
-        </div>
-
         {/* Body */}
         <div className="p-4 space-y-4">
+          {/* Signal-clarity / bias / date strip (was the modal header) */}
+          {signal && (
+            <div className="flex items-center gap-3 flex-wrap">
+              <span
+                className={`px-2 py-0.5 rounded text-xs font-bold ${confidenceClass(signal.confidence)}`}
+                title="How clearly a candlestick pattern is formed on the latest bars — NOT a buy/sell call. Read the BOTTOM LINE banner below for whether to buy."
+              >
+                {signal.confidence} <span className="font-normal opacity-70">signal clarity</span>
+              </span>
+              <span className="text-sm text-gray-400">
+                bias{' '}
+                <span className="font-bold" style={{ color: biasColor(signal.overall_bias) }}>
+                  {signal.overall_bias.toUpperCase()}
+                </span>
+              </span>
+              {signal.analysis_date && (
+                <span className="text-xs text-gray-500">{signal.analysis_date}</span>
+              )}
+            </div>
+          )}
+
           {loading && <div className="text-center text-gray-400 py-12">Loading chart…</div>}
           {error && (
             <div className="bg-red-900/40 border border-red-700 text-red-200 rounded p-3 flex items-center gap-2">
@@ -729,10 +710,46 @@ export default function ChartDetailModal({ apiUrl, ticker, onClose }: ChartDetai
             </div>
           )}
         </div>
-      </div>
-    </div>
     {learnCode && <TutorialModal code={learnCode} onClose={() => setLearnCode(null)} />}
     </>
+  );
+}
+
+/**
+ * ChartDetailModal — overlay wrapper around ChartAnalysisBody (used from the
+ * dashboard / chart-analysis pages where the chart opens in a modal).
+ */
+export default function ChartDetailModal({ apiUrl, ticker, onClose }: ChartDetailModalProps) {
+  // Esc to close
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-2" onClick={onClose}>
+      <div
+        className="bg-gray-900 rounded-lg shadow-2xl border border-purple-800/40 w-full max-w-[1200px] max-h-[95vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="p-4 border-b border-gray-700 flex items-center justify-between sticky top-0 bg-gray-900 z-10">
+          <div className="flex items-center gap-3 flex-wrap">
+            <h2 className="text-2xl font-bold text-purple-300">{ticker}</h2>
+            <span className="text-xs text-gray-500 border border-purple-800/60 rounded px-1.5 py-0.5">
+              Chart Analyst
+            </span>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-white">
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+        <ChartAnalysisBody apiUrl={apiUrl} ticker={ticker} />
+      </div>
+    </div>
   );
 }
 

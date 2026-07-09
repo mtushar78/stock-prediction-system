@@ -5,6 +5,8 @@ import Link from 'next/link';
 import axios from 'axios';
 import { DetailedTickerAnalysis, ScoreBreakdownItem, ScoreHistory } from '../types';
 import BreakoutCriteria from '../components/BreakoutCriteria';
+import StockFundamentals from '../components/StockFundamentals';
+import { ChartAnalysisBody } from '../components/ChartDetailModal';
 
 // API Base URL
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -375,6 +377,13 @@ export default function AnalyzeTickerPage() {
             {/* 60-day score history */}
             <ScoreHistoryTable history={history} loading={loadingHistory} />
 
+            {/* Sector, fundamentals & dividend history — everything about the company */}
+            <StockFundamentals
+              apiUrl={API_URL}
+              ticker={result.ticker}
+              price={result.indicators?.close ?? null}
+            />
+
             {/* ---- LEGACY (collapsed) ---- */}
             <div className="border-t border-gray-700/60 pt-3">
               <button onClick={() => setLegacy((x) => !x)} className="text-xs text-gray-500 hover:text-gray-300">
@@ -699,6 +708,17 @@ export default function AnalyzeTickerPage() {
               </div>
             )}
             </>)}
+
+            {/* ---- Chart analysis (Bulkowski patterns + candlesticks + geometry) ---- */}
+            <div className="bg-gray-950 border border-purple-800/40 rounded p-1 pt-4">
+              <div className="px-3 flex items-center justify-between flex-wrap gap-2">
+                <h3 className="font-bold text-purple-300">📊 Chart Analysis</h3>
+                <span className="text-[11px] text-gray-500">
+                  Independent second opinion · chart patterns, candlesticks &amp; support/resistance
+                </span>
+              </div>
+              <ChartAnalysisBody apiUrl={API_URL} ticker={result.ticker} />
+            </div>
           </div>
         )}
       </section>
