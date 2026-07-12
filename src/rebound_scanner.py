@@ -48,6 +48,13 @@ MIN_AVG_TURNOVER_BDT = 500_000  # traded VALUE floor — shares alone is meaning
 MAX_STALE_TRADING_DAYS = 5   # must have traded within N of the market's last session
 ADJ_DROP_PCT = 12.0          # 1-day drop beyond this = corporate action, not selling
                              # (DSE circuit breaker caps genuine moves near +/-10%)
+# "EARLY" (aggressive) turns — still AT the base but just ticked up over the last
+# 1-2 sessions, before the averages have turned. Looser than the established
+# curl so the watchlist also catches turns the moment they start. Lower
+# conviction by design → tagged stage='EARLY' and sorted below the mature ones.
+EARLY_OFF_LOW_MAX = 30.0     # still in the lower half of the recovery (near the base)
+EARLY_MIN_2D_POP = 2.0       # a >=2% two-day pop counts as a fresh turn
+EARLY_MIN_5D_POP = 3.0       # ...or a >=3% five-day bounce off the base
 
 
 def _back_adjust(closes: np.ndarray, highs: np.ndarray, lows: np.ndarray,
@@ -183,16 +190,15 @@ def _analyze_one(ticker: str, df: pd.DataFrame, sector: str | None,
     # textbook rebound and must NOT be filtered out by the fall-span rule.
     if fall_span < MIN_FALL_SPAN_BARS and days_since_trough < MIN_BASE_AGE_BARS:
         return None
-    if days_since_trough < MIN_DAYS_SINCE_TROUGH:
-        return None  # still making fresh lows — no turn yet
+    if days_since_trough < 1:
+        return None  # still printing the low today — nothing has turned up yet
 
     off_low_pct = (price - trough) / trough * 100.0
-    if off_low_pct < OFF_LOW_MIN_PCT or off_low_pct > OFF_LOW_MAX_PCT:
-        return None
-
     from_peak_pct = (price - peak) / peak * 100.0  # negative
     if from_peak_pct > -MIN_STILL_DOWN_PCT:
         return None  # already recovered most of the fall → not what we want
+    if off_low_pct > OFF_LOW_MAX_PCT:
+        return None  # already run too far off the base → no longer a fresh idea
 
     # ---- "Curving up" confirmation ----
     sma10 = _sma(closes, 10)
@@ -221,8 +227,36 @@ def _analyze_one(ticker: str, df: pd.DataFrame, sector: str | None,
 
     ma_turning = c_above_sma20 or c_sma10_up
     curl_score = sum([c_above_sma20, c_sma10_up, c_sma20_up, c_mom10, c_progress, c_reclaim])
-    if not ma_turning or curl_score < 3:
+
+    # Two ways to qualify — the list deliberately spans mature AND fresh turns:
+    #   TURNING — the established curl: reclaimed/rising averages, several days
+    #             off the low, momentum positive. Higher conviction.
+    #   EARLY   — still AT the base but just ticked up over the last 1-2 sessions
+    #             (before the averages turn). More aggressive / speculative; a
+    #             bigger watchlist, tagged so it's never mistaken for a mature turn.
+    up1 = closes[-1] > closes[-2] if len(closes) >= 2 else False
+    up2 = closes[-2] > closes[-3] if len(closes) >= 3 else False
+    ret_2d = (price / float(closes[-3]) - 1) * 100.0 if len(closes) >= 3 else None
+    established = (days_since_trough >= MIN_DAYS_SINCE_TROUGH
+                  and off_low_pct >= OFF_LOW_MIN_PCT
+                  and ma_turning and curl_score >= 3)
+    # Fresh turn: still in the lower half of the recovery and showing ANY first
+    # sign of turning — a two-day pop, a five-day bounce, two up-closes, the
+    # 10-day average curling up, a reclaim of the 20-day, or simply sitting in
+    # the upper half of its recent range. Deliberately looser than the confirmed
+    # TURNING curl: this is the aggressive "just off the bottom" watchlist bucket.
+    early_signals = sum([
+        (up1 and up2),
+        (ret_2d is not None and ret_2d >= EARLY_MIN_2D_POP),
+        (ret_5d is not None and ret_5d >= EARLY_MIN_5D_POP),
+        c_sma10_up,
+        c_above_sma20,
+        (range_pos >= 0.5),
+    ])
+    early = (not established) and off_low_pct <= EARLY_OFF_LOW_MAX and early_signals >= 1
+    if not (established or early):
         return None
+    stage = 'TURNING' if established else 'EARLY'
 
     # ---- Volume pick-up (accumulation returning on the turn) ----
     vol_recent5 = float(vols[-5:].mean()) if len(vols) >= 5 else avg_vol20
@@ -261,6 +295,20 @@ def _analyze_one(ticker: str, df: pd.DataFrame, sector: str | None,
         f"Fell {drawdown_pct:.0f}% from {peak:.1f} ({dates[peak_i]}) to {trough:.1f} "
         f"({dates[trough_i]})")
     reasons.append(f"Now {off_low_pct:.0f}% off the low, still {abs(from_peak_pct):.0f}% below the old high")
+    if stage == 'EARLY':
+        bits = []
+        if up1 and up2:
+            bits.append("2 up days")
+        if ret_2d is not None and ret_2d >= EARLY_MIN_2D_POP:
+            bits.append(f"+{ret_2d:.0f}% 2d")
+        elif ret_5d is not None and ret_5d >= EARLY_MIN_5D_POP:
+            bits.append(f"+{ret_5d:.0f}% 5d")
+        if c_sma10_up:
+            bits.append("10-day avg curling up")
+        if c_above_sma20:
+            bits.append("back above the 20-day")
+        reasons.append("Early/aggressive — at the base, first signs of turning"
+                       + (" (" + ", ".join(bits) + ")" if bits else ""))
     if c_above_sma20:
         reasons.append("Reclaimed the 20-day average")
     if c_sma10_up:
@@ -322,6 +370,7 @@ def _analyze_one(ticker: str, df: pd.DataFrame, sector: str | None,
         'rvol': _clean(rvol),
         'vol_pickup': _clean(vol_pickup),
         'curl_score': int(curl_score),
+        'stage': stage,
         'score': score,
         'grade': grade,
         'is_reversal': is_reversal,
@@ -411,9 +460,14 @@ def scan(engine, sector_map: dict | None = None) -> dict:
             logger.debug(f"rebound scan: {ticker} failed: {e}")
             continue
 
-    # Primary: quality score. Ties broken by reversal overlap, then curl
-    # strength, then earliest (smallest off-low) — never by least-fallen.
-    stocks.sort(key=lambda x: (x['score'], int(x['is_reversal']),
-                               x['curl_score'], -(x['off_low_pct'] or 0.0)),
+    # Mature TURNING setups lead the aggressive EARLY ones; within each stage,
+    # rank by quality score, then reversal overlap, curl strength, and earliest
+    # (smallest off-low) — never by least-fallen.
+    _stage_rank = {'TURNING': 1, 'EARLY': 0}
+    stocks.sort(key=lambda x: (_stage_rank.get(x.get('stage'), 0), x['score'],
+                               int(x['is_reversal']), x['curl_score'],
+                               -(x['off_low_pct'] or 0.0)),
                 reverse=True)
-    return {'as_of': as_of, 'universe': universe, 'count': len(stocks), 'stocks': stocks}
+    turning = sum(1 for s in stocks if s.get('stage') == 'TURNING')
+    return {'as_of': as_of, 'universe': universe, 'count': len(stocks),
+            'turning': turning, 'early': len(stocks) - turning, 'stocks': stocks}
