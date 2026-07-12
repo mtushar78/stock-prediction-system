@@ -626,6 +626,15 @@ def detect_triple(df, pivots, bottom=True) -> List[dict]:
         # meaningful width and depth — a real base, not three ticks of noise
         if e3['idx'] - e1['idx'] < 20:
             continue
+        # A triple BOTTOM must follow a decline (it reverses a downtrend); a
+        # triple TOP must follow an advance. Without this, three equal touches
+        # near the highs (a consolidation/resistance) get mislabelled a "triple
+        # bottom". Mirrors the downtrend gate detect_double_bottom already uses.
+        tb = _trend_before(df, e1['idx'], 20)
+        if bottom and tb > 3:
+            continue
+        if not bottom and tb < -3:
+            continue
         band = max(m1['price'], m2['price']) - min(prices) if bottom else max(prices) - min(m1['price'], m2['price'])
         if band / max(min(prices), EPS) < 0.06:
             continue
@@ -1229,8 +1238,21 @@ def detect_pipes(df) -> List[dict]:
         r1, r2 = b1['high'] - b1['low'], b2['high'] - b2['low']
         if not (r1 > 1.5 * avg_rng and r2 > 1.5 * avg_rng):
             continue
+        # Trend-context gate: a pipe BOTTOM is a reversal off a LOW and a pipe
+        # TOP off a HIGH. Require the twin spikes to sit at the correct END of
+        # the recent range — otherwise two merely-volatile weeks mid-range (or
+        # near the highs) get mislabelled a bottom (e.g. SQURPHARMA spiking to
+        # 218 while trading near its 228 high was flagged a Pipe Bottom).
+        ctx = wb[max(0, w - 20):w + 2]              # ~5 months incl. the spikes
+        ctx_low = min(p['low'] for p in ctx)
+        ctx_high = max(p['high'] for p in ctx)
+        ctx_rng = ctx_high - ctx_low
+        if ctx_rng <= 0:
+            continue
+        at_bottom = (min(b1['low'], b2['low']) - ctx_low) / ctx_rng <= 0.35
+        at_top = (max(b1['high'], b2['high']) - ctx_low) / ctx_rng >= 0.65
         # -------- Pipe Bottom --------
-        if _pct_diff(b1['low'], b2['low']) <= 0.05:
+        if _pct_diff(b1['low'], b2['low']) <= 0.05 and at_bottom:
             spike = min(b1['low'], b2['low'])
             top = max(b1['high'], b2['high'])
             conf = _confirm_close_above(df, top, b2['d_end'])
@@ -1256,7 +1278,7 @@ def detect_pipes(df) -> List[dict]:
                     quality_notes=notes, quality_score=quality,
                 ))
         # -------- Pipe Top --------
-        if _pct_diff(b1['high'], b2['high']) <= 0.05:
+        if _pct_diff(b1['high'], b2['high']) <= 0.05 and at_top:
             peak = max(b1['high'], b2['high'])
             bot = min(b1['low'], b2['low'])
             conf = _confirm_close_below(df, bot, b2['d_end'])
@@ -1515,11 +1537,18 @@ class PatternAnalyzer:
 
         # Filter to actionable patterns and de-overlap to one-per-region.
         patterns = _finalize(df, patterns)
-        # Present best-DECISION-first: highest edge, dead-cat-bounce always on
-        # top (it's a safety warning), then confirmed over forming.
+        # Present best-DECISION-first. Order of precedence:
+        #   1. dead-cat-bounce — a safety warning always leads
+        #   2. actionable (has actually triggered: WATCH/BUY/EXIT/DANGER) over
+        #      not-yet (WAIT/forming) or spent (PLAYED OUT). A *forming* pattern
+        #      must never headline over a *confirmed* one (which was the bug: a
+        #      forming Pipe Bottom outranked a confirmed Triple Bottom on edge).
+        #   3. confirmed over forming
+        #   4. edge (reward/risk × freshness × room)
         patterns.sort(key=lambda p: (p['code'] == 'dead_cat_bounce',
-                                     p.get('edge', 0),
-                                     p['status'] == 'confirmed'), reverse=True)
+                                     p.get('actionable', False),
+                                     p['status'] == 'confirmed',
+                                     p.get('edge', 0)), reverse=True)
 
         summary = self._summarize(patterns)
         # Strip internal fields before returning.
