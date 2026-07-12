@@ -19,8 +19,12 @@ import {
   TrendingUp, RefreshCw, Activity, Rocket, ArrowDownWideNarrow, Search,
 } from 'lucide-react';
 import FullAnalysisModal from '../components/FullAnalysisModal';
+import MarketHealthMeter, { MarketHealth } from '../components/MarketHealthMeter';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+/** Round a number for display (percentages, multiples); '—' when missing. */
+const f1 = (n: number | null | undefined) => (n == null ? '—' : n.toFixed(1));
 
 interface Rebound {
   ticker: string;
@@ -49,8 +53,12 @@ interface Rebound {
   curl_score: number;
   score: number;
   grade: string;
+  is_reversal?: boolean;
+  adjusted_for_action?: boolean;
+  action_dates?: string[];
   reasons: string[];
   spark: number[];
+  spark_low_idx?: number;
 }
 
 interface RebResponse {
@@ -58,6 +66,7 @@ interface RebResponse {
   universe: number;
   count: number;
   stocks: Rebound[];
+  market?: MarketHealth | null;
 }
 
 type SortKey = 'score' | 'off_low_pct' | 'drawdown_pct' | 'recovery_room_pct' | 'ret_10d';
@@ -68,26 +77,24 @@ const gradeColor = (g: string) =>
   : g === 'C' ? 'bg-yellow-600 text-black'
   : 'bg-orange-600 text-black';
 
-/** Tiny inline sparkline of the recent price path (fall + curl). */
-function Spark({ data, up }: { data: number[]; up: boolean }) {
+/** Tiny inline sparkline of the price path from the prior peak to now (fall +
+ *  base + curl). `lowIdx` is the base-low position supplied by the backend. */
+function Spark({ data, up, lowIdx }: { data: number[]; up: boolean; lowIdx?: number }) {
   if (!data || data.length < 2) return <span className="text-gray-600 text-xs">—</span>;
   const w = 96, h = 30, pad = 2;
   const min = Math.min(...data), max = Math.max(...data);
   const rng = max - min || 1;
-  const pts = data.map((v, i) => {
-    const x = pad + (i / (data.length - 1)) * (w - 2 * pad);
-    const y = pad + (1 - (v - min) / rng) * (h - 2 * pad);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(' ');
+  const px = (i: number) => pad + (i / (data.length - 1)) * (w - 2 * pad);
+  const py = (v: number) => pad + (1 - (v - min) / rng) * (h - 2 * pad);
+  const pts = data.map((v, i) => `${px(i).toFixed(1)},${py(v).toFixed(1)}`).join(' ');
   const stroke = up ? '#34d399' : '#f87171';
-  // Mark the low point (the base we're recovering from).
-  const lowIdx = data.indexOf(min);
-  const lx = pad + (lowIdx / (data.length - 1)) * (w - 2 * pad);
-  const ly = pad + (1 - (min - min) / rng) * (h - 2 * pad);
+  // Mark the base low (the trough we're recovering from). Fall back to the
+  // series minimum if the backend didn't supply an index.
+  const li = (lowIdx != null && lowIdx >= 0 && lowIdx < data.length) ? lowIdx : data.indexOf(min);
   return (
     <svg width={w} height={h} className="overflow-visible">
       <polyline points={pts} fill="none" stroke={stroke} strokeWidth={1.5} />
-      <circle cx={lx} cy={ly} r={2} fill="#f59e0b" />
+      <circle cx={px(li)} cy={py(data[li])} r={2} fill="#f59e0b" />
     </svg>
   );
 }
@@ -167,6 +174,10 @@ export default function ReboundsPage() {
           </button>
         </div>
       </header>
+
+      {/* Market SEASON — mean-reversion turns only pay in weak tape (weekly-system
+          study). This is the single most important context for acting on the list. */}
+      <MarketHealthMeter data={data?.market ?? null} asOf={data?.as_of} />
 
       {/* What this list is (and is not) */}
       <div className="mb-4 bg-teal-950/25 border border-teal-700/50 rounded-lg p-3 text-xs text-teal-100/90 leading-relaxed">
@@ -273,9 +284,14 @@ export default function ReboundsPage() {
                 </td>
                 <td className="p-3 font-bold text-teal-300 whitespace-nowrap">
                   {r.ticker}
+                  {r.is_reversal && (
+                    <span className="ml-1.5 text-[9px] bg-emerald-600 text-white px-1 py-0.5 rounded align-middle" title="Also firing on the validated v10 reversal signal — the strongest overlap on this list">
+                      REVERSAL ✓
+                    </span>
+                  )}
                   {r.rvol != null && r.rvol >= 2 && (
-                    <span className="ml-1.5 text-[9px] bg-yellow-700/60 text-yellow-200 px-1 py-0.5 rounded align-middle" title={`Volume ${r.rvol}x average today`}>
-                      {r.rvol}x vol
+                    <span className="ml-1.5 text-[9px] bg-yellow-700/60 text-yellow-200 px-1 py-0.5 rounded align-middle" title={`Volume ${f1(r.rvol)}x average today`}>
+                      {f1(r.rvol)}x vol
                     </span>
                   )}
                 </td>
@@ -284,23 +300,31 @@ export default function ReboundsPage() {
                   <span className="text-gray-100 font-bold">{r.price}</span>
                   {r.ret_10d != null && (
                     <div className={`text-[10px] ${r.ret_10d >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      {r.ret_10d >= 0 ? '+' : ''}{r.ret_10d}% / 10d
+                      {r.ret_10d >= 0 ? '+' : ''}{f1(r.ret_10d)}% / 10d
                     </div>
                   )}
                 </td>
-                <td className="p-3"><Spark data={r.spark} up={(r.ret_10d ?? 0) >= 0} /></td>
+                <td className="p-3"><Spark data={r.spark} up={(r.ret_10d ?? 0) >= 0} lowIdx={r.spark_low_idx} /></td>
                 <td className="p-3 text-right whitespace-nowrap">
-                  <span className="text-red-300 font-bold">−{r.drawdown_pct}%</span>
-                  <div className="text-[10px] text-gray-500">{r.peak} → {r.trough}</div>
+                  <span className="text-red-300 font-bold">−{f1(r.drawdown_pct)}%</span>
+                  {r.adjusted_for_action && (
+                    <span
+                      className="ml-1 text-[9px] bg-purple-900/50 text-purple-300 border border-purple-800/60 px-1 py-0.5 rounded align-middle"
+                      title={`Fall back-adjusted for a corporate action (${(r.action_dates || []).join(', ')}) so an ex-dividend/bonus drop isn't counted as selling`}
+                    >
+                      adj
+                    </span>
+                  )}
+                  <div className="text-[10px] text-gray-500">{f1(r.peak)} → {f1(r.trough)}</div>
                 </td>
-                <td className="p-3 text-right whitespace-nowrap text-emerald-300 font-bold">+{r.off_low_pct}%</td>
-                <td className="p-3 text-right whitespace-nowrap text-gray-300">{r.from_peak_pct}%</td>
-                <td className="p-3 text-right whitespace-nowrap text-sky-300">+{r.recovery_room_pct}%</td>
+                <td className="p-3 text-right whitespace-nowrap text-emerald-300 font-bold">+{f1(r.off_low_pct)}%</td>
+                <td className="p-3 text-right whitespace-nowrap text-gray-300">{f1(r.from_peak_pct)}%</td>
+                <td className="p-3 text-right whitespace-nowrap text-sky-300">+{f1(r.recovery_room_pct)}%</td>
                 <td className="p-3">
                   <div className="flex flex-wrap gap-1 max-w-[280px]">
                     {r.above_sma20 && <span className="text-[9px] bg-emerald-900/50 text-emerald-300 border border-emerald-800/60 px-1 py-0.5 rounded">&gt; 20-MA</span>}
                     {r.sma20_rising && <span className="text-[9px] bg-emerald-900/50 text-emerald-300 border border-emerald-800/60 px-1 py-0.5 rounded">20-MA ↑</span>}
-                    {r.vol_pickup != null && r.vol_pickup >= 1.3 && <span className="text-[9px] bg-sky-900/50 text-sky-300 border border-sky-800/60 px-1 py-0.5 rounded">vol {r.vol_pickup}x</span>}
+                    {r.vol_pickup != null && r.vol_pickup >= 1.3 && <span className="text-[9px] bg-sky-900/50 text-sky-300 border border-sky-800/60 px-1 py-0.5 rounded">vol {f1(r.vol_pickup)}x</span>}
                     {r.rsi != null && <span className="text-[9px] bg-gray-700/60 text-gray-300 border border-gray-600 px-1 py-0.5 rounded">RSI {Math.round(r.rsi)}</span>}
                     <span className="text-[9px] bg-gray-700/60 text-gray-400 border border-gray-600 px-1 py-0.5 rounded" title="Trading days since the base low">{r.days_since_trough}d off low</span>
                   </div>

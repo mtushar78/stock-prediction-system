@@ -1348,16 +1348,39 @@ def get_reversal_tracker():
         db.close()
 
 
+# The rebound scan re-reads ~150k rows and rescans the whole universe; the
+# result only changes once a day (new scrape). Cache it keyed on the latest
+# trading date so page loads / refreshes are instant between scrapes.
+_REBOUND_CACHE: dict = {}
+
+
 @app.get("/api/rebounds")
 def get_rebounds():
     """Watchlist screen: stocks that fell hard from a prior high, based out, and
     are NOW curving back up (the "was 120 → based at 50-60 → ticking to 61-62"
     shape). Structural filter only — a turn to TRACK, not a validated buy. Click
-    a row for the full manual analysis."""
+    a row for the full manual analysis. Includes the market SEASON so the user
+    can tell whether mean-reversion turns are worth acting on right now."""
     from src.rebound_scanner import scan
+    from sqlalchemy import text
     db = DatabaseManager()
     try:
-        return scan(db.engine)
+        mx = pd.read_sql_query(text("SELECT MAX(date) d FROM stock_data"), db.engine)
+        as_of = str(mx['d'].iloc[0])[:10] if not mx.empty and mx['d'].iloc[0] else None
+        if as_of and as_of in _REBOUND_CACHE:
+            return _REBOUND_CACHE[as_of]
+
+        res = scan(db.engine)
+        try:
+            res['market'] = _compute_market_breadth(res.get('as_of'))
+        except Exception as _me:
+            logger.debug(f"rebounds market context skipped: {_me}")
+            res['market'] = None
+
+        if res.get('as_of'):
+            _REBOUND_CACHE.clear()  # only ever hold the latest day
+            _REBOUND_CACHE[res['as_of']] = res
+        return res
     except Exception as e:
         logger.error(f"rebounds scan failed: {e}")
         import traceback

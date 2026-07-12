@@ -41,18 +41,50 @@ OFF_LOW_MIN_PCT = 3.0        # must have bounced at least this much off the low
 OFF_LOW_MAX_PCT = 45.0       # ...but not already fully recovered (stay early)
 MIN_DAYS_SINCE_TROUGH = 4    # the low must be behind us (a turn, not a fresh low)
 MIN_FALL_SPAN_BARS = 18      # the decline took time (excludes 1-day crash bounces)
+MIN_BASE_AGE_BARS = 30       # ...OR a fast crash that has since based this long
 MIN_PRICE = 5.0              # avoid untradeable penny names
-MIN_AVG_VOL20 = 20000        # basic liquidity floor (shares/day)
+MIN_AVG_VOL20 = 5000         # sanity floor on shares/day (real filter is turnover)
+MIN_AVG_TURNOVER_BDT = 500_000  # traded VALUE floor — shares alone is meaningless
+MAX_STALE_TRADING_DAYS = 5   # must have traded within N of the market's last session
+ADJ_DROP_PCT = 12.0          # 1-day drop beyond this = corporate action, not selling
+                             # (DSE circuit breaker caps genuine moves near +/-10%)
+
+
+def _back_adjust(closes: np.ndarray, highs: np.ndarray, lows: np.ndarray,
+                 drop_pct: float = ADJ_DROP_PCT):
+    """Back-adjust prices for corporate actions (bonus/rights ex-dates).
+
+    On DSE the circuit breaker caps a genuine one-day move near +/-10%, so a
+    single-day close-to-close drop far beyond that is almost always an ex-date
+    price adjustment, not real selling. Left alone, that jump inflates the
+    peak->trough drawdown and pollutes the momentum reads. We scale every bar
+    BEFORE each such gap by the gap ratio (standard price back-adjustment), which
+    chains cleanly across multiple actions and leaves the latest bar untouched.
+
+    Returns (closes_adj, highs_adj, lows_adj, gap_indices).
+    """
+    n = len(closes)
+    factor = np.ones(n)
+    gaps: list[int] = []
+    thresh = 1.0 - drop_pct / 100.0
+    for i in range(1, n):
+        prev = closes[i - 1]
+        if prev > 0 and closes[i] / prev < thresh:
+            factor[:i] *= (closes[i] / prev)
+            gaps.append(i)
+    return closes * factor, highs * factor, lows * factor, gaps
 
 
 def _rsi(closes: np.ndarray, period: int = 14) -> float | None:
+    """Wilder's RSI (EWM smoothing) — matches the RSI shown in the full analysis
+    modal (src/analyzer.py), so the row and the drill-down agree."""
     if len(closes) < period + 1:
         return None
     delta = np.diff(closes)
     gain = np.where(delta > 0, delta, 0.0)
     loss = np.where(delta < 0, -delta, 0.0)
-    ag = gain[-period:].mean()
-    al = loss[-period:].mean()
+    ag = pd.Series(gain).ewm(alpha=1 / period, adjust=False).mean().iloc[-1]
+    al = pd.Series(loss).ewm(alpha=1 / period, adjust=False).mean().iloc[-1]
     if al == 0:
         return 100.0
     rs = ag / al
@@ -83,7 +115,9 @@ def _clean(f):
     return None if (math.isnan(f) or math.isinf(f)) else round(f, 3)
 
 
-def _analyze_one(ticker: str, df: pd.DataFrame, sector: str | None) -> dict | None:
+def _analyze_one(ticker: str, df: pd.DataFrame, sector: str | None,
+                 stale_cutoff: str | None = None,
+                 reversal_set: set | None = None) -> dict | None:
     """Return a rebound row for `ticker`, or None if it doesn't qualify."""
     df = df[df['close'] > 0].sort_values('date')
     if len(df) < MIN_BARS:
@@ -91,21 +125,41 @@ def _analyze_one(ticker: str, df: pd.DataFrame, sector: str | None) -> dict | No
     # Keep at most the lookback window (most recent).
     df = df.tail(LOOKBACK_BARS).reset_index(drop=True)
 
-    closes = df['close'].to_numpy(dtype=float)
-    highs = df['high'].to_numpy(dtype=float)
-    lows = df['low'].to_numpy(dtype=float)
+    closes_raw = df['close'].to_numpy(dtype=float)
+    highs_raw = df['high'].to_numpy(dtype=float)
+    lows_raw = df['low'].to_numpy(dtype=float)
     vols = df['volume'].to_numpy(dtype=float)
     dates = df['date'].astype(str).str[:10].tolist()
 
-    price = float(closes[-1])
+    # ---- Freshness: don't surface a stale ticker as a live "turn" ----
+    # It must have traded within the last few market sessions, else its "turn"
+    # is months old (e.g. a suspended/illiquid name last printed in December).
+    if stale_cutoff is not None and dates[-1] < stale_cutoff:
+        return None
+
+    # ---- Data hygiene: DSE stores some bars with close>0 but low/high<=0 ----
+    # A single zero low creates a false trough of 0 and silently discards the
+    # whole ticker (this alone was hiding the majority of valid candidates).
+    lows_raw = np.where(lows_raw <= 0, closes_raw, lows_raw)
+    highs_raw = np.where(highs_raw <= 0, closes_raw, highs_raw)
+
+    price = float(closes_raw[-1])
     if price < MIN_PRICE:
         return None
 
+    # ---- Liquidity by traded VALUE (20k shares of a 6tk stock is untradeable) ----
+    turnover = closes_raw * vols
+    avg_turnover20 = float(turnover[-20:].mean()) if len(turnover) >= 20 else float(turnover.mean())
     avg_vol20 = float(vols[-20:].mean()) if len(vols) >= 20 else float(vols.mean())
-    if avg_vol20 < MIN_AVG_VOL20:
+    if avg_turnover20 < MIN_AVG_TURNOVER_BDT or avg_vol20 < MIN_AVG_VOL20:
         return None
 
-    # ---- Peak -> trough -> now geometry ----
+    # ---- Back-adjust for corporate actions before measuring the fall ----
+    closes, highs, lows, gap_idx = _back_adjust(closes_raw, highs_raw, lows_raw)
+    # `price` stays the raw last close (its adjustment factor is always 1.0).
+    action_dates = [dates[i] for i in gap_idx]
+
+    # ---- Peak -> trough -> now geometry (on adjusted prices) ----
     peak_i = int(np.argmax(highs))
     peak = float(highs[peak_i])
     # Trough is the lowest low AFTER the peak (the base we're recovering from).
@@ -123,10 +177,12 @@ def _analyze_one(ticker: str, df: pd.DataFrame, sector: str | None) -> dict | No
         return None
 
     fall_span = trough_i - peak_i
-    if fall_span < MIN_FALL_SPAN_BARS:
-        return None  # a fast crash + bounce is a different animal (dead-cat)
-
     days_since_trough = (len(closes) - 1) - trough_i
+    # Reject only the dead-cat: a fast crash that bounced immediately. A fast
+    # crash that has since carved a long base (>=MIN_BASE_AGE_BARS) is a
+    # textbook rebound and must NOT be filtered out by the fall-span rule.
+    if fall_span < MIN_FALL_SPAN_BARS and days_since_trough < MIN_BASE_AGE_BARS:
+        return None
     if days_since_trough < MIN_DAYS_SINCE_TROUGH:
         return None  # still making fresh lows — no turn yet
 
@@ -217,9 +273,28 @@ def _analyze_one(ticker: str, df: pd.DataFrame, sector: str | None) -> dict | No
         reasons.append(f"Volume picking up ({vol_pickup:.1f}x its base)")
     if rsi is not None:
         reasons.append(f"RSI {rsi:.0f}")
+    if action_dates:
+        reasons.append(
+            "Fall adjusted for a corporate action on " + ", ".join(action_dates))
 
-    # Recent price path for a row sparkline (last ~40 closes).
-    spark = [round(float(x), 2) for x in closes[-40:]]
+    is_reversal = bool(reversal_set and ticker in reversal_set)
+    if is_reversal:
+        reasons.insert(0, "Also firing on the validated reversal signal — strongest overlap")
+
+    # Sparkline covers the whole peak->base->turn story (down-sampled to ~60
+    # points) so the base low is always in-frame; spark_low_idx marks it.
+    seg = closes[peak_i:]
+    if len(seg) >= 2:
+        if len(seg) > 60:
+            idxs = np.unique(np.linspace(peak_i, len(closes) - 1, 60).astype(int))
+        else:
+            idxs = np.arange(peak_i, len(closes))
+        vals = closes[idxs]
+        spark = [round(float(x), 2) for x in vals]
+        spark_low_idx = int(np.argmin(vals))
+    else:
+        spark = [round(float(x), 2) for x in closes[-40:]]
+        spark_low_idx = int(np.argmin(closes[-40:])) if len(closes) else 0
 
     return {
         'ticker': ticker,
@@ -249,8 +324,12 @@ def _analyze_one(ticker: str, df: pd.DataFrame, sector: str | None) -> dict | No
         'curl_score': int(curl_score),
         'score': score,
         'grade': grade,
+        'is_reversal': is_reversal,
+        'adjusted_for_action': bool(action_dates),
+        'action_dates': action_dates,
         'reasons': reasons,
         'spark': spark,
+        'spark_low_idx': spark_low_idx,
     }
 
 
@@ -291,6 +370,13 @@ def scan(engine, sector_map: dict | None = None) -> dict:
         allrows[col] = pd.to_numeric(allrows[col], errors='coerce')
     allrows = allrows.dropna(subset=['close', 'high', 'low'])
 
+    # Freshness cutoff: the market date MAX_STALE_TRADING_DAYS sessions back. A
+    # ticker whose last bar is older than this hasn't traded recently and its
+    # "turn" would be stale — reject it in _analyze_one.
+    udates = sorted(pd.unique(allrows['date'].astype(str).str[:10]))
+    stale_cutoff = (udates[-MAX_STALE_TRADING_DAYS] if len(udates) >= MAX_STALE_TRADING_DAYS
+                    else (udates[0] if udates else None))
+
     if sector_map is None:
         try:
             sdf = pd.read_sql_query(
@@ -299,17 +385,35 @@ def scan(engine, sector_map: dict | None = None) -> dict:
         except Exception:
             sector_map = {}
 
+    # Cross-reference the validated v10 reversal signal: a rebound that ALSO
+    # fires a reversal is a far stronger candidate than the structural shape
+    # alone (reversal is the only net-of-cost edge measured on DSE).
+    reversal_set: set = set()
+    try:
+        rcols = pd.read_sql_query(text("SELECT * FROM signals_today LIMIT 1"), engine).columns.tolist()
+        if 'reversal_signal' in rcols:
+            rdf = pd.read_sql_query(
+                text("SELECT ticker FROM signals_today WHERE reversal_signal = 1"), engine)
+            reversal_set = set(rdf['ticker'].astype(str).tolist())
+    except Exception:
+        reversal_set = set()
+
     stocks = []
     universe = 0
     for ticker, g in allrows.groupby('ticker'):
         universe += 1
         try:
-            row = _analyze_one(ticker, g, sector_map.get(ticker))
+            row = _analyze_one(ticker, g, sector_map.get(ticker),
+                               stale_cutoff=stale_cutoff, reversal_set=reversal_set)
             if row:
                 stocks.append(row)
         except Exception as e:
             logger.debug(f"rebound scan: {ticker} failed: {e}")
             continue
 
-    stocks.sort(key=lambda x: (x['score'], -abs(x['from_peak_pct'] or 0)), reverse=True)
+    # Primary: quality score. Ties broken by reversal overlap, then curl
+    # strength, then earliest (smallest off-low) — never by least-fallen.
+    stocks.sort(key=lambda x: (x['score'], int(x['is_reversal']),
+                               x['curl_score'], -(x['off_low_pct'] or 0.0)),
+                reverse=True)
     return {'as_of': as_of, 'universe': universe, 'count': len(stocks), 'stocks': stocks}
