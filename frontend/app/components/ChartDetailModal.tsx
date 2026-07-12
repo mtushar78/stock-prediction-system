@@ -200,6 +200,49 @@ const patternBars = (name: string): number => {
 };
 
 /**
+ * Derive a plain target + support from real price structure so EVERY chart
+ * shows a target — not only the ones with a Bulkowski pattern. Uses swing
+ * pivots over the visible history:
+ *   • target  = nearest overhead swing high ≥2% above price (the next supply
+ *               zone / first objective); if price is near the window high with
+ *               nothing meaningful above, the window peak itself (the recovery
+ *               objective a fallen-and-turning stock is climbing back toward).
+ *   • support = nearest swing low below price (where to expect a bounce / the
+ *               level whose loss breaks the turn).
+ */
+function deriveLevels(
+  bars: { high: number; low: number; close: number }[],
+  price: number,
+): { target: number | null; support: number | null } {
+  if (bars.length < 12 || !price) return { target: null, support: null };
+  const L = 3, R = 3;
+  const highs: number[] = [];
+  const lows: number[] = [];
+  for (let i = L; i < bars.length - R; i++) {
+    const h = bars[i].high, l = bars[i].low;
+    let isHigh = true, isLow = true;
+    for (let j = i - L; j <= i + R; j++) {
+      if (bars[j].high > h) isHigh = false;
+      if (bars[j].low < l) isLow = false;
+    }
+    if (isHigh) highs.push(h);
+    if (isLow) lows.push(l);
+  }
+  const above = highs.filter((h) => h > price * 1.02).sort((a, b) => a - b);
+  let target: number | null = above.length ? above[0] : null;
+  if (target == null) {
+    const maxH = Math.max(...bars.map((b) => b.high));
+    if (maxH > price * 1.02) target = maxH; // recovery objective (window peak)
+  }
+  const below = lows.filter((l) => l < price * 0.99).sort((a, b) => b - a);
+  const support: number | null = below.length ? below[0] : null;
+  return {
+    target: target != null ? Number(target.toFixed(2)) : null,
+    support: support != null ? Number(support.toFixed(2)) : null,
+  };
+}
+
+/**
  * ChartAnalysisBody — the full chart-analysis content (data fetch, chart,
  * pattern cards, bottom-line verdict) with NO modal chrome. Used both by
  * ChartDetailModal (wrapped in an overlay) and embedded directly at the
@@ -229,6 +272,19 @@ export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: 
     () => ohlcv.filter((b) => b.open === null || b.high === null || b.low === null || b.close === null).length,
     [ohlcv],
   );
+
+  // Structural target + support drawn on EVERY chart (see deriveLevels).
+  const autoLevels = useMemo(() => {
+    const bars = ohlcv
+      .filter((b) => b.high !== null && b.low !== null && b.close !== null)
+      .map((b) => ({ high: b.high as number, low: b.low as number, close: b.close as number }));
+    if (bars.length < 12) return { target: null, support: null };
+    return deriveLevels(bars, bars[bars.length - 1].close);
+  }, [ohlcv]);
+  const lastClose = useMemo(() => {
+    const c = ohlcv.filter((b) => b.close !== null);
+    return c.length ? (c[c.length - 1].close as number) : null;
+  }, [ohlcv]);
 
   // Fetch signal + OHLCV in parallel. 300 bars so multi-month patterns fit.
   useEffect(() => {
@@ -428,6 +484,29 @@ export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: 
       });
     }
 
+    // ---- Structural target + support (drawn when the active pattern doesn't
+    //      already provide them) so every chart shows an objective ----
+    if (!(cp && cp.target != null) && autoLevels.target != null) {
+      candleSeries.createPriceLine({
+        price: autoLevels.target,
+        color: LINE_COLORS.target,
+        lineWidth: 2,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: `target ${autoLevels.target}`,
+      });
+    }
+    if (!(cp && cp.stop != null) && autoLevels.support != null) {
+      candleSeries.createPriceLine({
+        price: autoLevels.support,
+        color: LINE_COLORS.support,
+        lineWidth: 1,
+        lineStyle: LineStyle.Dotted,
+        axisLabelVisible: true,
+        title: `support ${autoLevels.support}`,
+      });
+    }
+
     // ---- Candlestick pattern markers (latest bars) ----
     const lastIdx = cleanBars.length - 1;
     signal.patterns.forEach((p) => {
@@ -458,7 +537,7 @@ export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: 
         chartInstanceRef.current = null;
       }
     };
-  }, [signal, ohlcv, chartPatterns, activePattern]);
+  }, [signal, ohlcv, chartPatterns, activePattern, autoLevels]);
 
   const trendLabel = signal?.context?.trend ?? '?';
   const trendColor =
@@ -467,6 +546,14 @@ export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: 
       : trendLabel === 'downtrend'
       ? 'text-red-400'
       : 'text-yellow-400';
+
+  // The target/support to headline: an active pattern's own target wins,
+  // otherwise the structural level derived from swing highs/lows.
+  const activeCp = chartPatterns[activePattern];
+  const dispTarget = activeCp && activeCp.target != null ? activeCp.target : autoLevels.target;
+  const dispStop = activeCp && activeCp.stop != null ? activeCp.stop : autoLevels.support;
+  const targetPct = dispTarget != null && lastClose ? ((dispTarget - lastClose) / lastClose) * 100 : null;
+  const stopPct = dispStop != null && lastClose ? ((dispStop - lastClose) / lastClose) * 100 : null;
 
   return (
     <>
@@ -646,6 +733,35 @@ export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: 
             </div>
           )}
 
+          {/* Target / support headline — always present so every chart has an objective */}
+          {!loading && !error && (dispTarget != null || dispStop != null) && (
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              {dispTarget != null && (
+                <span className="inline-flex items-center gap-1 bg-cyan-950/40 border border-cyan-800/50 text-cyan-200 rounded px-2 py-1">
+                  <Target className="w-3.5 h-3.5" /> Target <b>{dispTarget}</b>
+                  {targetPct != null && (
+                    <span className="text-emerald-400 font-bold">
+                      ({targetPct > 0 ? '+' : ''}{targetPct.toFixed(1)}%)
+                    </span>
+                  )}
+                </span>
+              )}
+              {dispStop != null && (
+                <span className="inline-flex items-center gap-1 bg-emerald-950/30 border border-emerald-800/40 text-emerald-200/90 rounded px-2 py-1">
+                  🛡 Support <b>{dispStop}</b>
+                  {stopPct != null && (
+                    <span className="text-red-400 font-bold">({stopPct.toFixed(1)}%)</span>
+                  )}
+                </span>
+              )}
+              {!activeCp && (
+                <span className="text-gray-500">
+                  — target = next overhead resistance from recent swing highs; support = nearest swing low.
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Chart */}
           <div
             ref={chartRef}
@@ -659,7 +775,8 @@ export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: 
             <span><span style={{ color: LINE_COLORS.neckline }}>- -</span> Neckline</span>
             <span><span style={{ color: LINE_COLORS.support }}>━</span> Support rail</span>
             <span><span style={{ color: LINE_COLORS.resistance }}>━</span> Resistance rail</span>
-            <span><span style={{ color: LINE_COLORS.target }}>- -</span> Measure-rule target</span>
+            <span><span style={{ color: LINE_COLORS.target }}>- -</span> Target (pattern / next resistance)</span>
+            <span><span style={{ color: LINE_COLORS.support }}>┈</span> Support</span>
             <span><span style={{ color: LINE_COLORS.stop }}>┈</span> Stop</span>
           </div>
 
