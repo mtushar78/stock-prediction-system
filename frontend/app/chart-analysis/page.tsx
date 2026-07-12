@@ -11,9 +11,10 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import axios from 'axios';
-import { Activity, RefreshCw, TrendingUp, Search, Crosshair, CandlestickChart, GraduationCap } from 'lucide-react';
+import { Activity, RefreshCw, TrendingUp, Search, Crosshair, CandlestickChart, GraduationCap, Globe, Rocket } from 'lucide-react';
 import ChartScope from '../components/ChartScope';
 import PatternScope from '../components/PatternScope';
+import UniverseScope from '../components/UniverseScope';
 import ChartDetailModal from '../components/ChartDetailModal';
 import DataFreshnessBadge from '../components/DataFreshnessBadge';
 import TutorialView from '../components/TutorialView';
@@ -29,7 +30,7 @@ export default function ChartAnalysisPage() {
   const [tickers, setTickers] = useState<string[]>([]);
   const [searchInput, setSearchInput] = useState('');
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [view, setView] = useState<'patterns' | 'candles' | 'tutorial'>('patterns');
+  const [view, setView] = useState<'patterns' | 'candles' | 'all' | 'tutorial'>('patterns');
   const [tutorialCode, setTutorialCode] = useState<string>(TUTORIAL_ORDER[0]);
 
   useEffect(() => {
@@ -99,6 +100,12 @@ export default function ChartAnalysisPage() {
               className="px-3 py-1.5 rounded bg-purple-700 text-white border border-purple-600 flex items-center gap-1.5"
             >
               <Activity className="w-4 h-4" /> Chart Analyst
+            </Link>
+            <Link
+              href="/rebounds"
+              className="px-3 py-1.5 rounded bg-gray-800 text-gray-300 border border-gray-700 hover:bg-teal-900/40 hover:text-teal-200 transition flex items-center gap-1.5"
+            >
+              <Rocket className="w-4 h-4" /> Rebounds
             </Link>
             <Link
               href="/analyze"
@@ -202,6 +209,16 @@ export default function ChartAnalysisPage() {
           <CandlestickChart className="w-4 h-4" /> Candlesticks
         </button>
         <button
+          onClick={() => setView('all')}
+          className={`px-3 py-1.5 rounded flex items-center gap-1.5 border transition ${
+            view === 'all'
+              ? 'bg-sky-700 text-white border-sky-600'
+              : 'bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700'
+          }`}
+        >
+          <Globe className="w-4 h-4" /> All stocks
+        </button>
+        <button
           onClick={() => setView('tutorial')}
           className={`px-3 py-1.5 rounded flex items-center gap-1.5 border transition ${
             view === 'tutorial'
@@ -213,7 +230,7 @@ export default function ChartAnalysisPage() {
         </button>
       </div>
 
-      {view !== 'tutorial' && (
+      {(view === 'patterns' || view === 'candles') && (
         <div className="mb-4 bg-amber-950/25 border border-amber-700/50 rounded-lg p-3 text-xs text-amber-200/90 leading-relaxed">
           <b className="text-amber-200">📊 Read this as context, not a buy/sell list.</b>{' '}
           A dense DSE validation (24,781 point-in-time samples, 2022–2026) found that <b>confirmed bullish
@@ -239,6 +256,9 @@ export default function ChartAnalysisPage() {
       )}
       {view === 'candles' && (
         <ChartScope key={`c${refreshKey}`} apiUrl={API_URL} onRowClick={(ticker) => setActiveTicker(ticker)} />
+      )}
+      {view === 'all' && (
+        <UniverseScope key={`u${refreshKey}`} apiUrl={API_URL} onRowClick={(ticker) => setActiveTicker(ticker)} />
       )}
       {view === 'tutorial' && (
         <section className="bg-gray-800 rounded-lg p-6 border border-indigo-800/40 mb-4">

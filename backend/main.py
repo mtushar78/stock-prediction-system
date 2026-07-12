@@ -1348,6 +1348,25 @@ def get_reversal_tracker():
         db.close()
 
 
+@app.get("/api/rebounds")
+def get_rebounds():
+    """Watchlist screen: stocks that fell hard from a prior high, based out, and
+    are NOW curving back up (the "was 120 → based at 50-60 → ticking to 61-62"
+    shape). Structural filter only — a turn to TRACK, not a validated buy. Click
+    a row for the full manual analysis."""
+    from src.rebound_scanner import scan
+    db = DatabaseManager()
+    try:
+        return scan(db.engine)
+    except Exception as e:
+        logger.error(f"rebounds scan failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
 @app.get("/api/sniper-signals/by-date")
 def get_sniper_signals_by_date(date: str):
     """Historical replay: the signals the system would have shown on `date`.
@@ -1620,6 +1639,121 @@ def get_chart_pattern_signals():
         return out
     except Exception as e:
         logger.error(f"get_chart_pattern_signals failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/chart-analysis/universe")
+def get_chart_universe():
+    """Every tradable ticker with its latest price, 1-day change and sector — so
+    the Chart Analyst page can browse the WHOLE market (not just today's pattern
+    hits) and filter by sector to see every stock in a category. When a Bulkowski
+    pattern exists for a ticker its grade/verdict is merged in; clicking any row
+    runs the full on-demand chart analysis.
+
+    NOTE: this route MUST stay above /api/chart-analysis/{ticker} so "universe"
+    is not captured as a ticker name."""
+    import math as _math
+    from sqlalchemy import text
+    try:
+        db = DatabaseManager()
+        # Latest trading date + a short recent window to compute the day change.
+        last = pd.read_sql_query(text("SELECT MAX(date) AS d FROM stock_data"), db.engine)
+        as_of = str(last['d'].iloc[0])[:10] if not last.empty and last['d'].iloc[0] is not None else None
+        if not as_of:
+            db.close()
+            return {'as_of': None, 'count': 0, 'stocks': []}
+        try:
+            cutoff = (datetime.strptime(as_of, '%Y-%m-%d') - pd.Timedelta(days=20)).strftime('%Y-%m-%d')
+        except Exception:
+            cutoff = None
+        q = ("SELECT ticker, date, close, volume FROM stock_data "
+             + ("WHERE date >= :cutoff AND " if cutoff else "WHERE ")
+             + "close > 0 ORDER BY ticker, date")
+        recent = pd.read_sql_query(text(q), db.engine, params=({'cutoff': cutoff} if cutoff else {}))
+
+        # Sector map + today's pattern rows (grade/verdict) + quant confluence.
+        try:
+            sdf = pd.read_sql_query(text(
+                "SELECT ticker, sector FROM fundamentals WHERE sector IS NOT NULL"), db.engine)
+            sector_map = dict(zip(sdf['ticker'], sdf['sector']))
+        except Exception:
+            sector_map = {}
+
+        pat_map = {}
+        try:
+            pdf = db.get_chart_pattern_signals_today()
+            for _, pr in pdf.iterrows():
+                pat_map[pr['ticker']] = {
+                    'grade': pr['grade'] if 'grade' in pr else None,
+                    'verdict': pr['verdict'] if 'verdict' in pr else None,
+                    'top_name': pr['top_name'] if 'top_name' in pr else None,
+                    'bias': pr['bias'] if 'bias' in pr else None,
+                    'edge': int(pr['edge']) if ('edge' in pr and pr['edge'] is not None) else None,
+                    'status': pr['status'] if 'status' in pr else None,
+                }
+        except Exception:
+            pat_map = {}
+
+        rev_set, brk_set = set(), set()
+        try:
+            cols = pd.read_sql_query(text("SELECT * FROM signals_today LIMIT 1"), db.engine).columns.tolist()
+            if 'reversal_signal' in cols:
+                rev_set = set(pd.read_sql_query(text(
+                    "SELECT ticker FROM signals_today WHERE reversal_signal = 1"), db.engine)['ticker'])
+            if 'breakout_signal' in cols:
+                brk_set = set(pd.read_sql_query(text(
+                    "SELECT ticker FROM signals_today WHERE breakout_signal = 1"), db.engine)['ticker'])
+        except Exception:
+            pass
+        db.close()
+
+        if recent.empty:
+            return {'as_of': as_of, 'count': 0, 'stocks': []}
+        recent['close'] = pd.to_numeric(recent['close'], errors='coerce')
+        recent = recent.dropna(subset=['close'])
+
+        def _f(v):
+            if v is None:
+                return None
+            try:
+                fv = float(v)
+            except (TypeError, ValueError):
+                return None
+            return None if (_math.isinf(fv) or _math.isnan(fv)) else fv
+
+        out = []
+        for ticker, g in recent.groupby('ticker'):
+            g = g.sort_values('date')
+            closes = g['close'].to_numpy(dtype=float)
+            if len(closes) == 0:
+                continue
+            price = float(closes[-1])
+            prev = float(closes[-2]) if len(closes) >= 2 else None
+            change_pct = ((price - prev) / prev * 100.0) if (prev and prev > 0) else None
+            vols = g['volume'].to_numpy(dtype=float)
+            avg_vol = float(np.nanmean(vols[-20:])) if len(vols) else None
+            p = pat_map.get(ticker, {})
+            confluence = 'reversal' if ticker in rev_set else ('breakout' if ticker in brk_set else None)
+            out.append({
+                'ticker': ticker,
+                'sector': sector_map.get(ticker) or 'Unknown',
+                'price': round(price, 2),
+                'change_pct': _f(round(change_pct, 2)) if change_pct is not None else None,
+                'avg_vol20': int(avg_vol) if avg_vol and not _math.isnan(avg_vol) else None,
+                'grade': p.get('grade'),
+                'verdict': p.get('verdict'),
+                'top_name': p.get('top_name'),
+                'bias': p.get('bias'),
+                'edge': p.get('edge'),
+                'pattern_status': p.get('status'),
+                'has_pattern': bool(p),
+                'confluence': confluence,
+            })
+        # Alphabetical by default — it's a browse-the-whole-market list.
+        out.sort(key=lambda x: x['ticker'])
+        return {'as_of': as_of, 'count': len(out), 'stocks': out}
+    except Exception as e:
+        logger.error(f"get_chart_universe failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
