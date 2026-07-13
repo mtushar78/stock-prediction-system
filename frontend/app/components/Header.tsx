@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { TrendingUp, RefreshCw, Activity, LogOut, Rocket } from 'lucide-react';
+import { TrendingUp, RefreshCw, Activity, LogOut, Rocket, Radar } from 'lucide-react';
 import { SystemStatus } from '../types';
 import { useAuth } from './AuthProvider';
 import DataFreshnessBadge from './DataFreshnessBadge';
@@ -41,6 +41,12 @@ export default function Header({ systemStatus, loading, onRefresh }: HeaderProps
             className="px-3 py-1.5 rounded bg-gray-800 text-gray-300 border border-gray-700 hover:bg-teal-900/40 hover:text-teal-200 transition flex items-center gap-1.5"
           >
             <Rocket className="w-4 h-4" /> Rebounds
+          </Link>
+          <Link
+            href="/news"
+            className="px-3 py-1.5 rounded bg-gray-800 text-gray-300 border border-gray-700 hover:bg-amber-900/40 hover:text-amber-200 transition flex items-center gap-1.5"
+          >
+            <Radar className="w-4 h-4" /> News &amp; Rumors
           </Link>
           <Link
             href="/analyze"

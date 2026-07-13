@@ -342,6 +342,33 @@ class DatabaseManager:
                 )
             """)
 
+            # DSE company news / price-sensitive information (src/news_scraper.py).
+            # One row per announcement, keyed by a content hash so re-scraping the
+            # same window is idempotent. `is_query` flags the exchange's "explain
+            # your unusual price/volume" letters, halts, and rumor clarifications —
+            # the public rumor signal that feeds the unusual-activity radar.
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS company_news (
+                    hash TEXT PRIMARY KEY,
+                    ticker TEXT NOT NULL,
+                    news_date TEXT NOT NULL,
+                    category TEXT,
+                    title TEXT,
+                    body TEXT,
+                    is_price_sensitive INTEGER DEFAULT 0,
+                    is_query INTEGER DEFAULT 0,
+                    scraped_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_company_news_ticker "
+                "ON company_news(ticker, news_date DESC)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_company_news_date "
+                "ON company_news(news_date DESC)"
+            )
+
             # Users (multi-user auth). Credentials are bcrypt-hashed; see src/auth.py.
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS users (
@@ -892,6 +919,90 @@ class DatabaseManager:
             return df
         except Exception as e:
             logger.error(f"get_ohlcv_for_chart({ticker}) failed: {e}")
+            return pd.DataFrame()
+
+    # ------------------------------------------------------------------ #
+    # Company news / PSI (src/news_scraper.py)
+    # ------------------------------------------------------------------ #
+
+    def save_news_bulk(self, items: list) -> int:
+        """UPSERT scraped news items. Keyed on the content hash, so re-scraping
+        an overlapping date window never duplicates. Returns rows written."""
+        if not items:
+            return 0
+        try:
+            cursor = self.conn.cursor()
+            sql = (
+                "INSERT INTO company_news "
+                "(hash, ticker, news_date, category, title, body, "
+                " is_price_sensitive, is_query) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (hash) DO UPDATE SET "
+                "  category=EXCLUDED.category, title=EXCLUDED.title, "
+                "  body=EXCLUDED.body, is_price_sensitive=EXCLUDED.is_price_sensitive, "
+                "  is_query=EXCLUDED.is_query"
+            )
+            rows = [
+                (it['hash'], it['ticker'], it['date'], it.get('category'),
+                 it.get('title'), it.get('body'),
+                 int(bool(it.get('is_price_sensitive'))), int(bool(it.get('is_query'))))
+                for it in items
+            ]
+            cursor.executemany(sql, rows)
+            self.conn.commit()
+            logger.info(f"Saved {len(rows)} news rows")
+            return len(rows)
+        except Exception as e:
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            logger.error(f"save_news_bulk failed: {e}")
+            raise
+
+    def get_recent_news(self, limit: int = 100, category: Optional[str] = None,
+                        ticker: Optional[str] = None,
+                        include_routine: bool = False,
+                        query_only: bool = False) -> pd.DataFrame:
+        """Recent news, newest first. By default hides routine mutual-fund NAV
+        disclosures (include_routine=True to show them). query_only restricts to
+        the exchange query/halt/rumor-clarification flag."""
+        clauses, params = [], {}
+        if not include_routine:
+            clauses.append("category != 'Fund NAV'")
+        if category:
+            clauses.append("category = :category")
+            params['category'] = category
+        if ticker:
+            clauses.append("ticker = :ticker")
+            params['ticker'] = ticker
+        if query_only:
+            clauses.append("is_query = 1")
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        params['limit'] = int(limit)
+        try:
+            return pd.read_sql_query(text(
+                "SELECT ticker, news_date, category, title, body, "
+                "       is_price_sensitive, is_query "
+                "FROM company_news" + where +
+                " ORDER BY news_date DESC, is_query DESC, is_price_sensitive DESC, ticker ASC "
+                "LIMIT :limit"
+            ), self.engine, params=params)
+        except Exception as e:
+            logger.error(f"get_recent_news failed: {e}")
+            return pd.DataFrame()
+
+    def get_news_for_ticker(self, ticker: str, limit: int = 20) -> pd.DataFrame:
+        """All news for one ticker (incl. routine), newest first."""
+        try:
+            return pd.read_sql_query(text(
+                "SELECT ticker, news_date, category, title, body, "
+                "       is_price_sensitive, is_query "
+                "FROM company_news WHERE ticker = :t "
+                "ORDER BY news_date DESC LIMIT :n"
+            ), self.engine, params={'t': ticker, 'n': int(limit)})
+        except Exception as e:
+            logger.error(f"get_news_for_ticker({ticker}) failed: {e}")
             return pd.DataFrame()
 
     # ------------------------------------------------------------------ #

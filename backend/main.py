@@ -368,6 +368,35 @@ async def scheduled_scraper_and_analysis(is_final: int = 0):
     except Exception as e:
         logger.error(f"❌ Scraper failed: {e}")
 
+def _fetch_and_save_news(days: int = 7) -> int:
+    """Scrape the DSE news archive for the last `days` days and upsert it.
+
+    Runs in a worker thread (network + parse). Idempotent — keyed on a content
+    hash — so overlapping windows never duplicate. Failures are swallowed by the
+    caller; news is a supplementary feed, never allowed to break a scrape.
+    """
+    from src.news_scraper import fetch_news
+    items = fetch_news(days=days)
+    if not items:
+        logger.warning("news fetch returned no items")
+        return 0
+    db = DatabaseManager()
+    try:
+        return db.save_news_bulk(items)
+    finally:
+        db.close()
+
+
+async def scheduled_news_fetch(days: int = 7):
+    """Fetch + persist DSE company news off the event loop."""
+    try:
+        logger.info("⏰ Fetching DSE company news...")
+        n = await asyncio.to_thread(_fetch_and_save_news, days)
+        logger.info(f"✅ News fetch complete: {n} items upserted")
+    except Exception as e:
+        logger.error(f"❌ News fetch failed: {e}")
+
+
 # Lifespan context manager for startup/shutdown
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -395,6 +424,14 @@ async def lifespan(app: FastAPI):
     if not analysis_success:
         logger.warning("⚠️  STARTUP ANALYSIS DID NOT COMPLETE SUCCESSFULLY")
         logger.warning("API will return empty signals until next scheduled update")
+
+    # Seed the news feed on startup so /api/news and the unusual-activity radar
+    # have data immediately. Non-fatal — a news failure must never block boot.
+    try:
+        seeded = await asyncio.to_thread(_fetch_and_save_news, 7)
+        logger.info(f"📰 Seeded {seeded} news items on startup")
+    except Exception as e:
+        logger.error(f"Startup news seed failed (non-fatal): {e}")
     
     # Schedule DSE Scraper.
     # DSE trades 10:00 AM → 2:00 PM Asia/Dhaka. Intraday scrape every 8 minutes
@@ -463,6 +500,20 @@ async def lifespan(app: FastAPI):
         CronTrigger(day_of_week='sat', hour=8, minute=0, timezone=BANGLADESH_TZ),
         id='weekly_fundamentals',
         name='Weekly Fundamentals Scrape',
+        replace_existing=True
+    )
+
+    # DSE company news — refreshed a few times across the session so query/halt
+    # notices (which land intraday) show up promptly, plus a post-close sweep.
+    # A 7-day window each run keeps the archive gap-free even if a run is missed.
+    scheduler.add_job(
+        scheduled_news_fetch,
+        CronTrigger(hour='11,13,15', minute=10, timezone=BANGLADESH_TZ),
+        id='news_fetch',
+        name='DSE News Fetch (11:10, 13:10, 15:10)',
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
         replace_existing=True
     )
 
@@ -1349,6 +1400,94 @@ def get_rebounds():
         return res
     except Exception as e:
         logger.error(f"rebounds scan failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@app.get("/api/news")
+def get_news(limit: int = 100, category: Optional[str] = None,
+             ticker: Optional[str] = None, include_routine: bool = False,
+             query_only: bool = False):
+    """Recent DSE company news / price-sensitive information.
+
+    Defaults hide routine mutual-fund NAV disclosures. `query_only=true` returns
+    just the exchange query/halt/rumor-clarification notices — the public rumor
+    signal. Filter by `category` or `ticker` as needed."""
+    db = DatabaseManager()
+    try:
+        df = db.get_recent_news(limit=limit, category=category,
+                                ticker=(ticker.strip().upper() if ticker else None),
+                                include_routine=include_routine, query_only=query_only)
+        items = df.to_dict('records') if not df.empty else []
+        for it in items:
+            it['is_price_sensitive'] = bool(it.get('is_price_sensitive'))
+            it['is_query'] = bool(it.get('is_query'))
+        # Category counts (over the unfiltered recent window) for the UI chips.
+        cat_counts = {}
+        try:
+            alldf = db.get_recent_news(limit=1000, include_routine=True)
+            if not alldf.empty:
+                cat_counts = alldf['category'].value_counts().to_dict()
+        except Exception:
+            pass
+        return {'count': len(items), 'category_counts': cat_counts, 'news': items}
+    except Exception as e:
+        logger.error(f"news fetch failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@app.get("/api/news/{ticker}")
+def get_news_ticker(ticker: str, limit: int = 20):
+    """All recent news for one ticker (includes routine disclosures)."""
+    db = DatabaseManager()
+    try:
+        df = db.get_news_for_ticker(ticker.strip().upper(), limit=limit)
+        items = df.to_dict('records') if not df.empty else []
+        for it in items:
+            it['is_price_sensitive'] = bool(it.get('is_price_sensitive'))
+            it['is_query'] = bool(it.get('is_query'))
+        return {'ticker': ticker.strip().upper(), 'count': len(items), 'news': items}
+    except Exception as e:
+        logger.error(f"news fetch for {ticker} failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+# Full-universe scan; result only changes on a new scrape, so cache per as_of.
+_UNUSUAL_CACHE: dict = {}
+
+
+@app.get("/api/unusual-activity")
+def get_unusual_activity():
+    """The rumor radar: stocks moving on abnormal volume/price today, each
+    cross-referenced against the official news feed. 'Unexplained' moves (big
+    volume, no disclosed news) and exchange-flagged names (DSE query/halt) are
+    surfaced first — the data-driven proxy for broker-house chatter."""
+    from src.unusual_activity import scan
+    from sqlalchemy import text
+    db = DatabaseManager()
+    try:
+        mx = pd.read_sql_query(text("SELECT MAX(date) d FROM stock_data"), db.engine)
+        as_of = str(mx['d'].iloc[0])[:10] if not mx.empty and mx['d'].iloc[0] else None
+        if as_of and as_of in _UNUSUAL_CACHE:
+            return _UNUSUAL_CACHE[as_of]
+        res = scan(db.engine)
+        try:
+            res['market'] = _compute_market_breadth(res.get('as_of'))
+        except Exception:
+            res['market'] = None
+        if res.get('as_of'):
+            _UNUSUAL_CACHE.clear()
+            _UNUSUAL_CACHE[res['as_of']] = res
+        return res
+    except Exception as e:
+        logger.error(f"unusual-activity scan failed: {e}")
         import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
