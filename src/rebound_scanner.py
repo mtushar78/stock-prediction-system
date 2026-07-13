@@ -56,6 +56,19 @@ EARLY_OFF_LOW_MAX = 30.0     # still in the lower half of the recovery (near the
 EARLY_MIN_2D_POP = 2.0       # a >=2% two-day pop counts as a fresh turn
 EARLY_MIN_5D_POP = 3.0       # ...or a >=3% five-day bounce off the base
 
+# "FRESH" (most aggressive) turns — the short-term dip-and-turn the user asked
+# for: a name that pulled back over the last few sessions, printed a low in the
+# LAST 1-5 days, and is NOW putting in green candles right off that low. It does
+# NOT need the deep 25%-from-a-yearly-high "fallen angel" structure — it is a
+# recent, tactical bounce. Deliberately the loosest bucket, tagged stage='FRESH'
+# so it's never confused with a mature turn, and it's the one that surfaces
+# stocks the moment they turn (before they've "already gone high").
+FRESH_WIN = 30               # window (bars) to locate the recent swing high the dip fell from
+FRESH_MIN_DIP_PCT = 6.0      # recent high -> recent low must be a real dip (not noise)
+FRESH_MAX_DAYS_SINCE_LOW = 5 # the low must be within the last 5 sessions (fresh)
+FRESH_MIN_OFF_LOW = 1.5      # must have actually ticked up off the low...
+FRESH_MAX_OFF_LOW = 12.0     # ...but still be near it (not already run away)
+
 
 def _back_adjust(closes: np.ndarray, highs: np.ndarray, lows: np.ndarray,
                  drop_pct: float = ADJ_DROP_PCT):
@@ -122,6 +135,37 @@ def _clean(f):
     return None if (math.isnan(f) or math.isinf(f)) else round(f, 3)
 
 
+def _first_target(highs: np.ndarray, price: float, story_low: float,
+                  story_high: float) -> float:
+    """A concrete first upside target for the rebound.
+
+    A recovering price climbs back into the resistance it fell from. The most
+    honest "target" is therefore the nearest overhead swing high (a prior ceiling
+    the price must reclaim), and failing that a Fibonacci retracement of the
+    decline. Always capped at the old high (the ultimate recovery room) and kept
+    at least a little above the current price so it is a real objective.
+    """
+    price = float(price); story_low = float(story_low); story_high = float(story_high)
+    # Swing highs = local maxima (a bar topping its two neighbours each side).
+    swings = []
+    for i in range(2, len(highs) - 2):
+        h = highs[i]
+        if h >= highs[i - 1] and h >= highs[i - 2] and h >= highs[i + 1] and h >= highs[i + 2]:
+            swings.append(float(h))
+    res_above = sorted(r for r in swings if r > price * 1.02)
+    fib382 = story_low + 0.382 * (story_high - story_low)
+    fib50 = story_low + 0.5 * (story_high - story_low)
+    target = res_above[0] if res_above else None
+    # Prefer a genuine overhead level, but never one below the first retracement;
+    # if there's nothing sensible above, use the retracement itself.
+    if target is None or target < fib382:
+        target = fib382 if fib382 > price * 1.015 else fib50
+    target = min(target, story_high)
+    if target <= price * 1.01:
+        target = min(story_high, price * 1.05)
+    return target
+
+
 def _analyze_one(ticker: str, df: pd.DataFrame, sector: str | None,
                  stale_cutoff: str | None = None,
                  reversal_set: set | None = None) -> dict | None:
@@ -133,6 +177,7 @@ def _analyze_one(ticker: str, df: pd.DataFrame, sector: str | None,
     df = df.tail(LOOKBACK_BARS).reset_index(drop=True)
 
     closes_raw = df['close'].to_numpy(dtype=float)
+    opens_raw = df['open'].to_numpy(dtype=float)
     highs_raw = df['high'].to_numpy(dtype=float)
     lows_raw = df['low'].to_numpy(dtype=float)
     vols = df['volume'].to_numpy(dtype=float)
@@ -149,6 +194,7 @@ def _analyze_one(ticker: str, df: pd.DataFrame, sector: str | None,
     # whole ticker (this alone was hiding the majority of valid candidates).
     lows_raw = np.where(lows_raw <= 0, closes_raw, lows_raw)
     highs_raw = np.where(highs_raw <= 0, closes_raw, highs_raw)
+    opens_raw = np.where((opens_raw <= 0) | np.isnan(opens_raw), closes_raw, opens_raw)
 
     price = float(closes_raw[-1])
     if price < MIN_PRICE:
@@ -165,55 +211,58 @@ def _analyze_one(ticker: str, df: pd.DataFrame, sector: str | None,
     closes, highs, lows, gap_idx = _back_adjust(closes_raw, highs_raw, lows_raw)
     # `price` stays the raw last close (its adjustment factor is always 1.0).
     action_dates = [dates[i] for i in gap_idx]
+    n = len(closes)
 
-    # ---- Peak -> trough -> now geometry (on adjusted prices) ----
-    peak_i = int(np.argmax(highs))
-    peak = float(highs[peak_i])
-    # Trough is the lowest low AFTER the peak (the base we're recovering from).
-    if peak_i >= len(lows) - 1:
-        return None  # peak is the last bar → nothing has fallen yet
-    post = lows[peak_i + 1:]
-    trough_rel = int(np.argmin(post))
-    trough_i = peak_i + 1 + trough_rel
-    trough = float(lows[trough_i])
-    if trough <= 0 or peak <= 0:
-        return None
+    # ---- Candles / short-term turn primitives (used by every stage) ----
+    up1 = closes[-1] > closes[-2] if n >= 2 else False
+    up2 = closes[-2] > closes[-3] if n >= 3 else False
+    # The latest bar's adjustment factor is always 1.0, so raw open/close is safe.
+    last_green = bool(closes_raw[-1] > opens_raw[-1])
+    ret_2d = (price / float(closes[-3]) - 1) * 100.0 if n >= 3 else None
 
-    drawdown_pct = (peak - trough) / peak * 100.0
-    if drawdown_pct < MIN_DRAWDOWN_PCT:
-        return None
+    # =====================================================================
+    # DEEP "fallen angel" geometry — peak -> trough -> now (on adjusted prices).
+    # This is the classic rebound: a big fall from a yearly high, a base, a curl.
+    # We compute it but DON'T early-return on its gates any more, because a stock
+    # can still qualify for the looser, short-term FRESH bucket below.
+    # =====================================================================
+    deep_ok = False
+    d_peak_i = int(np.argmax(highs))
+    d_peak = float(highs[d_peak_i])
+    d_trough_i = d_trough = d_drawdown = d_fall_span = d_days_since = None
+    d_off_low = d_from_peak = None
+    if d_peak_i < n - 1 and d_peak > 0:
+        post = lows[d_peak_i + 1:]
+        d_trough_i = d_peak_i + 1 + int(np.argmin(post))
+        d_trough = float(lows[d_trough_i])
+        if d_trough > 0:
+            d_drawdown = (d_peak - d_trough) / d_peak * 100.0
+            d_fall_span = d_trough_i - d_peak_i
+            d_days_since = (n - 1) - d_trough_i
+            d_off_low = (price - d_trough) / d_trough * 100.0
+            d_from_peak = (price - d_peak) / d_peak * 100.0
+            deep_ok = (
+                d_drawdown >= MIN_DRAWDOWN_PCT
+                and not (d_fall_span < MIN_FALL_SPAN_BARS and d_days_since < MIN_BASE_AGE_BARS)
+                and d_days_since >= 1
+                and d_from_peak <= -MIN_STILL_DOWN_PCT
+                and d_off_low <= OFF_LOW_MAX_PCT
+            )
 
-    fall_span = trough_i - peak_i
-    days_since_trough = (len(closes) - 1) - trough_i
-    # Reject only the dead-cat: a fast crash that bounced immediately. A fast
-    # crash that has since carved a long base (>=MIN_BASE_AGE_BARS) is a
-    # textbook rebound and must NOT be filtered out by the fall-span rule.
-    if fall_span < MIN_FALL_SPAN_BARS and days_since_trough < MIN_BASE_AGE_BARS:
-        return None
-    if days_since_trough < 1:
-        return None  # still printing the low today — nothing has turned up yet
-
-    off_low_pct = (price - trough) / trough * 100.0
-    from_peak_pct = (price - peak) / peak * 100.0  # negative
-    if from_peak_pct > -MIN_STILL_DOWN_PCT:
-        return None  # already recovered most of the fall → not what we want
-    if off_low_pct > OFF_LOW_MAX_PCT:
-        return None  # already run too far off the base → no longer a fresh idea
-
-    # ---- "Curving up" confirmation ----
+    # ---- "Curving up" confirmation (moving averages / momentum) ----
     sma10 = _sma(closes, 10)
     sma20 = _sma(closes, 20)
     sma50 = _sma(closes, 50)
     sma10_5ago = _sma_ago(closes, 10, 5)
     sma20_10ago = _sma_ago(closes, 20, 10)
 
-    close_5ago = float(closes[-6]) if len(closes) >= 6 else None
-    close_10ago = float(closes[-11]) if len(closes) >= 11 else None
+    close_5ago = float(closes[-6]) if n >= 6 else None
+    close_10ago = float(closes[-11]) if n >= 11 else None
     ret_5d = (price / close_5ago - 1) * 100 if close_5ago else None
     ret_10d = (price / close_10ago - 1) * 100 if close_10ago else None
 
     # 20-day range position (0 = at 20d low, 1 = at 20d high).
-    win = closes[-20:] if len(closes) >= 20 else closes
+    win = closes[-20:] if n >= 20 else closes
     lo20, hi20 = float(win.min()), float(win.max())
     range_pos = (price - lo20) / (hi20 - lo20) if hi20 > lo20 else 0.5
 
@@ -228,23 +277,6 @@ def _analyze_one(ticker: str, df: pd.DataFrame, sector: str | None,
     ma_turning = c_above_sma20 or c_sma10_up
     curl_score = sum([c_above_sma20, c_sma10_up, c_sma20_up, c_mom10, c_progress, c_reclaim])
 
-    # Two ways to qualify — the list deliberately spans mature AND fresh turns:
-    #   TURNING — the established curl: reclaimed/rising averages, several days
-    #             off the low, momentum positive. Higher conviction.
-    #   EARLY   — still AT the base but just ticked up over the last 1-2 sessions
-    #             (before the averages turn). More aggressive / speculative; a
-    #             bigger watchlist, tagged so it's never mistaken for a mature turn.
-    up1 = closes[-1] > closes[-2] if len(closes) >= 2 else False
-    up2 = closes[-2] > closes[-3] if len(closes) >= 3 else False
-    ret_2d = (price / float(closes[-3]) - 1) * 100.0 if len(closes) >= 3 else None
-    established = (days_since_trough >= MIN_DAYS_SINCE_TROUGH
-                  and off_low_pct >= OFF_LOW_MIN_PCT
-                  and ma_turning and curl_score >= 3)
-    # Fresh turn: still in the lower half of the recovery and showing ANY first
-    # sign of turning — a two-day pop, a five-day bounce, two up-closes, the
-    # 10-day average curling up, a reclaim of the 20-day, or simply sitting in
-    # the upper half of its recent range. Deliberately looser than the confirmed
-    # TURNING curl: this is the aggressive "just off the bottom" watchlist bucket.
     early_signals = sum([
         (up1 and up2),
         (ret_2d is not None and ret_2d >= EARLY_MIN_2D_POP),
@@ -253,62 +285,153 @@ def _analyze_one(ticker: str, df: pd.DataFrame, sector: str | None,
         c_above_sma20,
         (range_pos >= 0.5),
     ])
-    early = (not established) and off_low_pct <= EARLY_OFF_LOW_MAX and early_signals >= 1
-    if not (established or early):
+
+    # ---- Deep-track staging (only if the fallen-angel structure is present) ----
+    established = early = False
+    if deep_ok:
+        established = (d_days_since >= MIN_DAYS_SINCE_TROUGH
+                       and d_off_low >= OFF_LOW_MIN_PCT
+                       and ma_turning and curl_score >= 3)
+        early = (not established) and d_off_low <= EARLY_OFF_LOW_MAX and early_signals >= 1
+
+    # =====================================================================
+    # FRESH short-term dip-and-turn — the aggressive bucket the user wants:
+    # pulled back over the last few sessions, printed a low in the LAST 1-5 days,
+    # and is putting in green candles right off that low. No deep drawdown needed.
+    # =====================================================================
+    fresh_ok = False
+    fr_high_i = fr_low_i = fr_high = fr_low = fr_dip = fr_off_low = fr_days_since = fr_from_high = None
+    w = min(FRESH_WIN, n)
+    if w >= 6:
+        seg_h = highs[-w:]
+        rh_rel = int(np.argmax(seg_h))
+        fr_high_i = n - w + rh_rel
+        fr_high = float(highs[fr_high_i])
+        if fr_high_i < n - 1 and fr_high > 0:
+            post_l = lows[fr_high_i + 1:]
+            fr_low_i = fr_high_i + 1 + int(np.argmin(post_l))
+            fr_low = float(lows[fr_low_i])
+            if fr_low > 0:
+                fr_dip = (fr_high - fr_low) / fr_high * 100.0
+                fr_off_low = (price - fr_low) / fr_low * 100.0
+                fr_days_since = (n - 1) - fr_low_i
+                fr_from_high = (price - fr_high) / fr_high * 100.0
+                fresh_ok = (
+                    0 <= fr_days_since <= FRESH_MAX_DAYS_SINCE_LOW
+                    and fr_dip >= FRESH_MIN_DIP_PCT
+                    and FRESH_MIN_OFF_LOW <= fr_off_low <= FRESH_MAX_OFF_LOW
+                    and price < fr_high * 0.995        # hasn't recovered the whole dip yet
+                    and (last_green or up1)            # actually turning up now
+                )
+
+    # ---- Pick ONE stage (deep turns take precedence; FRESH is the fallback) ----
+    if established:
+        stage = 'TURNING'
+    elif early:
+        stage = 'EARLY'
+    elif fresh_ok:
+        stage = 'FRESH'
+    else:
         return None
-    stage = 'TURNING' if established else 'EARLY'
+
+    # ---- Resolve the "story" (peak -> trough -> now) from the chosen stage ----
+    if stage == 'FRESH':
+        peak_i, peak = fr_high_i, fr_high
+        trough_i, trough = fr_low_i, fr_low
+        drawdown_pct, off_low_pct = fr_dip, fr_off_low
+        from_peak_pct, days_since_trough = fr_from_high, fr_days_since
+        fall_span = trough_i - peak_i
+    else:
+        peak_i, peak = d_peak_i, d_peak
+        trough_i, trough = d_trough_i, d_trough
+        drawdown_pct, off_low_pct = d_drawdown, d_off_low
+        from_peak_pct, days_since_trough = d_from_peak, d_days_since
+        fall_span = d_fall_span
+
+    # ---- First upside target (issue: show a concrete objective) ----
+    target = _first_target(highs, price, trough, peak)
+    target_pct = (target - price) / price * 100.0 if price > 0 else None
 
     # ---- Volume pick-up (accumulation returning on the turn) ----
-    vol_recent5 = float(vols[-5:].mean()) if len(vols) >= 5 else avg_vol20
-    base_vol = float(vols[-25:-5].mean()) if len(vols) >= 25 else avg_vol20
+    vol_recent5 = float(vols[-5:].mean()) if n >= 5 else avg_vol20
+    base_vol = float(vols[-25:-5].mean()) if n >= 25 else avg_vol20
     vol_pickup = vol_recent5 / base_vol if base_vol > 0 else 1.0
     rvol = float(vols[-1]) / avg_vol20 if avg_vol20 > 0 else 1.0
 
     rsi = _rsi(closes)
 
-    # ---- Score 0-100 ----
-    # MA reclaim + slope (0-30)
-    ma_pts = (10 if c_above_sma20 else 0) + (10 if c_sma10_up else 0) + (10 if c_sma20_up else 0)
-    # Momentum (0-20)
+    # ---- Score 0-100 (rebalanced so FRESHNESS + a real green turn win, and
+    #      names that have "already gone high" off their low sink) ----
+    # MA reclaim + slope (0-25)
+    ma_pts = (8 if c_above_sma20 else 0) + (9 if c_sma10_up else 0) + (8 if c_sma20_up else 0)
+    # Momentum (0-15)
     mom_pts = 0.0
     if ret_10d is not None:
-        mom_pts += max(0.0, min(12.0, ret_10d * 1.2))
+        mom_pts += max(0.0, min(9.0, ret_10d * 1.0))
     if ret_5d is not None:
-        mom_pts += max(0.0, min(8.0, ret_5d * 1.2))
-    # Off-low positioning (0-20): reward catching it early (sweet spot ~6-22%).
-    if off_low_pct <= 22:
-        offlow_pts = 20.0 * min(1.0, off_low_pct / 10.0) if off_low_pct < 10 else 20.0
+        mom_pts += max(0.0, min(6.0, ret_5d * 1.0))
+    # Off-low positioning (0-20): peak reward ~6% off the low; steep penalty once
+    # it has run away (>25% off the low scores ~0 — that's "already gone high").
+    if off_low_pct <= 12:
+        offlow_pts = 20.0 - abs(off_low_pct - 6.0) * 0.8
+    elif off_low_pct <= 25:
+        offlow_pts = 15.0 - (off_low_pct - 12.0) * 1.0
     else:
-        offlow_pts = max(0.0, 20.0 - (off_low_pct - 22) * 0.8)
-    # Volume pick-up (0-15)
-    vol_pts = max(0.0, min(15.0, (vol_pickup - 1.0) * 20.0))
-    # Base quality (0-15): a longer base + a decent (not catastrophic) fall.
-    base_pts = min(10.0, days_since_trough / 4.0) + (5.0 if 25 <= drawdown_pct <= 70 else 2.0)
+        offlow_pts = max(0.0, 2.0 - (off_low_pct - 25.0) * 0.2)
+    offlow_pts = max(0.0, offlow_pts)
+    # The turn itself (0-20): green candle + up days + a two-day pop right now.
+    turn_pts = (8.0 if last_green else 0.0) + (4.0 if up1 else 0.0) \
+        + (4.0 if (up1 and up2) else 0.0) \
+        + (4.0 if (ret_2d is not None and ret_2d >= EARLY_MIN_2D_POP) else 0.0)
+    turn_pts = min(20.0, turn_pts)
+    # Volume pick-up (0-12)
+    vol_pts = max(0.0, min(12.0, (vol_pickup - 1.0) * 20.0))
+    # Base quality (0-8): a decent (not catastrophic) fall behind the turn.
+    base_pts = min(6.0, days_since_trough / 6.0) + (2.0 if 12 <= drawdown_pct <= 70 else 0.0)
 
-    score = ma_pts + mom_pts + offlow_pts + vol_pts + base_pts
+    score = ma_pts + mom_pts + offlow_pts + turn_pts + vol_pts + base_pts
     score = int(round(max(0.0, min(100.0, score))))
     grade = 'A' if score >= 75 else 'B' if score >= 60 else 'C' if score >= 45 else 'D'
 
     # ---- Plain-English reasons ----
     reasons = []
-    reasons.append(
-        f"Fell {drawdown_pct:.0f}% from {peak:.1f} ({dates[peak_i]}) to {trough:.1f} "
-        f"({dates[trough_i]})")
-    reasons.append(f"Now {off_low_pct:.0f}% off the low, still {abs(from_peak_pct):.0f}% below the old high")
-    if stage == 'EARLY':
-        bits = []
+    if stage == 'FRESH':
+        reasons.append(
+            f"Short-term dip: −{drawdown_pct:.0f}% from {peak:.1f} ({dates[peak_i]}) "
+            f"to {trough:.1f} ({dates[trough_i]})")
+        turnbits = []
+        if last_green:
+            turnbits.append("green candle")
         if up1 and up2:
-            bits.append("2 up days")
+            turnbits.append("2 up days")
+        elif up1:
+            turnbits.append("up today")
         if ret_2d is not None and ret_2d >= EARLY_MIN_2D_POP:
-            bits.append(f"+{ret_2d:.0f}% 2d")
-        elif ret_5d is not None and ret_5d >= EARLY_MIN_5D_POP:
-            bits.append(f"+{ret_5d:.0f}% 5d")
-        if c_sma10_up:
-            bits.append("10-day avg curling up")
-        if c_above_sma20:
-            bits.append("back above the 20-day")
-        reasons.append("Early/aggressive — at the base, first signs of turning"
-                       + (" (" + ", ".join(bits) + ")" if bits else ""))
+            turnbits.append(f"+{ret_2d:.0f}% 2d")
+        reasons.append(
+            f"Low was {days_since_trough}d ago, now {off_low_pct:.0f}% back up — turning: "
+            + ", ".join(turnbits))
+    else:
+        reasons.append(
+            f"Fell {drawdown_pct:.0f}% from {peak:.1f} ({dates[peak_i]}) to {trough:.1f} "
+            f"({dates[trough_i]})")
+        reasons.append(f"Now {off_low_pct:.0f}% off the low, still {abs(from_peak_pct):.0f}% below the old high")
+        if stage == 'EARLY':
+            bits = []
+            if up1 and up2:
+                bits.append("2 up days")
+            if ret_2d is not None and ret_2d >= EARLY_MIN_2D_POP:
+                bits.append(f"+{ret_2d:.0f}% 2d")
+            elif ret_5d is not None and ret_5d >= EARLY_MIN_5D_POP:
+                bits.append(f"+{ret_5d:.0f}% 5d")
+            if c_sma10_up:
+                bits.append("10-day avg curling up")
+            if c_above_sma20:
+                bits.append("back above the 20-day")
+            reasons.append("Early/aggressive — at the base, first signs of turning"
+                           + (" (" + ", ".join(bits) + ")" if bits else ""))
+    if target_pct is not None:
+        reasons.append(f"First target ~{target:.1f} (+{target_pct:.0f}% from here)")
     if c_above_sma20:
         reasons.append("Reclaimed the 20-day average")
     if c_sma10_up:
@@ -356,6 +479,8 @@ def _analyze_one(ticker: str, df: pd.DataFrame, sector: str | None,
         'off_low_pct': _clean(off_low_pct),
         'from_peak_pct': _clean(from_peak_pct),
         'recovery_room_pct': _clean((peak - price) / price * 100.0),  # upside back to old high
+        'target': _clean(target),                # first concrete upside objective
+        'target_pct': _clean(target_pct),        # upside from here to that target
         'days_since_trough': int(days_since_trough),
         'fall_span_bars': int(fall_span),
         'ret_5d': _clean(ret_5d),
@@ -460,14 +585,16 @@ def scan(engine, sector_map: dict | None = None) -> dict:
             logger.debug(f"rebound scan: {ticker} failed: {e}")
             continue
 
-    # Mature TURNING setups lead the aggressive EARLY ones; within each stage,
-    # rank by quality score, then reversal overlap, curl strength, and earliest
-    # (smallest off-low) — never by least-fallen.
-    _stage_rank = {'TURNING': 1, 'EARLY': 0}
-    stocks.sort(key=lambda x: (_stage_rank.get(x.get('stage'), 0), x['score'],
-                               int(x['is_reversal']), x['curl_score'],
+    # Rank purely by the (rebalanced) quality score, then reversal overlap, then
+    # earliest (smallest off-low). The score now rewards a fresh green turn right
+    # off the low and penalises names that have "already gone high", so the top
+    # of the list is the aggressive, just-turning candidates the user wants — not
+    # the mature setups that have already run. Stage is a badge, not a sort gate.
+    stocks.sort(key=lambda x: (x['score'], int(x['is_reversal']), x['curl_score'],
                                -(x['off_low_pct'] or 0.0)),
                 reverse=True)
     turning = sum(1 for s in stocks if s.get('stage') == 'TURNING')
-    return {'as_of': as_of, 'universe': universe, 'count': len(stocks),
-            'turning': turning, 'early': len(stocks) - turning, 'stocks': stocks}
+    fresh = sum(1 for s in stocks if s.get('stage') == 'FRESH')
+    early = sum(1 for s in stocks if s.get('stage') == 'EARLY')
+    return {'as_of': as_of, 'universe': universe, 'count': len(stocks), 'fresh': fresh,
+            'turning': turning, 'early': early, 'stocks': stocks}

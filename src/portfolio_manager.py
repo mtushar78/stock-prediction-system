@@ -476,210 +476,210 @@ class PortfolioManager:
         from sqlalchemy import text
         conn = self.get_db_connection()
 
-        # Load portfolio (scoped to the user)
-        portfolio = pd.read_sql_query(
-            text("SELECT * FROM portfolio WHERE user_id = :user_id"),
-            self._db.engine,
-            params={"user_id": user_id},
-        )
+        try:
+            # Load portfolio (scoped to the user)
+            portfolio = pd.read_sql_query(
+                text("SELECT * FROM portfolio WHERE user_id = :user_id"),
+                self._db.engine,
+                params={"user_id": user_id},
+            )
 
-        if portfolio.empty:
-            conn.close()
+            if portfolio.empty:
+                if verbose:
+                    print("\n" + "="*80)
+                    print("PORTFOLIO GUARDIAN: Portfolio is empty")
+                    print("="*80)
+                return []
+
             if verbose:
                 print("\n" + "="*80)
-                print("PORTFOLIO GUARDIAN: Portfolio is empty")
+                print("PORTFOLIO GUARDIAN - DAILY SCAN")
+                print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
                 print("="*80)
-            return []
-        
-        if verbose:
-            print("\n" + "="*80)
-            print("PORTFOLIO GUARDIAN - DAILY SCAN")
-            print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            print("="*80)
-        
-        sell_signals = []
-        
-        for index, position in portfolio.iterrows():
-            ticker = position['ticker']
-            buy_price = position['buy_price']
-            quantity = position['quantity']
-            highest_seen = position['highest_seen']
-            purchase_date = position['purchase_date']
-            
-            # Get current market data (need more data for ATR calculation)
-            market_data = pd.read_sql_query(
-                text("""
-                    SELECT * FROM stock_data
-                    WHERE ticker = :ticker
-                    ORDER BY date DESC
-                    LIMIT 30
-                """),
-                self._db.engine,
-                params={"ticker": ticker},
-            )
-            
-            if market_data.empty:
-                logger.warning(f"⚠️  No market data found for {ticker}")
-                continue
-            
-            # Latest data
-            latest = market_data.iloc[0]
-            current_price = latest['close']
-            current_volume = latest['volume']
-            current_open = latest['open']
-            
-            # Calculate RVOL (last 20 days average)
-            if len(market_data) >= 20:
-                avg_volume_20 = market_data['volume'].mean()
-                rvol = current_volume / avg_volume_20 if avg_volume_20 > 0 else 0
-            else:
-                rvol = 0
-            
-            # Calculate ATR (Level 2: Dynamic Volatility Measure)
-            current_atr = self.calculate_atr(market_data, period=14)
-            
-            # v3 UPGRADE: Calculate RSI (Momentum Measure)
-            current_rsi = self.calculate_rsi(market_data, period=14)
-            
-            # Calculate Days Held (Level 2: Zombie Killer)
-            days_held = self.calculate_days_held(purchase_date)
-            
-            # Update highest seen (The Ratchet mechanism)
-            new_highest = highest_seen
-            if current_price > highest_seen:
-                new_highest = current_price
-                cursor = conn.cursor()
-                try:
-                    cursor.execute(
-                        "UPDATE portfolio SET highest_seen = %s WHERE user_id = %s AND ticker = %s",
-                        (new_highest, user_id, ticker)
-                    )
-                    conn.commit()
-                except Exception:
-                    conn.rollback()
-                    raise
+
+            sell_signals = []
+
+            for index, position in portfolio.iterrows():
+                ticker = position['ticker']
+                buy_price = position['buy_price']
+                quantity = position['quantity']
+                highest_seen = position['highest_seen']
+                purchase_date = position['purchase_date']
+
+                # Get current market data (need more data for ATR calculation)
+                market_data = pd.read_sql_query(
+                    text("""
+                        SELECT * FROM stock_data
+                        WHERE ticker = :ticker
+                        ORDER BY date DESC
+                        LIMIT 30
+                    """),
+                    self._db.engine,
+                    params={"ticker": ticker},
+                )
+
+                if market_data.empty:
+                    logger.warning(f"⚠️  No market data found for {ticker}")
+                    continue
+
+                # Latest data
+                latest = market_data.iloc[0]
+                current_price = latest['close']
+                current_volume = latest['volume']
+                current_open = latest['open']
+
+                # Calculate RVOL (last 20 days average)
+                if len(market_data) >= 20:
+                    avg_volume_20 = market_data['volume'].mean()
+                    rvol = current_volume / avg_volume_20 if avg_volume_20 > 0 else 0
+                else:
+                    rvol = 0
+
+                # Calculate ATR (Level 2: Dynamic Volatility Measure)
+                current_atr = self.calculate_atr(market_data, period=14)
+
+                # v3 UPGRADE: Calculate RSI (Momentum Measure)
+                current_rsi = self.calculate_rsi(market_data, period=14)
+
+                # Calculate Days Held (Level 2: Zombie Killer)
+                days_held = self.calculate_days_held(purchase_date)
+
+                # Update highest seen (The Ratchet mechanism)
+                new_highest = highest_seen
+                if current_price > highest_seen:
+                    new_highest = current_price
+                    cursor = conn.cursor()
+                    try:
+                        cursor.execute(
+                            "UPDATE portfolio SET highest_seen = %s WHERE user_id = %s AND ticker = %s",
+                            (new_highest, user_id, ticker)
+                        )
+                        conn.commit()
+                    except Exception:
+                        conn.rollback()
+                        raise
+                    if verbose:
+                        print(f"\n📈 {ticker}: NEW HIGH! Ratchet moved: {highest_seen:.2f} → {new_highest:.2f}")
+
+                # Calculate trigger prices
+                stop_loss_price = buy_price * 0.93  # -7% Emergency Brake
+
+                # v3 UPGRADE: RSI-Based Dynamic ATR Multiplier
+                # Default: Loose leash (let winners run)
+                atr_multiplier = 2.0
+                stop_desc = "Standard"
+
+                # If RSI > 70 (Overbought): Tighten leash
+                if current_rsi > 70:
+                    atr_multiplier = 1.5
+                    stop_desc = "Tight (RSI > 70)"
+
+                # If RSI > 80 (Extreme Overbought): Very tight leash
+                if current_rsi > 80:
+                    atr_multiplier = 1.0
+                    stop_desc = "Aggressive (RSI > 80)"
+
+                # Calculate ATR-based trailing stop with dynamic multiplier
+                if current_atr > 0:
+                    atr_stop_distance = atr_multiplier * current_atr
+                    trailing_stop_price = new_highest - atr_stop_distance
+                    stop_type = f"ATR x{atr_multiplier} ({stop_desc})"
+                else:
+                    # Fallback to fixed 5% if ATR unavailable
+                    trailing_stop_price = new_highest * 0.95
+                    stop_type = "Fixed 5%"
+
+                # Calculate profit
+                profit_pct = ((current_price - buy_price) / buy_price) * 100
+                profit_amount = (current_price - buy_price) * quantity
+
+                # Determine candle type
+                is_red_candle = current_price < current_open
+                is_doji = abs(current_price - current_open) / current_open < 0.01 if current_open > 0 else False
+
+                # DECISION MATRIX (LEVEL 2)
+                action = "HOLD ✅"
+                reason = ""
+                signal_type = None
+                urgency = "LOW"
+
+                # CONDITION A: Emergency Brake (Stop Loss -7%)
+                if current_price <= stop_loss_price:
+                    action = "SELL NOW ❌"
+                    reason = f"EMERGENCY BRAKE: Hit -7% stop loss limit"
+                    signal_type = "STOP_LOSS"
+                    urgency = "CRITICAL"
+
+                # CONDITION B: The Ratchet (Dynamic ATR-based Trailing Stop)
+                elif current_price <= trailing_stop_price:
+                    # Only a "take profit" if the exit is above entry. If the
+                    # trailing stop fires while we are below the buy price, this is
+                    # a trend exit at a LOSS, not profit-taking.
+                    in_profit = current_price > buy_price
+                    action = "SELL NOW 💰" if in_profit else "SELL NOW 📉"
+                    reason = f"TRAILING STOP ({stop_type}): Dropped below {trailing_stop_price:.2f} from peak of {new_highest:.2f}. Trend broken."
+                    signal_type = "TAKE_PROFIT" if in_profit else "TREND_EXIT"
+                    urgency = "HIGH"
+
+                # CONDITION C: The Climax (Volume anomaly with profit > 20%)
+                elif profit_pct > 20 and rvol > 5.0 and (is_red_candle or is_doji):
+                    action = "SELL HALF ⚠️"
+                    reason = f"CLIMAX DETECTED: RVOL {rvol:.1f}x with red/doji candle. Possible dump."
+                    signal_type = "CLIMAX"
+                    urgency = "HIGH"
+
+                # CONDITION D: The Zombie Killer (LEVEL 2 NEW)
+                # If held >10 days AND profit <2%, free up capital
+                elif days_held > 10 and profit_pct < 2:
+                    action = "SELL NOW 🧟"
+                    reason = f"ZOMBIE KILLER: Held {days_held} days with only {profit_pct:.2f}% profit. Free up capital for better opportunities."
+                    signal_type = "ZOMBIE_EXIT"
+                    urgency = "MEDIUM"
+
+                # Display status
                 if verbose:
-                    print(f"\n📈 {ticker}: NEW HIGH! Ratchet moved: {highest_seen:.2f} → {new_highest:.2f}")
-            
-            # Calculate trigger prices
-            stop_loss_price = buy_price * 0.93  # -7% Emergency Brake
-            
-            # v3 UPGRADE: RSI-Based Dynamic ATR Multiplier
-            # Default: Loose leash (let winners run)
-            atr_multiplier = 2.0
-            stop_desc = "Standard"
-            
-            # If RSI > 70 (Overbought): Tighten leash
-            if current_rsi > 70:
-                atr_multiplier = 1.5
-                stop_desc = "Tight (RSI > 70)"
-            
-            # If RSI > 80 (Extreme Overbought): Very tight leash
-            if current_rsi > 80:
-                atr_multiplier = 1.0
-                stop_desc = "Aggressive (RSI > 80)"
-            
-            # Calculate ATR-based trailing stop with dynamic multiplier
-            if current_atr > 0:
-                atr_stop_distance = atr_multiplier * current_atr
-                trailing_stop_price = new_highest - atr_stop_distance
-                stop_type = f"ATR x{atr_multiplier} ({stop_desc})"
-            else:
-                # Fallback to fixed 5% if ATR unavailable
-                trailing_stop_price = new_highest * 0.95
-                stop_type = "Fixed 5%"
-            
-            # Calculate profit
-            profit_pct = ((current_price - buy_price) / buy_price) * 100
-            profit_amount = (current_price - buy_price) * quantity
-            
-            # Determine candle type
-            is_red_candle = current_price < current_open
-            is_doji = abs(current_price - current_open) / current_open < 0.01 if current_open > 0 else False
-            
-            # DECISION MATRIX (LEVEL 2)
-            action = "HOLD ✅"
-            reason = ""
-            signal_type = None
-            urgency = "LOW"
-            
-            # CONDITION A: Emergency Brake (Stop Loss -7%)
-            if current_price <= stop_loss_price:
-                action = "SELL NOW ❌"
-                reason = f"EMERGENCY BRAKE: Hit -7% stop loss limit"
-                signal_type = "STOP_LOSS"
-                urgency = "CRITICAL"
-            
-            # CONDITION B: The Ratchet (Dynamic ATR-based Trailing Stop)
-            elif current_price <= trailing_stop_price:
-                # Only a "take profit" if the exit is above entry. If the
-                # trailing stop fires while we are below the buy price, this is
-                # a trend exit at a LOSS, not profit-taking.
-                in_profit = current_price > buy_price
-                action = "SELL NOW 💰" if in_profit else "SELL NOW 📉"
-                reason = f"TRAILING STOP ({stop_type}): Dropped below {trailing_stop_price:.2f} from peak of {new_highest:.2f}. Trend broken."
-                signal_type = "TAKE_PROFIT" if in_profit else "TREND_EXIT"
-                urgency = "HIGH"
-            
-            # CONDITION C: The Climax (Volume anomaly with profit > 20%)
-            elif profit_pct > 20 and rvol > 5.0 and (is_red_candle or is_doji):
-                action = "SELL HALF ⚠️"
-                reason = f"CLIMAX DETECTED: RVOL {rvol:.1f}x with red/doji candle. Possible dump."
-                signal_type = "CLIMAX"
-                urgency = "HIGH"
-            
-            # CONDITION D: The Zombie Killer (LEVEL 2 NEW)
-            # If held >10 days AND profit <2%, free up capital
-            elif days_held > 10 and profit_pct < 2:
-                action = "SELL NOW 🧟"
-                reason = f"ZOMBIE KILLER: Held {days_held} days with only {profit_pct:.2f}% profit. Free up capital for better opportunities."
-                signal_type = "ZOMBIE_EXIT"
-                urgency = "MEDIUM"
-            
-            # Display status
-            if verbose:
-                zombie_warning = " ⚠️ ZOMBIE" if days_held > 10 and profit_pct < 2 and signal_type != "ZOMBIE_EXIT" else ""
-                print(f"\n{ticker.ljust(15)} | Status: {action}{zombie_warning}")
-                print(f"  Buy: {buy_price:.2f} | Current: {current_price:.2f} | Highest: {new_highest:.2f}")
-                print(f"  Profit: {profit_pct:+.2f}% ({profit_amount:+,.0f} BDT) | Days Held: {days_held}")
-                print(f"  Stop Loss: {stop_loss_price:.2f} | Trail Stop: {trailing_stop_price:.2f} ({stop_type})")
-                print(f"  ATR: {current_atr:.2f} | RSI: {current_rsi:.1f} | RVOL: {rvol:.2f}x | Volume: {current_volume:,}")
-                
+                    zombie_warning = " ⚠️ ZOMBIE" if days_held > 10 and profit_pct < 2 and signal_type != "ZOMBIE_EXIT" else ""
+                    print(f"\n{ticker.ljust(15)} | Status: {action}{zombie_warning}")
+                    print(f"  Buy: {buy_price:.2f} | Current: {current_price:.2f} | Highest: {new_highest:.2f}")
+                    print(f"  Profit: {profit_pct:+.2f}% ({profit_amount:+,.0f} BDT) | Days Held: {days_held}")
+                    print(f"  Stop Loss: {stop_loss_price:.2f} | Trail Stop: {trailing_stop_price:.2f} ({stop_type})")
+                    print(f"  ATR: {current_atr:.2f} | RSI: {current_rsi:.1f} | RVOL: {rvol:.2f}x | Volume: {current_volume:,}")
+
+                    if signal_type:
+                        print(f"  ⚡ {reason}")
+
+                # Record signal
                 if signal_type:
-                    print(f"  ⚡ {reason}")
-            
-            # Record signal
-            if signal_type:
-                sell_signals.append({
-                    'ticker': ticker,
-                    'action': action,
-                    'signal_type': signal_type,
-                    'urgency': urgency,
-                    'reason': reason,
-                    'buy_price': buy_price,
-                    'current_price': current_price,
-                    'highest_seen': new_highest,
-                    'profit_pct': profit_pct,
-                    'profit_amount': profit_amount,
-                    'quantity': quantity,
-                    'rvol': rvol,
-                    'stop_loss_price': stop_loss_price,
-                    'trailing_stop_price': trailing_stop_price,
-                    'atr': current_atr,
-                    'days_held': days_held
-                })
-        
-        conn.close()
-        
-        if verbose:
-            print("\n" + "="*80)
-            if sell_signals:
-                print(f"🚨 {len(sell_signals)} SELL SIGNAL(S) DETECTED!")
-            else:
-                print("✅ All positions safe. No sell signals.")
-            print("="*80 + "\n")
-        
-        return sell_signals
+                    sell_signals.append({
+                        'ticker': ticker,
+                        'action': action,
+                        'signal_type': signal_type,
+                        'urgency': urgency,
+                        'reason': reason,
+                        'buy_price': buy_price,
+                        'current_price': current_price,
+                        'highest_seen': new_highest,
+                        'profit_pct': profit_pct,
+                        'profit_amount': profit_amount,
+                        'quantity': quantity,
+                        'rvol': rvol,
+                        'stop_loss_price': stop_loss_price,
+                        'trailing_stop_price': trailing_stop_price,
+                        'atr': current_atr,
+                        'days_held': days_held
+                    })
+
+            if verbose:
+                print("\n" + "="*80)
+                if sell_signals:
+                    print(f"🚨 {len(sell_signals)} SELL SIGNAL(S) DETECTED!")
+                else:
+                    print("✅ All positions safe. No sell signals.")
+                print("="*80 + "\n")
+
+            return sell_signals
+        finally:
+            conn.close()
     
     def get_portfolio_summary(self, user_id: int) -> Dict:
         """

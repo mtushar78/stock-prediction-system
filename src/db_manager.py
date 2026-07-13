@@ -23,8 +23,8 @@ from pathlib import Path
 from typing import Optional, List
 
 import pandas as pd
-from sqlalchemy import create_engine, text
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import create_engine, event, text
+from sqlalchemy.pool import QueuePool
 from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -186,10 +186,18 @@ _engine_singleton = None
 
 
 def _get_engine():
-    """Shared SQLAlchemy engine over SQLite. StaticPool + WAL is the
-    right default for a single-process FastAPI app: one connection
-    shared across threads, writes serialized by SQLite, reads
-    non-blocking thanks to WAL."""
+    """Shared SQLAlchemy engine over SQLite with a real connection pool + WAL.
+
+    A single-process FastAPI app used to run on StaticPool (one connection
+    shared across every thread). That serialised the whole app behind any slow
+    statement: while the scheduled job rewrote ``signals_today`` on the one
+    connection, every API read had to wait — the "site freezes when the cron
+    runs" bug. QueuePool hands out independent connections, and WAL lets many
+    readers run concurrently alongside the single writer, so a background write
+    no longer blocks reads. Per-connection PRAGMAs (busy_timeout, foreign_keys,
+    synchronous) must be set on EACH physical connection, so they're applied via
+    the pool's ``connect`` event rather than once at engine creation.
+    """
     global _engine_singleton
     if _engine_singleton is None:
         SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -197,13 +205,23 @@ def _get_engine():
             f'sqlite:///{SQLITE_PATH}',
             future=True,
             connect_args={'check_same_thread': False, 'timeout': 30},
-            poolclass=StaticPool,
+            poolclass=QueuePool,
+            pool_size=5,          # steady-state pooled connections
+            max_overflow=10,      # burst headroom under concurrent load
+            pool_timeout=30,      # wait (s) for a free connection before erroring
+            pool_recycle=3600,
         )
-        with _engine_singleton.begin() as conn:
-            conn.exec_driver_sql("PRAGMA journal_mode=WAL")
-            conn.exec_driver_sql("PRAGMA synchronous=NORMAL")
-            conn.exec_driver_sql("PRAGMA foreign_keys=ON")
-            conn.exec_driver_sql("PRAGMA busy_timeout=30000")
+
+        @event.listens_for(_engine_singleton, "connect")
+        def _set_sqlite_pragmas(dbapi_conn, _rec):  # noqa: ANN001
+            cur = dbapi_conn.cursor()
+            try:
+                cur.execute("PRAGMA journal_mode=WAL")   # persistent, but harmless to re-assert
+                cur.execute("PRAGMA synchronous=NORMAL")
+                cur.execute("PRAGMA foreign_keys=ON")
+                cur.execute("PRAGMA busy_timeout=30000")  # wait 30s on a locked DB, don't error
+            finally:
+                cur.close()
     return _engine_singleton
 
 

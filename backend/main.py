@@ -247,13 +247,13 @@ def _launch_pattern_scan(label: str = "") -> None:
 def run_chart_analysis(label: str = "") -> int:
     """Run the independent chart-pattern engine and persist its output.
     Returns the number of tickers with detected patterns (0 on failure)."""
+    db = None
     try:
         db = DatabaseManager()
         analyzer = ChartAnalyzer(db)
         results = analyzer.analyze_all_tickers()
         analyzer.save_results(results)
         logger.info(f"📈 [{label}] Chart analysis: {len(results)} tickers with patterns")
-        db.close()
 
         # v14: Bulkowski multi-week chart-pattern scan. It's CPU-bound over
         # ~430 tickers, so we run it as a DETACHED SUBPROCESS — running it
@@ -267,86 +267,104 @@ def run_chart_analysis(label: str = "") -> int:
         import traceback
         logger.error(traceback.format_exc())
         return 0
+    finally:
+        if db is not None:
+            db.close()
+
+
+def _analyze_and_save(update_type: str, is_final: int, record_reversals: bool) -> bool:
+    """Heavy, fully-synchronous analysis + persistence pass.
+
+    ALWAYS invoke this via ``asyncio.to_thread`` — never inline in a coroutine.
+    ``analyze_all_tickers`` and the ``signals_today`` rewrite take seconds over
+    ~400 tickers; running them on the event loop froze the entire API while a
+    scheduled scrape ran (the reported "whole site fails to respond" bug). In a
+    worker thread the loop stays free to serve requests, and (with the SQLite
+    QueuePool + WAL) reads no longer serialise behind this write.
+
+    Returns True if signals were generated and saved.
+    """
+    ok = False
+    db = DatabaseManager()
+    try:
+        analyzer = StockAnalyzer(db)
+
+        # v6: Load fundamentals for Low Float scoring
+        paid_up_data = db.get_all_fundamentals()
+        logger.info(f"[{update_type}] Loaded fundamentals for {len(paid_up_data)} tickers")
+        df_results = analyzer.analyze_all_tickers(paid_up_data=paid_up_data)
+        logger.info(f"[{update_type}] Analysis returned: {len(df_results)} results")
+
+        if not df_results.empty:
+            # v7: serialize list/dict columns before the SQLite write.
+            df_results_copy = _prepare_signals_for_sqlite(df_results)
+            df_results_copy.to_sql('signals_today', db.engine, if_exists='replace', index=False)
+
+            cursor = db.conn.cursor()
+            cursor.execute('SELECT COUNT(*) FROM signals_today')
+            count = cursor.fetchone()[0]
+            logger.info(f"✅ [{update_type}] Analysis: {len(df_results)} signals generated")
+            logger.info(f"✅ [{update_type}] Verified: {count} signals saved to signals_today")
+
+            # v10 live tracker: log fresh reversals (EOD / startup) + refresh outcomes
+            try:
+                from src.reversal_tracker import record_fresh_reversals, update_outcomes
+                if record_reversals:
+                    record_fresh_reversals(db.engine, df_results)
+                update_outcomes(db.engine, db.get_stock_data)
+            except Exception as e:
+                logger.error(f"[{update_type}] reversal_tracker update failed: {e}")
+
+            buy_count = len(df_results[df_results['signal'] == 'BUY'])
+            wait_count = len(df_results[df_results['signal'] == 'WAIT'])
+            logger.info(f"   [{update_type}] BUY signals: {buy_count}, WAIT signals: {wait_count}")
+            ok = True
+        else:
+            logger.warning(f"⚠️  [{update_type}] No signals generated - DataFrame empty")
+            logger.warning("   Possible reasons: All stocks below 200 SMA or insufficient data")
+    except Exception as e:
+        logger.error(f"❌ [{update_type}] Analysis FAILED: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+    finally:
+        db.close()
+
+    # Independent chart-pattern engine — its own pipeline, own table (and it
+    # already offloads the CPU-heavy Bulkowski scan to a detached subprocess).
+    # Failures here do NOT affect the quant signals; they're logged + swallowed.
+    try:
+        run_chart_analysis(update_type)
+    except Exception as e:
+        logger.error(f"[{update_type}] chart analysis errored (non-fatal): {e}")
+    return ok
 
 
 async def scheduled_scraper_and_analysis(is_final: int = 0):
     """
-    Run DSE scraper and analysis
-    
+    Run DSE scraper and analysis.
+
+    Both the scrape and the analysis run in worker threads (asyncio.to_thread)
+    so the API event loop stays responsive for the whole job.
+
     Args:
         is_final: 0 for intraday, 1 for final EOD
     """
     try:
         update_type = "FINAL" if is_final else "INTRADAY"
         logger.info(f"⏰ Starting scraper [{update_type}]...")
-        
-        # Run DSE scraper
+
+        # Run DSE scraper (off the event loop)
         success = await asyncio.to_thread(run_daily_scraper, is_final)
-        
         if not success:
             logger.error("❌ Scraper failed")
             return
-        
-        # Run analysis after scraping
-        try:
-            db = DatabaseManager()
-            analyzer = StockAnalyzer(db)
-            
-            # v6: Load fundamentals for Low Float scoring
-            paid_up_data = db.get_all_fundamentals()
-            logger.info(f"[{update_type}] Loaded fundamentals for {len(paid_up_data)} tickers")
-            df_results = analyzer.analyze_all_tickers(paid_up_data=paid_up_data)
-            
-            logger.info(f"[{update_type}] Analysis returned: {len(df_results)} results")
-            
-            if not df_results.empty:
-                # v7: serialize list/dict columns (reasons, early_reasons,
-                # v5_details, early_components) before SQLite write.
-                df_results_copy = _prepare_signals_for_sqlite(df_results)
 
-                # Save to database (pandas requires the SQLAlchemy engine for PG).
-                df_results_copy.to_sql('signals_today', db.engine, if_exists='replace', index=False)
+        # Heavy analysis + persistence + chart engine — entirely off the event loop.
+        await asyncio.to_thread(_analyze_and_save, update_type, is_final, bool(is_final))
 
-                # Verify save
-                cursor = db.conn.cursor()
-                cursor.execute('SELECT COUNT(*) FROM signals_today')
-                count = cursor.fetchone()[0]
-
-                logger.info(f"✅ [{update_type}] Analysis: {len(df_results)} signals generated")
-                logger.info(f"✅ [{update_type}] Verified: {count} signals saved to signals_today")
-
-                # v10 live tracker: log fresh reversals (EOD only) + refresh outcomes
-                try:
-                    from src.reversal_tracker import record_fresh_reversals, update_outcomes
-                    if is_final:
-                        record_fresh_reversals(db.engine, df_results)
-                    update_outcomes(db.engine, db.get_stock_data)
-                except Exception as e:
-                    logger.error(f"reversal_tracker update failed: {e}")
-                
-                # Count signal types
-                buy_count = len(df_results[df_results['signal'] == 'BUY'])
-                wait_count = len(df_results[df_results['signal'] == 'WAIT'])
-                logger.info(f"   [{update_type}] BUY signals: {buy_count}, WAIT signals: {wait_count}")
-            else:
-                logger.warning(f"⚠️  [{update_type}] No signals generated - DataFrame empty")
-                logger.warning(f"   Possible reasons: All stocks below 200 SMA or insufficient data")
-
-            db.close()
-
-            # Independent chart-pattern engine runs after every scrape — its
-            # own pipeline, own table. Failures here do NOT affect the quant
-            # signals; they're logged and swallowed.
-            await asyncio.to_thread(run_chart_analysis, update_type)
-            
-        except Exception as e:
-            logger.error(f"❌ [{update_type}] Analysis FAILED: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-        
         logger.info(f"✅ Scraper and analysis completed [{update_type}]")
         logger.info("🔄 Data refresh complete - fresh connections will be used on next API call")
-        
+
     except Exception as e:
         logger.error(f"❌ Scraper failed: {e}")
 
@@ -361,73 +379,19 @@ async def lifespan(app: FastAPI):
     logger.info(f"📊 Primary DB: sqlite @ {SQLITE_PATH}")
     logger.info(f"📦 Backup DB: postgres @ {_pg_host}")
     
-    # Run initial analysis on startup
+    # Run initial analysis on startup — in a worker thread so the slow first
+    # pass (and the chart engine it triggers) doesn't stall the event loop that
+    # is about to start serving requests. Same threaded helper the scheduler uses.
     logger.info("📊 Running initial analysis...")
     analysis_success = False
     try:
-        db = DatabaseManager()
-        analyzer = StockAnalyzer(db)
-        
-        # v6: Load fundamentals for Low Float scoring
-        paid_up_data = db.get_all_fundamentals()
-        logger.info(f"Loaded fundamentals for {len(paid_up_data)} tickers")
-        df_results = analyzer.analyze_all_tickers(paid_up_data=paid_up_data)
-        
-        logger.info(f"Analysis complete: {len(df_results)} results returned")
-        
-        if not df_results.empty:
-            # v7: serialize list/dict columns (reasons, early_reasons,
-            # v5_details, early_components) before SQLite write.
-            df_results_copy = _prepare_signals_for_sqlite(df_results)
-
-            # Save to database (SQLAlchemy engine required for PostgreSQL).
-            df_results_copy.to_sql('signals_today', db.engine, if_exists='replace', index=False)
-
-            # Verify save
-            cursor = db.conn.cursor()
-            cursor.execute('SELECT COUNT(*) FROM signals_today')
-            count = cursor.fetchone()[0]
-
-            logger.info(f"✅ Initial analysis completed: {len(df_results)} signals generated")
-            logger.info(f"✅ Verified: {count} signals saved to signals_today table")
-
-            # v10 live tracker: record fresh reversals + refresh all outcomes
-            try:
-                from src.reversal_tracker import record_fresh_reversals, update_outcomes
-                record_fresh_reversals(db.engine, df_results)
-                update_outcomes(db.engine, db.get_stock_data)
-            except Exception as e:
-                logger.error(f"reversal_tracker startup update failed: {e}")
-            
-            # Count BUY and WAIT signals
-            buy_count = len(df_results[df_results['signal'] == 'BUY'])
-            wait_count = len(df_results[df_results['signal'] == 'WAIT'])
-            logger.info(f"   - BUY signals: {buy_count}")
-            logger.info(f"   - WAIT signals: {wait_count}")
-            
-            analysis_success = True
-        else:
-            logger.warning("⚠️  No signals generated on startup - DataFrame is empty")
-            logger.warning("This could indicate:")
-            logger.warning("  1. No stocks meet v4 criteria (all in downtrends)")
-            logger.warning("  2. Insufficient historical data (need 200 days)")
-            logger.warning("  3. Analysis logic error")
-
-        db.close()
-
-        # Run the chart-pattern engine on startup too so the dashboard has
-        # data immediately, even before the first scrape fires.
-        try:
-            await asyncio.to_thread(run_chart_analysis, "STARTUP")
-        except Exception as _e:
-            logger.error(f"Startup chart analysis errored (non-fatal): {_e}")
-        
+        analysis_success = await asyncio.to_thread(_analyze_and_save, "STARTUP", 0, True)
     except Exception as e:
         logger.error(f"❌ Initial analysis FAILED: {e}")
         import traceback
         logger.error(traceback.format_exc())
         logger.error("CRITICAL: Startup analysis failed - signals table may be empty!")
-    
+
     if not analysis_success:
         logger.warning("⚠️  STARTUP ANALYSIS DID NOT COMPLETE SUCCESSFULLY")
         logger.warning("API will return empty signals until next scheduled update")
@@ -582,18 +546,17 @@ def read_me(user: dict = Depends(auth.current_user)):
 @app.get("/")
 def health_check() -> SystemStatus:
     """System health check and status"""
+    db = None
     try:
         # Get last update time from database
         db = DatabaseManager()
         cursor = db.conn.cursor()
-        
+
         # Try to get last update from stock_data
         cursor.execute("SELECT MAX(date) FROM stock_data")
         result = cursor.fetchone()
         last_update = result[0] if result and result[0] else None
-        
-        db.close()
-        
+
         # Get next scheduled update from all 3 jobs
         next_update = None
         job_ids = ['morning_update', 'afternoon_update', 'closing_update']
@@ -648,6 +611,9 @@ def health_check() -> SystemStatus:
             last_update=None,
             next_update=None
         )
+    finally:
+        if db is not None:
+            db.close()
 
 @app.get("/api/sniper-signals")
 def get_sniper_signals():
@@ -1793,6 +1759,7 @@ def get_chart_signal_detail(ticker: str):
       3. If even on-demand analysis can't produce a result (no data /
          insufficient history / broken OHLC) → 404."""
     ticker_u = ticker.upper()
+    db = None
     try:
         db = DatabaseManager()
 
@@ -1904,8 +1871,6 @@ def get_chart_signal_detail(ticker: str):
         except Exception as _we:
             logger.warning(f"wyckoff context failed for {ticker_u}: {_we}")
 
-        db.close()
-
         if not sig:
             # No candlestick signal — but chart patterns alone may exist.
             if chart_patterns:
@@ -1933,6 +1898,9 @@ def get_chart_signal_detail(ticker: str):
     except Exception as e:
         logger.error(f"get_chart_signal_detail({ticker}) failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if db is not None:
+            db.close()
 
 
 @app.get("/api/chart-analysis/{ticker}/ohlcv")
@@ -1980,19 +1948,23 @@ def get_chart_ohlcv(ticker: str, days: int = 60):
 @app.get("/api/tickers")
 def get_all_tickers():
     """Return all available tickers in DB for dropdown/autocomplete."""
+    db = None
     try:
         db = DatabaseManager()
         tickers = db.get_all_tickers()
-        db.close()
         return tickers
     except Exception as e:
         logger.error(f"Error getting tickers: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if db is not None:
+            db.close()
 
 
 @app.post("/api/analyze-ticker")
 def analyze_ticker_detailed(request: TickerAnalyzeRequest):
     """Analyze a single ticker and return a detailed calculation breakdown."""
+    db = None
     try:
         ticker = (request.ticker or '').upper().strip()
         if not ticker:
@@ -2013,7 +1985,6 @@ def analyze_ticker_detailed(request: TickerAnalyzeRequest):
             analysis_date=request.analysis_date,
         )
 
-        db.close()
         return result
 
     except HTTPException:
@@ -2023,11 +1994,15 @@ def analyze_ticker_detailed(request: TickerAnalyzeRequest):
         import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if db is not None:
+            db.close()
 
 @app.get("/api/score-history/{ticker}")
 def get_score_history(ticker: str, days: int = 20):
     """Replay the analyzer day-by-day to show how a ticker's MAIN score and
     EarlyScore evolved over the last `days` trading days."""
+    db = None
     try:
         ticker_u = (ticker or '').upper().strip()
         if not ticker_u:
@@ -2042,25 +2017,28 @@ def get_score_history(ticker: str, days: int = 20):
             days=days,
             paid_up_capital=paid_up_capital,
         )
-        db.close()
         return result
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error in get_score_history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if db is not None:
+            db.close()
 
 
 @app.get("/api/portfolio")
 def get_portfolio(user_id: int = Depends(auth.current_user_id)):
     """Get current portfolio holdings with live P/L and Level 2 sell logic details"""
+    db = None
     try:
         pm = PortfolioManager()
         portfolio_df = pm.get_portfolio(user_id)
-        
+
         if portfolio_df.empty:
             return []
-        
+
         # Get current prices and calculate P/L with Level 2 details
         db = DatabaseManager()
         
@@ -2196,18 +2174,19 @@ def get_portfolio(user_id: int = Depends(auth.current_user_id)):
                 logger.error(traceback.format_exc())
                 # Continue with next item instead of crashing
                 continue
-        
-        db.close()
-        
+
         logger.info(f"✅ Portfolio API: Returning {len(results)} positions")
         return results
-    
+
     except Exception as e:
         logger.error(f"❌ CRITICAL ERROR in get_portfolio: {e}")
         import traceback
         logger.error(traceback.format_exc())
         # Return empty array instead of crashing
         return []
+    finally:
+        if db is not None:
+            db.close()
 
 @app.post("/api/trade")
 def add_trade(trade: Trade, user_id: int = Depends(auth.current_user_id)):
@@ -2245,10 +2224,11 @@ def add_trade(trade: Trade, user_id: int = Depends(auth.current_user_id)):
 @app.post("/api/calculate-buy")
 def calculate_buy(request: BudgetBuyRequest):
     """Calculate optimal buy quantity based on budget and signal strength"""
+    db = None
     try:
         pm = PortfolioManager()
         db = DatabaseManager()
-        
+
         # Get current price if not provided
         current_price = request.current_price
         if not current_price:
@@ -2270,16 +2250,17 @@ def calculate_buy(request: BudgetBuyRequest):
             budget=request.budget,
             signal_strength=request.signal_strength or 50
         )
-        
-        db.close()
-        
+
         return recommendation
-    
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error calculating buy: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if db is not None:
+            db.close()
 
 @app.get("/api/entry-guidance/{ticker}")
 def get_entry_guidance(ticker: str):
@@ -2289,6 +2270,7 @@ def get_entry_guidance(ticker: str):
     recommended buy-limit and a warning when the price isn't near the day's
     low. Purely advisory — it never blocks a trade.
     """
+    db = None
     try:
         from src.analyzer import compute_entry_guidance
         db = DatabaseManager()
@@ -2299,7 +2281,6 @@ def get_entry_guidance(ticker: str):
             (ticker.upper(),)
         )
         rows = cursor.fetchall()
-        db.close()
         if not rows:
             raise HTTPException(status_code=404, detail=f"No market data for {ticker}")
 
@@ -2324,6 +2305,9 @@ def get_entry_guidance(ticker: str):
     except Exception as e:
         logger.error(f"Error computing entry guidance for {ticker}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if db is not None:
+            db.close()
 
 @app.get("/api/purchase-history/{ticker}")
 def get_purchase_history(ticker: str, user_id: int = Depends(auth.current_user_id)):
@@ -2344,35 +2328,38 @@ def get_purchase_history(ticker: str, user_id: int = Depends(auth.current_user_i
 @app.get("/api/volume-history/{ticker}")
 def get_volume_history(ticker: str):
     """Get 20-day volume history for a ticker"""
+    db = None
     try:
         db = DatabaseManager()
-        
+
         cursor = db.conn.cursor()
         cursor.execute(
             "SELECT date, volume FROM stock_data WHERE ticker=%s ORDER BY date DESC LIMIT 20",
             (ticker.upper(),)
         )
         rows = cursor.fetchall()
-        
-        db.close()
-        
+
         if not rows:
             return []
-        
+
         # Convert to list of dicts
         history = [{'date': row[0], 'volume': row[1]} for row in rows]
         history.reverse()  # Oldest first
-        
+
         return history
-    
+
     except Exception as e:
         logger.error(f"Error getting volume history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if db is not None:
+            db.close()
 
 
 @app.get("/api/price-history/{ticker}")
 def get_price_history(ticker: str):
     """Get 20-day OHLC (open/high/low/close) history for a ticker"""
+    db = None
     try:
         db = DatabaseManager()
 
@@ -2382,8 +2369,6 @@ def get_price_history(ticker: str):
             (ticker.upper(),)
         )
         rows = cursor.fetchall()
-
-        db.close()
 
         if not rows:
             return []
@@ -2405,6 +2390,9 @@ def get_price_history(ticker: str):
     except Exception as e:
         logger.error(f"Error getting price history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if db is not None:
+            db.close()
 
 @app.delete("/api/trade/{ticker}")
 def remove_trade(ticker: str, sell_price: Optional[float] = None, notes: str = "",
@@ -2512,13 +2500,13 @@ def get_fundamentals():
 @app.get("/api/fundamentals/{ticker}")
 def get_ticker_fundamentals(ticker: str):
     """Get fundamentals for a specific ticker"""
+    db = None
     try:
         db = DatabaseManager()
         cursor = db.conn.cursor()
         cursor.execute("SELECT * FROM fundamentals WHERE ticker = %s", (ticker.upper(),))
         cols = [desc[0] for desc in cursor.description]
         row = cursor.fetchone()
-        db.close()
         if not row:
             raise HTTPException(status_code=404, detail=f"No fundamentals for {ticker}")
         return dict(zip(cols, row))
@@ -2527,6 +2515,9 @@ def get_ticker_fundamentals(ticker: str):
     except Exception as e:
         logger.error(f"Error getting fundamentals for {ticker}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if db is not None:
+            db.close()
 
 @app.post("/api/trigger-update")
 async def trigger_manual_update():

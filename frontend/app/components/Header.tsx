@@ -49,18 +49,6 @@ export default function Header({ systemStatus, loading, onRefresh }: HeaderProps
             Manual Analyze
           </Link>
         </nav>
-        <div className="bg-gray-800 px-3 py-1.5 rounded border border-gray-700">
-          <span className="text-gray-400 text-[10px] block">SYSTEM</span>
-          <span className={`font-bold text-sm ${systemStatus?.status === 'ONLINE' ? 'text-green-500' : 'text-red-500'}`}>
-            ● {systemStatus?.status || 'LOADING'}
-          </span>
-        </div>
-        <div className="bg-gray-800 px-3 py-1.5 rounded border border-gray-700">
-          <span className="text-gray-400 text-[10px] block">MARKET</span>
-          <span className={`font-bold text-sm ${systemStatus?.market_status === 'OPEN' ? 'text-green-500' : 'text-yellow-500'}`}>
-            {systemStatus?.market_status || 'UNKNOWN'}
-          </span>
-        </div>
         <DataFreshnessBadge systemStatus={systemStatus} />
         <button
           onClick={onRefresh}

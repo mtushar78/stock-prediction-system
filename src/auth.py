@@ -92,27 +92,31 @@ def _row_to_user(row) -> Optional[Dict]:
 
 
 def get_user_by_email(email: str) -> Optional[Dict]:
+    # This runs on the per-request auth path, so the connection MUST be released
+    # on every path (QueuePool would otherwise leak on any DB error and exhaust).
     db = DatabaseManager()
-    cur = db.conn.cursor()
-    cur.execute(
-        "SELECT id, email, password_hash FROM users WHERE email = %s",
-        ((email or "").strip().lower(),),
-    )
-    user = _row_to_user(cur.fetchone())
-    db.close()
-    return user
+    try:
+        cur = db.conn.cursor()
+        cur.execute(
+            "SELECT id, email, password_hash FROM users WHERE email = %s",
+            ((email or "").strip().lower(),),
+        )
+        return _row_to_user(cur.fetchone())
+    finally:
+        db.close()
 
 
 def get_user_by_id(user_id: int) -> Optional[Dict]:
     db = DatabaseManager()
-    cur = db.conn.cursor()
-    cur.execute(
-        "SELECT id, email, password_hash FROM users WHERE id = %s",
-        (user_id,),
-    )
-    user = _row_to_user(cur.fetchone())
-    db.close()
-    return user
+    try:
+        cur = db.conn.cursor()
+        cur.execute(
+            "SELECT id, email, password_hash FROM users WHERE id = %s",
+            (user_id,),
+        )
+        return _row_to_user(cur.fetchone())
+    finally:
+        db.close()
 
 
 def create_user(email: str, password: str) -> Dict:

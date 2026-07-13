@@ -38,6 +38,8 @@ interface Rebound {
   off_low_pct: number;
   from_peak_pct: number;
   recovery_room_pct: number;
+  target?: number | null;
+  target_pct?: number | null;
   days_since_trough: number;
   fall_span_bars: number;
   ret_5d: number | null;
@@ -51,7 +53,7 @@ interface Rebound {
   rvol: number | null;
   vol_pickup: number | null;
   curl_score: number;
-  stage?: 'TURNING' | 'EARLY';
+  stage?: 'TURNING' | 'EARLY' | 'FRESH';
   score: number;
   grade: string;
   is_reversal?: boolean;
@@ -66,6 +68,7 @@ interface RebResponse {
   as_of: string | null;
   universe: number;
   count: number;
+  fresh?: number;
   turning?: number;
   early?: number;
   stocks: Rebound[];
@@ -109,7 +112,7 @@ export default function ReboundsPage() {
   const [sectorFilter, setSectorFilter] = useState('ALL');
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState<SortKey>('score');
-  const [stageFilter, setStageFilter] = useState<'ALL' | 'TURNING' | 'EARLY'>('ALL');
+  const [stageFilter, setStageFilter] = useState<'ALL' | 'FRESH' | 'EARLY' | 'TURNING'>('ALL');
   const [active, setActive] = useState<string | null>(null);
 
   const fetchList = () => {
@@ -139,10 +142,10 @@ export default function ReboundsPage() {
     if (sectorFilter !== 'ALL') out = out.filter((r) => (r.sector || 'Unknown') === sectorFilter);
     if (q) out = out.filter((r) => r.ticker.includes(q));
     return [...out].sort((a, b) => {
-      // Mature TURNING setups always lead the aggressive EARLY ones.
-      const sa = a.stage === 'EARLY' ? 0 : 1;
-      const sb = b.stage === 'EARLY' ? 0 : 1;
-      if (sa !== sb) return sb - sa;
+      // Sort purely by the chosen key. The backend score already rewards a fresh
+      // green turn right off the low and penalises names that have "already gone
+      // high", so the default (score) surfaces the aggressive just-turning
+      // candidates first — stage is a badge, not a sort gate.
       const av = (a[sortBy] as number) ?? -9999;
       const bv = (b[sortBy] as number) ?? -9999;
       // off_low: smaller is "earlier / better", so ascending; others descending.
@@ -190,15 +193,17 @@ export default function ReboundsPage() {
 
       {/* What this list is (and is not) */}
       <div className="mb-4 bg-teal-950/25 border border-teal-700/50 rounded-lg p-3 text-xs text-teal-100/90 leading-relaxed">
-        <b>🔭 A watchlist of turns, not a buy list.</b> Every stock here fell at least ~25% from a prior high,
-        carved out a base, and is <b>starting to turn back up</b>. Two stages:{' '}
+        <b>🔭 A watchlist of turns, not a buy list.</b> Stocks that pulled back and are <b>starting to turn back up</b>.
+        Three stages, most aggressive first:{' '}
+        <b className="text-green-300">⚡ FRESH</b> = a short-term dip that printed a low in the last 1-5 days and is
+        putting in <b>green candles right off that low</b> — the freshest, most aggressive turns (no deep fall required);{' '}
+        <b className="text-amber-300">🌱 EARLY</b> = fell hard, based out, and is just showing the first 1-2 days of
+        strength before the averages confirm;{' '}
         <b className="text-teal-300">🚀 TURNING</b> = the established curl (reclaimed/rising short-term average,
-        momentum positive) — higher conviction;{' '}
-        <b className="text-amber-300">🌱 EARLY</b> = still at the base, just showing the first 1-2 days of
-        strength before the averages confirm — <i>more aggressive/speculative, a bigger watchlist</i>. Neither
-        means it keeps going — a curl off a base can roll over. Use this to <b>catch turns early and track them</b>,
-        then click any row for the full manual analysis before deciding. The{' '}
-        <span className="text-amber-400">●</span> dot on each sparkline marks the base low.
+        momentum positive) — higher conviction. The <b>TARGET</b> column is the first overhead resistance the price
+        must reclaim. Neither the stages nor the target promise anything — a turn can roll over. Use this to{' '}
+        <b>catch turns early and track them</b>, then click any row for the full manual analysis before deciding. The{' '}
+        <span className="text-amber-400">●</span> dot on each sparkline marks the low.
       </div>
 
       {error && <div className="mb-4 bg-red-950/40 border border-red-700 rounded p-3 text-sm text-red-300">{error}</div>}
@@ -211,23 +216,28 @@ export default function ReboundsPage() {
               <><b className="text-teal-300">{filtered.length}</b> shown{data && <> · {data.universe} scanned</>}</>
             )}
           </span>
-          {/* Stage filter: mature turns vs the aggressive at-the-bottom bucket */}
+          {/* Stage filter: freshest turns first, then early-at-the-base, then mature */}
           {([
             ['ALL', `All (${rows.length})`],
-            ['TURNING', `🚀 Turning (${data?.turning ?? 0})`],
+            ['FRESH', `⚡ Fresh (${data?.fresh ?? 0})`],
             ['EARLY', `🌱 Early (${data?.early ?? 0})`],
-          ] as ['ALL' | 'TURNING' | 'EARLY', string][]).map(([key, label]) => (
+            ['TURNING', `🚀 Turning (${data?.turning ?? 0})`],
+          ] as ['ALL' | 'FRESH' | 'EARLY' | 'TURNING', string][]).map(([key, label]) => (
             <button
               key={key}
               onClick={() => setStageFilter(key)}
-              title={key === 'EARLY'
-                ? 'Aggressive bucket: still at the base, just showing the first signs of turning up (averages not yet confirmed) — more speculative'
+              title={key === 'FRESH'
+                ? 'Most aggressive: dipped over the last few days, printed a low in the last 1-5 sessions, and is putting in green candles right off that low — the freshest turns (no deep fall required)'
+                : key === 'EARLY'
+                ? 'Aggressive bucket: fell hard, based out, and is just showing the first signs of turning up (averages not yet confirmed) — more speculative'
                 : key === 'TURNING'
                 ? 'Established turns: reclaimed/rising short-term average with momentum turning positive'
-                : 'Both mature and early turns'}
+                : 'Every stage'}
               className={`px-2 py-1 rounded border transition ${
                 stageFilter === key
-                  ? (key === 'EARLY' ? 'bg-amber-800 text-amber-100 border-amber-600' : 'bg-teal-800 text-teal-100 border-teal-600')
+                  ? (key === 'FRESH' ? 'bg-green-800 text-green-100 border-green-600'
+                    : key === 'EARLY' ? 'bg-amber-800 text-amber-100 border-amber-600'
+                    : 'bg-teal-800 text-teal-100 border-teal-600')
                   : 'bg-gray-800 text-gray-400 border-gray-700 hover:bg-gray-700'
               }`}
             >
@@ -288,7 +298,7 @@ export default function ReboundsPage() {
       )}
 
       <div className="overflow-x-auto bg-gray-800/40 border border-gray-700 rounded-lg">
-        <table className="text-left text-sm min-w-[980px] w-full">
+        <table className="text-left text-sm min-w-[1080px] w-full">
           <thead>
             <tr className="text-gray-500 text-xs border-b border-gray-700">
               <th className="p-3" title="0-100 quality of the turn: MA reclaim/slope + momentum + how early + volume pickup + base quality">GRADE</th>
@@ -296,6 +306,7 @@ export default function ReboundsPage() {
               <th className="p-3">TICKER</th>
               <th className="p-3">SECTOR</th>
               <th className="p-3 text-right">PRICE</th>
+              <th className="p-3 text-right" title="First upside objective — the nearest overhead resistance the price must reclaim (capped at the old high). Context, not a promise.">TARGET</th>
               <th className="p-3" title="Recent price path — the ● marks the base low">SHAPE</th>
               <th className="p-3 text-right" title="Peak → trough fall">FELL</th>
               <th className="p-3 text-right" title="How far price has bounced off the base low (smaller = earlier)">OFF LOW</th>
@@ -318,7 +329,12 @@ export default function ReboundsPage() {
                   </span>
                 </td>
                 <td className="p-3">
-                  {r.stage === 'EARLY' ? (
+                  {r.stage === 'FRESH' ? (
+                    <span className="text-[10px] bg-green-900/50 text-green-300 border border-green-700/60 px-1.5 py-0.5 rounded font-bold whitespace-nowrap"
+                      title="Freshest turn — dipped over the last few days, low in the last 1-5 sessions, green candles right off it. Most aggressive.">
+                      ⚡ FRESH
+                    </span>
+                  ) : r.stage === 'EARLY' ? (
                     <span className="text-[10px] bg-amber-900/50 text-amber-300 border border-amber-700/60 px-1.5 py-0.5 rounded font-bold whitespace-nowrap"
                       title="At the base, just starting to turn up — averages not yet confirmed. Aggressive / speculative.">
                       🌱 EARLY
@@ -352,6 +368,18 @@ export default function ReboundsPage() {
                     </div>
                   )}
                 </td>
+                <td className="p-3 text-right whitespace-nowrap">
+                  {r.target != null ? (
+                    <>
+                      <span className="text-amber-300 font-bold">{r.target}</span>
+                      {r.target_pct != null && (
+                        <div className="text-[10px] text-sky-300">+{f1(r.target_pct)}% upside</div>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-gray-600">—</span>
+                  )}
+                </td>
                 <td className="p-3"><Spark data={r.spark} up={(r.ret_10d ?? 0) >= 0} lowIdx={r.spark_low_idx} /></td>
                 <td className="p-3 text-right whitespace-nowrap">
                   <span className="text-red-300 font-bold">−{f1(r.drawdown_pct)}%</span>
@@ -381,7 +409,7 @@ export default function ReboundsPage() {
             ))}
             {filtered.length === 0 && !loading && (
               <tr>
-                <td colSpan={11} className="py-10 text-center text-gray-600">
+                <td colSpan={12} className="py-10 text-center text-gray-600">
                   No stocks are turning up off a base right now — the market isn&apos;t offering clean rebounds.
                 </td>
               </tr>
