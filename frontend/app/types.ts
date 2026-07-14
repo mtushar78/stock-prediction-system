@@ -565,6 +565,9 @@ export interface ChartSignal {
   /** Live-state warnings (overbought / already ran / stretched / climax /
    *  thin) — same decliner-anatomy tags as the scanner list. */
   risk_tags?: string[];
+  /** Canonical upside objective computed by the Rebounds scanner (same
+   *  function/data), so the chart headline matches the Rebounds list target. */
+  rebound_target?: number | null;
   // v14: Bulkowski chart patterns
   chart_patterns?: DetectedChartPattern[];
   chart_pattern_summary?: ChartPatternSummary | null;

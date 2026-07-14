@@ -495,14 +495,17 @@ export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: 
 
     // ---- Structural target + support (drawn when the active pattern doesn't
     //      already provide them) so every chart shows an objective ----
-    if (!(cpConfirmed && cp && cp.target != null) && autoLevels.target != null) {
+    // Prefer the backend rebound_target (identical to the Rebounds list) over
+    // the local swing-high heuristic so the chart line matches the row.
+    const structTarget = signal?.rebound_target != null ? signal.rebound_target : autoLevels.target;
+    if (!(cpConfirmed && cp && cp.target != null) && structTarget != null) {
       candleSeries.createPriceLine({
-        price: autoLevels.target,
+        price: structTarget,
         color: LINE_COLORS.target,
         lineWidth: 2,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
-        title: `target ${autoLevels.target}`,
+        title: `target ${structTarget}`,
       });
     }
     if (!(cpConfirmed && cp && cp.stop != null) && autoLevels.support != null) {
@@ -562,7 +565,11 @@ export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: 
   // objective instead — keeping the chart in agreement with the Rebounds list.
   const activeCp = chartPatterns[activePattern];
   const activeCpConfirmed = activeCp?.status === 'confirmed';
-  const dispTarget = activeCpConfirmed && activeCp.target != null ? activeCp.target : autoLevels.target;
+  // Structural objective = the backend rebound_target (same function + data as
+  // the Rebounds list) so the chart headline matches the row; fall back to the
+  // local swing-high estimate only if the backend didn't supply one.
+  const structTarget = signal?.rebound_target != null ? signal.rebound_target : autoLevels.target;
+  const dispTarget = activeCpConfirmed && activeCp.target != null ? activeCp.target : structTarget;
   const dispStop = activeCpConfirmed && activeCp.stop != null ? activeCp.stop : autoLevels.support;
   const targetPct = dispTarget != null && lastClose ? ((dispTarget - lastClose) / lastClose) * 100 : null;
   const stopPct = dispStop != null && lastClose ? ((dispStop - lastClose) / lastClose) * 100 : null;

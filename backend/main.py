@@ -1920,6 +1920,36 @@ def get_chart_signal_detail(ticker: str):
             analyzer = ChartAnalyzer(db)
             sig = analyzer.analyze_ticker(ticker_u, df=hist if hist is not None and not hist.empty else None)
 
+        # ---- Canonical upside target (single source of truth) ----
+        # The chart headline used to derive its own "next resistance" target in
+        # the frontend, which drifted from the Rebounds list (different lookback /
+        # swing detection / back-adjustment → 116 vs 128 for the same stock).
+        # Compute the target with the SAME functions the Rebounds scanner uses so
+        # the two views never disagree: if the ticker qualifies as a rebound we
+        # take its EXACT target; otherwise we run the same _first_target over the
+        # full history so every chart still gets a consistent objective.
+        rebound_target = None
+        try:
+            from src.rebound_scanner import _analyze_one as _rb_one, _first_target as _rb_target
+            if hist is not None and not hist.empty:
+                _rrow = _rb_one(ticker_u, hist.copy(), None)
+                if _rrow and _rrow.get('target') is not None:
+                    rebound_target = _rrow['target']
+                else:
+                    _h = hist[hist['close'] > 0].sort_values('date')
+                    _highs = _h['high'].to_numpy(dtype=float)
+                    _lows = _h['low'].to_numpy(dtype=float)
+                    _closes = _h['close'].to_numpy(dtype=float)
+                    if len(_highs) >= 12:
+                        _pk = int(np.argmax(_highs))
+                        _peak = float(_highs[_pk])
+                        _post = _lows[_pk + 1:] if _pk < len(_lows) - 1 else _lows
+                        _trough = float(_post.min()) if len(_post) else float(_lows.min())
+                        _price_now = float(_closes[-1])
+                        rebound_target = round(_rb_target(_highs, _price_now, _trough, _peak), 3)
+        except Exception as _rte:
+            logger.debug(f"rebound target for {ticker_u} skipped: {_rte}")
+
         # Multi-week Bulkowski chart patterns — merged onto the same payload.
         chart_patterns, chart_summary = [], None
         try:
@@ -2029,6 +2059,7 @@ def get_chart_signal_detail(ticker: str):
                     'chart_patterns': chart_patterns, 'chart_pattern_summary': chart_summary,
                     'wyckoff': wyckoff,
                     'confluence': confluence, 'risk_tags': risk_tags,
+                    'rebound_target': rebound_target,
                 }
             raise HTTPException(
                 status_code=404,
@@ -2039,6 +2070,7 @@ def get_chart_signal_detail(ticker: str):
         sig['wyckoff'] = wyckoff
         sig['confluence'] = confluence
         sig['risk_tags'] = risk_tags
+        sig['rebound_target'] = rebound_target
         return sig
     except HTTPException:
         raise
