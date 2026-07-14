@@ -362,6 +362,14 @@ async def scheduled_scraper_and_analysis(is_final: int = 0):
         # Heavy analysis + persistence + chart engine — entirely off the event loop.
         await asyncio.to_thread(_analyze_and_save, update_type, is_final, bool(is_final))
 
+        # Bust the full-universe scan caches so the next request rescans with the
+        # prices this scrape just wrote. Both caches are keyed on MAX(date) alone,
+        # which doesn't change during a session (intraday scrapes update today's
+        # row in place), so without this clear the morning's snapshot would be
+        # served all day even as fresh prices land every 8 minutes.
+        _REBOUND_CACHE.clear()
+        _UNUSUAL_CACHE.clear()
+
         logger.info(f"✅ Scraper and analysis completed [{update_type}]")
         logger.info("🔄 Data refresh complete - fresh connections will be used on next API call")
 
