@@ -103,12 +103,26 @@ def scrape_dse_data():
                 continue
 
             try:
+                o = float(open_price) if open_price else 0.0
+                h = float(high) if high else 0.0
+                l = float(low) if low else 0.0
+                c = float(ltp) if ltp else 0.0
+                # `open` is only a proxy: DSE's latest-price page has no true
+                # open, so we use YCP (the previous close). On a gap day YCP sits
+                # OUTSIDE today's [low, high] — e.g. an up-gap where YCP < the
+                # day's low — producing an OHLC bar (open < low) that every
+                # downstream integrity check rejects. That silently drops the
+                # whole real, latest bar and leaves charts/rebounds showing
+                # yesterday's price. Clamp the proxy open into the real
+                # [low, high] range so the bar is always internally consistent.
+                if h > 0 and l > 0 and h >= l:
+                    o = min(max(o, l), h)
                 entry = {
                     'ticker': ticker,
-                    'open': float(open_price) if open_price else 0.0,
-                    'high': float(high) if high else 0.0,
-                    'low': float(low) if low else 0.0,
-                    'close': float(ltp) if ltp else 0.0,
+                    'open': o,
+                    'high': h,
+                    'low': l,
+                    'close': c,
                     'volume': int(float(volume)) if volume else 0,
                 }
                 if trade_count is not None:
