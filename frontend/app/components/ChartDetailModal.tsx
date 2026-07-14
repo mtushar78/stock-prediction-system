@@ -419,14 +419,23 @@ export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: 
 
     // ---- Draw the ACTIVE chart pattern's geometry ----
     const cp = chartPatterns[activePattern];
+    // A pattern's horizontal target/stop are its MEASURE-RULE projection, which
+    // only applies once the pattern CONFIRMS (breaks out). While it is still
+    // "forming" that target is conditional — and often bearish / low-confidence
+    // — so it must NOT be drawn as THE chart target (that's what made a forming
+    // bearish Rising Wedge show "target 99" while the Rebounds list showed the
+    // +14% upside objective). Until confirmation we fall back to the structural
+    // objective (deriveLevels) — the same "next overhead resistance" Rebounds
+    // headlines — so the two views agree.
+    const cpConfirmed = cp?.status === 'confirmed';
     if (cp) {
       cp.lines.forEach((ln) => {
         const pts = ln.points
           .filter((p) => barTimes.has(p.date))
           .map((p) => ({ time: p.date as Time, value: p.price }));
         if (ln.kind === 'target' || ln.kind === 'stop') {
-          // Labelled horizontal price line — always visible.
-          if (cp.target != null && ln.kind === 'target') {
+          // Labelled horizontal price line — only once the pattern confirms.
+          if (cpConfirmed && cp.target != null && ln.kind === 'target') {
             candleSeries.createPriceLine({
               price: cp.target,
               color: LINE_COLORS.target,
@@ -436,7 +445,7 @@ export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: 
               title: `target ${cp.target}`,
             });
           }
-          if (cp.stop != null && ln.kind === 'stop') {
+          if (cpConfirmed && cp.stop != null && ln.kind === 'stop') {
             candleSeries.createPriceLine({
               price: cp.stop,
               color: LINE_COLORS.stop,
@@ -460,8 +469,8 @@ export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: 
           seg.setData(pts);
         }
       });
-      // target/stop when not present as an explicit line entry
-      if (cp.target != null && !cp.lines.some((l) => l.kind === 'target')) {
+      // target/stop when not present as an explicit line entry (confirmed only)
+      if (cpConfirmed && cp.target != null && !cp.lines.some((l) => l.kind === 'target')) {
         candleSeries.createPriceLine({
           price: cp.target,
           color: LINE_COLORS.target,
@@ -486,7 +495,7 @@ export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: 
 
     // ---- Structural target + support (drawn when the active pattern doesn't
     //      already provide them) so every chart shows an objective ----
-    if (!(cp && cp.target != null) && autoLevels.target != null) {
+    if (!(cpConfirmed && cp && cp.target != null) && autoLevels.target != null) {
       candleSeries.createPriceLine({
         price: autoLevels.target,
         color: LINE_COLORS.target,
@@ -496,7 +505,7 @@ export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: 
         title: `target ${autoLevels.target}`,
       });
     }
-    if (!(cp && cp.stop != null) && autoLevels.support != null) {
+    if (!(cpConfirmed && cp && cp.stop != null) && autoLevels.support != null) {
       candleSeries.createPriceLine({
         price: autoLevels.support,
         color: LINE_COLORS.support,
@@ -547,11 +556,14 @@ export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: 
       ? 'text-red-400'
       : 'text-yellow-400';
 
-  // The target/support to headline: an active pattern's own target wins,
-  // otherwise the structural level derived from swing highs/lows.
+  // The target/support to headline: a CONFIRMED pattern's own measure-rule
+  // target wins; while it's only forming that target is conditional (and often
+  // a bearish downside projection), so we headline the structural upside
+  // objective instead — keeping the chart in agreement with the Rebounds list.
   const activeCp = chartPatterns[activePattern];
-  const dispTarget = activeCp && activeCp.target != null ? activeCp.target : autoLevels.target;
-  const dispStop = activeCp && activeCp.stop != null ? activeCp.stop : autoLevels.support;
+  const activeCpConfirmed = activeCp?.status === 'confirmed';
+  const dispTarget = activeCpConfirmed && activeCp.target != null ? activeCp.target : autoLevels.target;
+  const dispStop = activeCpConfirmed && activeCp.stop != null ? activeCp.stop : autoLevels.support;
   const targetPct = dispTarget != null && lastClose ? ((dispTarget - lastClose) / lastClose) * 100 : null;
   const stopPct = dispStop != null && lastClose ? ((dispStop - lastClose) / lastClose) * 100 : null;
 
