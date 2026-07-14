@@ -417,46 +417,22 @@ export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: 
 
     const markers: SeriesMarker<Time>[] = [];
 
-    // ---- Draw the ACTIVE chart pattern's geometry ----
+    // ---- Draw the ACTIVE chart pattern's geometry (shape only) ----
+    // We draw the pattern's SHAPE (trendlines / neckline) but NOT its own
+    // horizontal target/stop lines. Each chart pattern carries its own
+    // measure-rule target (a Double Bottom projects one level, a Rising Wedge
+    // another), and letting that compete with THE target is exactly what made
+    // the chart disagree with the Rebounds list (e.g. BEACHHATCH: confirmed
+    // Double Bottom target 34.2 on the chart vs the list's 40.2). There is one
+    // canonical "Target" everywhere — the rebound objective drawn below — and a
+    // pattern's own projection lives only in its pattern card, attributed to it.
     const cp = chartPatterns[activePattern];
-    // A pattern's horizontal target/stop are its MEASURE-RULE projection, which
-    // only applies once the pattern CONFIRMS (breaks out). While it is still
-    // "forming" that target is conditional — and often bearish / low-confidence
-    // — so it must NOT be drawn as THE chart target (that's what made a forming
-    // bearish Rising Wedge show "target 99" while the Rebounds list showed the
-    // +14% upside objective). Until confirmation we fall back to the structural
-    // objective (deriveLevels) — the same "next overhead resistance" Rebounds
-    // headlines — so the two views agree.
-    const cpConfirmed = cp?.status === 'confirmed';
     if (cp) {
       cp.lines.forEach((ln) => {
+        if (ln.kind === 'target' || ln.kind === 'stop') return; // not THE target
         const pts = ln.points
           .filter((p) => barTimes.has(p.date))
           .map((p) => ({ time: p.date as Time, value: p.price }));
-        if (ln.kind === 'target' || ln.kind === 'stop') {
-          // Labelled horizontal price line — only once the pattern confirms.
-          if (cpConfirmed && cp.target != null && ln.kind === 'target') {
-            candleSeries.createPriceLine({
-              price: cp.target,
-              color: LINE_COLORS.target,
-              lineWidth: 2,
-              lineStyle: LineStyle.Dashed,
-              axisLabelVisible: true,
-              title: `target ${cp.target}`,
-            });
-          }
-          if (cpConfirmed && cp.stop != null && ln.kind === 'stop') {
-            candleSeries.createPriceLine({
-              price: cp.stop,
-              color: LINE_COLORS.stop,
-              lineWidth: 1,
-              lineStyle: LineStyle.Dotted,
-              axisLabelVisible: true,
-              title: `stop ${cp.stop}`,
-            });
-          }
-          return;
-        }
         if (pts.length >= 2) {
           const seg = chart.addSeries(LineSeries, {
             color: LINE_COLORS[ln.kind] ?? '#9ca3af',
@@ -469,17 +445,6 @@ export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: 
           seg.setData(pts);
         }
       });
-      // target/stop when not present as an explicit line entry (confirmed only)
-      if (cpConfirmed && cp.target != null && !cp.lines.some((l) => l.kind === 'target')) {
-        candleSeries.createPriceLine({
-          price: cp.target,
-          color: LINE_COLORS.target,
-          lineWidth: 2,
-          lineStyle: LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: `target ${cp.target}`,
-        });
-      }
       // key-point markers
       cp.key_points.forEach((k) => {
         if (!barTimes.has(k.date)) return;
@@ -493,12 +458,12 @@ export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: 
       });
     }
 
-    // ---- Structural target + support (drawn when the active pattern doesn't
-    //      already provide them) so every chart shows an objective ----
-    // Prefer the backend rebound_target (identical to the Rebounds list) over
-    // the local swing-high heuristic so the chart line matches the row.
+    // ---- THE canonical target + support, drawn on EVERY chart ----
+    // Target = the backend rebound_target (identical to the Rebounds list) with
+    // the local swing-high estimate only as a last-resort fallback. This is the
+    // single source of truth, so the chart line always matches the row.
     const structTarget = signal?.rebound_target != null ? signal.rebound_target : autoLevels.target;
-    if (!(cpConfirmed && cp && cp.target != null) && structTarget != null) {
+    if (structTarget != null) {
       candleSeries.createPriceLine({
         price: structTarget,
         color: LINE_COLORS.target,
@@ -508,7 +473,7 @@ export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: 
         title: `target ${structTarget}`,
       });
     }
-    if (!(cpConfirmed && cp && cp.stop != null) && autoLevels.support != null) {
+    if (autoLevels.support != null) {
       candleSeries.createPriceLine({
         price: autoLevels.support,
         color: LINE_COLORS.support,
@@ -563,14 +528,13 @@ export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: 
   // target wins; while it's only forming that target is conditional (and often
   // a bearish downside projection), so we headline the structural upside
   // objective instead — keeping the chart in agreement with the Rebounds list.
-  const activeCp = chartPatterns[activePattern];
-  const activeCpConfirmed = activeCp?.status === 'confirmed';
-  // Structural objective = the backend rebound_target (same function + data as
-  // the Rebounds list) so the chart headline matches the row; fall back to the
-  // local swing-high estimate only if the backend didn't supply one.
-  const structTarget = signal?.rebound_target != null ? signal.rebound_target : autoLevels.target;
-  const dispTarget = activeCpConfirmed && activeCp.target != null ? activeCp.target : structTarget;
-  const dispStop = activeCpConfirmed && activeCp.stop != null ? activeCp.stop : autoLevels.support;
+  // ONE canonical Target everywhere: the backend rebound_target (same function
+  // + data as the Rebounds list) so the chart headline always matches the row,
+  // regardless of any chart pattern's own measure-rule projection (that stays in
+  // the pattern card). Fall back to the local swing-high estimate only if the
+  // backend supplied none. Support = nearest structural swing low.
+  const dispTarget = signal?.rebound_target != null ? signal.rebound_target : autoLevels.target;
+  const dispStop = autoLevels.support;
   const targetPct = dispTarget != null && lastClose ? ((dispTarget - lastClose) / lastClose) * 100 : null;
   const stopPct = dispStop != null && lastClose ? ((dispStop - lastClose) / lastClose) * 100 : null;
 
@@ -773,11 +737,9 @@ export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: 
                   )}
                 </span>
               )}
-              {!activeCp && (
-                <span className="text-gray-500">
-                  — target = next overhead resistance from recent swing highs; support = nearest swing low.
-                </span>
-              )}
+              <span className="text-gray-500">
+                — target = the rebound objective (next overhead resistance), same as the Rebounds list; support = nearest swing low.
+              </span>
             </div>
           )}
 
@@ -794,9 +756,8 @@ export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: 
             <span><span style={{ color: LINE_COLORS.neckline }}>- -</span> Neckline</span>
             <span><span style={{ color: LINE_COLORS.support }}>━</span> Support rail</span>
             <span><span style={{ color: LINE_COLORS.resistance }}>━</span> Resistance rail</span>
-            <span><span style={{ color: LINE_COLORS.target }}>- -</span> Target (pattern / next resistance)</span>
+            <span><span style={{ color: LINE_COLORS.target }}>- -</span> Target (rebound objective — matches the Rebounds list)</span>
             <span><span style={{ color: LINE_COLORS.support }}>┈</span> Support</span>
-            <span><span style={{ color: LINE_COLORS.stop }}>┈</span> Stop</span>
           </div>
 
           {/* ---- Chart patterns (Bulkowski) ---- */}
