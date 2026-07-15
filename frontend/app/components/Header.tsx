@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { TrendingUp, RefreshCw, Activity, LogOut, Rocket, Radar } from 'lucide-react';
+import { TrendingUp, RefreshCw, Activity, LogOut, Rocket, Radar, Settings } from 'lucide-react';
 import { SystemStatus } from '../types';
 import { useAuth } from './AuthProvider';
 import DataFreshnessBadge from './DataFreshnessBadge';
@@ -66,8 +66,22 @@ export default function Header({ systemStatus, loading, onRefresh }: HeaderProps
         </button>
         {user && (
           <div className="flex items-center gap-2 bg-gray-800 px-3 py-1.5 rounded border border-gray-700">
+            <Link
+              href="/settings"
+              title={user.is_admin ? 'Settings & user management' : 'Account settings'}
+              className="text-gray-400 hover:text-white flex items-center gap-1 text-sm"
+            >
+              <Settings className="w-4 h-4" />
+              <span className="hidden sm:inline">Settings</span>
+            </Link>
+            <span className="text-gray-600">·</span>
             <span className="text-gray-300 text-xs hidden sm:inline" title={user.email}>
               {user.email}
+              {user.is_admin && (
+                <span className="ml-1 text-[9px] bg-amber-600 text-white px-1 py-0.5 rounded font-bold align-middle">
+                  ADMIN
+                </span>
+              )}
             </span>
             <button
               onClick={logout}

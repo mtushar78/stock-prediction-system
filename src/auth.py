@@ -39,6 +39,11 @@ JWT_SECRET = os.environ.get(
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_DAYS = 30
 
+# The owner account is ALWAYS treated as admin, even if the DB flag is somehow
+# missing (e.g. an old token, or before the migration ran). This is the account
+# that can create users and impersonate.
+OWNER_EMAIL = "mtushar78@gmail.com"
+
 # auto_error=False so the global dependency can craft its own 401 and so the
 # login route (which carries no token) doesn't get rejected by the extractor.
 _bearer = HTTPBearer(auto_error=False)
@@ -65,7 +70,12 @@ def verify_password(password: str, password_hash: str) -> bool:
 # Users table + CRUD
 # ---------------------------------------------------------------------------
 def ensure_users_table() -> None:
-    """Create the users table if missing (idempotent)."""
+    """Create the users table if missing + add the is_admin column (idempotent).
+
+    Safe to call on every startup. It creates the table for a fresh install,
+    back-fills the ``is_admin`` column on an older table that predates it, and
+    guarantees the owner account is flagged admin.
+    """
     db = DatabaseManager()
     conn = db.engine.raw_connection()
     try:
@@ -76,19 +86,38 @@ def ensure_users_table() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 email TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
+                is_admin INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
+        # Add is_admin to a pre-existing table that lacks it.
+        cur.execute("PRAGMA table_info(users)")
+        cols = [r[1] for r in cur.fetchall()]
+        if "is_admin" not in cols:
+            cur.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+        # The owner is always admin.
+        cur.execute("UPDATE users SET is_admin = 1 WHERE lower(email) = ?", (OWNER_EMAIL,))
         conn.commit()
     finally:
         conn.close()
 
 
+def is_admin_email(email: Optional[str], flag=0) -> bool:
+    """Effective admin check: the DB flag OR the always-admin owner email."""
+    return bool(flag) or (email or "").strip().lower() == OWNER_EMAIL
+
+
 def _row_to_user(row) -> Optional[Dict]:
     if not row:
         return None
-    return {"id": row[0], "email": row[1], "password_hash": row[2]}
+    flag = row[3] if len(row) > 3 else 0
+    return {
+        "id": row[0],
+        "email": row[1],
+        "password_hash": row[2],
+        "is_admin": is_admin_email(row[1], flag),
+    }
 
 
 def get_user_by_email(email: str) -> Optional[Dict]:
@@ -98,7 +127,7 @@ def get_user_by_email(email: str) -> Optional[Dict]:
     try:
         cur = db.conn.cursor()
         cur.execute(
-            "SELECT id, email, password_hash FROM users WHERE email = %s",
+            "SELECT id, email, password_hash, is_admin FROM users WHERE email = %s",
             ((email or "").strip().lower(),),
         )
         return _row_to_user(cur.fetchone())
@@ -111,7 +140,7 @@ def get_user_by_id(user_id: int) -> Optional[Dict]:
     try:
         cur = db.conn.cursor()
         cur.execute(
-            "SELECT id, email, password_hash FROM users WHERE id = %s",
+            "SELECT id, email, password_hash, is_admin FROM users WHERE id = %s",
             (user_id,),
         )
         return _row_to_user(cur.fetchone())
@@ -119,7 +148,29 @@ def get_user_by_id(user_id: int) -> Optional[Dict]:
         db.close()
 
 
-def create_user(email: str, password: str) -> Dict:
+def list_users() -> list:
+    """Every user (id, email, is_admin, created_at) — for the admin console."""
+    db = DatabaseManager()
+    try:
+        cur = db.conn.cursor()
+        cur.execute(
+            "SELECT id, email, is_admin, created_at FROM users ORDER BY id"
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                "id": r[0],
+                "email": r[1],
+                "is_admin": is_admin_email(r[1], r[2]),
+                "created_at": r[3],
+            }
+            for r in rows
+        ]
+    finally:
+        db.close()
+
+
+def create_user(email: str, password: str, is_admin: bool = False) -> Dict:
     """Create a user. Raises ValueError if the email already exists."""
     ensure_users_table()
     email = (email or "").strip().lower()
@@ -130,40 +181,71 @@ def create_user(email: str, password: str) -> Dict:
     if get_user_by_email(email):
         raise ValueError(f"User {email} already exists")
 
+    admin_flag = 1 if (is_admin or email == OWNER_EMAIL) else 0
     db = DatabaseManager()
     conn = db.engine.raw_connection()
     try:
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO users (email, password_hash) VALUES (?, ?)",
-            (email, hash_password(password)),
+            "INSERT INTO users (email, password_hash, is_admin) VALUES (?, ?, ?)",
+            (email, hash_password(password), admin_flag),
         )
         conn.commit()
         new_id = cur.lastrowid
     finally:
         conn.close()
-    logger.info("Created user %s (id=%s)", email, new_id)
-    return {"id": new_id, "email": email}
+    logger.info("Created user %s (id=%s, admin=%s)", email, new_id, admin_flag)
+    return {"id": new_id, "email": email, "is_admin": bool(admin_flag)}
+
+
+def set_password(user_id: int, new_password: str) -> None:
+    """Overwrite a user's password (admin reset or self-service change)."""
+    if not new_password or len(new_password) < 4:
+        raise ValueError("Password must be at least 4 characters")
+    db = DatabaseManager()
+    conn = db.engine.raw_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (hash_password(new_password), user_id),
+        )
+        if cur.rowcount == 0:
+            raise ValueError("User not found")
+        conn.commit()
+    finally:
+        conn.close()
+    logger.info("Password changed for user id=%s", user_id)
 
 
 def authenticate_user(email: str, password: str) -> Optional[Dict]:
     user = get_user_by_email(email)
     if not user or not verify_password(password, user["password_hash"]):
         return None
-    return {"id": user["id"], "email": user["email"]}
+    return {"id": user["id"], "email": user["email"], "is_admin": user["is_admin"]}
 
 
 # ---------------------------------------------------------------------------
 # JWT
 # ---------------------------------------------------------------------------
-def create_access_token(user: Dict) -> str:
+def create_access_token(user: Dict, impersonator: Optional[Dict] = None) -> str:
+    """Issue a JWT for ``user``.
+
+    When ``impersonator`` is given (an admin acting as this user), its identity
+    is embedded in the token so the API and UI can surface an impersonation
+    banner even after a page reload — the effective identity is still ``user``.
+    """
     now = datetime.datetime.now(datetime.timezone.utc)
     payload = {
         "sub": str(user["id"]),
         "email": user["email"],
+        "is_admin": bool(user.get("is_admin")),
         "iat": now,
         "exp": now + datetime.timedelta(days=JWT_EXPIRE_DAYS),
     }
+    if impersonator:
+        payload["imp_by_id"] = impersonator.get("id")
+        payload["imp_by_email"] = impersonator.get("email")
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
@@ -213,7 +295,20 @@ async def authenticate(
             detail="Invalid authentication token",
         )
 
-    request.state.user = {"id": user_id, "email": payload.get("email")}
+    email = payload.get("email")
+    impersonator = None
+    if payload.get("imp_by_email"):
+        impersonator = {
+            "id": payload.get("imp_by_id"),
+            "email": payload.get("imp_by_email"),
+        }
+    request.state.user = {
+        "id": user_id,
+        "email": email,
+        # Trust the token flag, but the owner email is always admin regardless.
+        "is_admin": is_admin_email(email, payload.get("is_admin")),
+        "impersonator": impersonator,
+    }
 
 
 def current_user(request: Request) -> Dict:
@@ -228,3 +323,19 @@ def current_user(request: Request) -> Dict:
 
 def current_user_id(request: Request) -> int:
     return current_user(request)["id"]
+
+
+def require_admin(request: Request) -> Dict:
+    """Dependency: reject non-admins with 403.
+
+    NOTE: while impersonating, the effective identity is the impersonated
+    (usually non-admin) user, so admin routes are correctly forbidden — admin
+    actions must be taken from the admin's own session.
+    """
+    user = current_user(request)
+    if not user.get("is_admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return user

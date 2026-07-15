@@ -415,7 +415,15 @@ async def lifespan(app: FastAPI):
     _pg_host = os.environ.get('DATABASE_URL', '').split('@')[-1].split('/')[0] or '(unset)'
     logger.info(f"📊 Primary DB: sqlite @ {SQLITE_PATH}")
     logger.info(f"📦 Backup DB: postgres @ {_pg_host}")
-    
+
+    # Ensure the users table + is_admin column exist and the owner is admin.
+    # Idempotent, so it doubles as the auth migration on every deploy.
+    try:
+        auth.ensure_users_table()
+        logger.info("✅ Users table ready (owner flagged admin)")
+    except Exception as e:
+        logger.error(f"users table init failed: {e}")
+
     # Run initial analysis on startup — in a worker thread so the slow first
     # pass (and the chart engine it triggers) doesn't stall the event loop that
     # is about to start serving requests. Same threaded helper the scheduler uses.
@@ -590,14 +598,112 @@ def login(body: LoginRequest):
     return {
         "access_token": token,
         "token_type": "bearer",
-        "user": {"id": user["id"], "email": user["email"]},
+        "user": {"id": user["id"], "email": user["email"], "is_admin": user["is_admin"]},
     }
 
 
 @app.get("/api/auth/me")
 def read_me(user: dict = Depends(auth.current_user)):
-    """Return the currently authenticated user."""
-    return {"id": user["id"], "email": user["email"]}
+    """Return the currently authenticated (effective) user + impersonation state."""
+    return {
+        "id": user["id"],
+        "email": user["email"],
+        "is_admin": bool(user.get("is_admin")),
+        "impersonator": user.get("impersonator"),
+    }
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@app.post("/api/auth/change-password")
+def change_password(body: ChangePasswordRequest, user: dict = Depends(auth.current_user)):
+    """Any signed-in user changes their OWN password (verifies the current one).
+
+    Blocked while impersonating: the admin doesn't know (and shouldn't need) the
+    impersonated user's current password — use the admin reset endpoint instead.
+    """
+    if user.get("impersonator"):
+        raise HTTPException(
+            status_code=403,
+            detail="Can't change password while impersonating. Return to your admin account first.",
+        )
+    full = auth.get_user_by_id(user["id"])
+    if not full or not auth.verify_password(body.current_password, full["password_hash"]):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    try:
+        auth.set_password(user["id"], body.new_password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Admin routes (owner / is_admin only). require_admin returns 403 otherwise —
+# and is correctly forbidden while impersonating (effective user isn't admin).
+# ---------------------------------------------------------------------------
+class CreateUserRequest(BaseModel):
+    email: str
+    password: str
+    is_admin: bool = False
+
+
+class AdminSetPasswordRequest(BaseModel):
+    new_password: str
+
+
+@app.get("/api/admin/users")
+def admin_list_users(admin: dict = Depends(auth.require_admin)):
+    """List every user for the admin console."""
+    return {"users": auth.list_users()}
+
+
+@app.post("/api/admin/users")
+def admin_create_user(body: CreateUserRequest, admin: dict = Depends(auth.require_admin)):
+    """Create a new login (admin only)."""
+    try:
+        new_user = auth.create_user(body.email, body.password, is_admin=body.is_admin)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    logger.info("Admin %s created user %s", admin.get("email"), new_user["email"])
+    return new_user
+
+
+@app.post("/api/admin/users/{user_id}/password")
+def admin_reset_password(user_id: int, body: AdminSetPasswordRequest,
+                         admin: dict = Depends(auth.require_admin)):
+    """Reset any user's password without knowing the old one (admin only)."""
+    target = auth.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    try:
+        auth.set_password(user_id, body.new_password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    logger.info("Admin %s reset password for %s", admin.get("email"), target["email"])
+    return {"ok": True}
+
+
+@app.post("/api/admin/impersonate/{user_id}")
+def admin_impersonate(user_id: int, admin: dict = Depends(auth.require_admin)):
+    """Issue a token that logs the admin in AS another user (admin only)."""
+    if user_id == admin["id"]:
+        raise HTTPException(status_code=400, detail="You are already yourself")
+    target = auth.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    token = auth.create_access_token(
+        {"id": target["id"], "email": target["email"], "is_admin": target["is_admin"]},
+        impersonator={"id": admin["id"], "email": admin["email"]},
+    )
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": {"id": target["id"], "email": target["email"], "is_admin": target["is_admin"]},
+        "impersonator": {"id": admin["id"], "email": admin["email"]},
+    }
 
 
 # Routes
