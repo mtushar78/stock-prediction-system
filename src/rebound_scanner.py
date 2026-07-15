@@ -27,7 +27,7 @@ from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
 logger = logging.getLogger(__name__)
 
@@ -598,3 +598,91 @@ def scan(engine, sector_map: dict | None = None) -> dict:
     early = sum(1 for s in stocks if s.get('stage') == 'EARLY')
     return {'as_of': as_of, 'universe': universe, 'count': len(stocks), 'fresh': fresh,
             'turning': turning, 'early': early, 'stocks': stocks}
+
+
+# ------------------------------------------------------------------------- #
+# THE canonical upside target — the single source of truth used by every view
+# (chart headline, Rebounds list, chart-pattern scanner) so the number a user
+# sees in any list is identical to the one drawn on the chart they click into.
+#
+# If the ticker qualifies as a rebound we take _analyze_one's exact target
+# (same value the Rebounds list shows); otherwise we run the same _first_target
+# over the full cleaned history so every stock still gets a consistent objective
+# — a straight extraction of the logic the chart-detail endpoint used inline, so
+# the chart headline value is preserved bit-for-bit.
+# ------------------------------------------------------------------------- #
+def canonical_target(ticker: str, df: pd.DataFrame) -> float | None:
+    """One upside target for `ticker`, matching the chart headline exactly."""
+    try:
+        if df is None or df.empty:
+            return None
+        row = _analyze_one(ticker, df.copy(), None)
+        if row and row.get('target') is not None:
+            return row['target']
+        # Fallback (ticker isn't a qualifying rebound): the same last-LOOKBACK_BARS
+        # window _analyze_one uses, so the value is independent of how much history
+        # the caller passed in — the chart detail (full history) and the scanner
+        # bulk read (400-day window) then land on the identical last-252-bar peak.
+        h = df[df['close'] > 0].sort_values('date').tail(LOOKBACK_BARS)
+        if len(h) < 12:
+            return None
+        highs = h['high'].to_numpy(dtype=float)
+        lows = h['low'].to_numpy(dtype=float)
+        closes = h['close'].to_numpy(dtype=float)
+        # Same zero-low/high hygiene _analyze_one applies (a single 0 low would
+        # otherwise create a false trough of 0 and skew the retracement).
+        lows = np.where(lows <= 0, closes, lows)
+        highs = np.where(highs <= 0, closes, highs)
+        pk = int(np.argmax(highs))
+        peak = float(highs[pk])
+        post = lows[pk + 1:] if pk < len(lows) - 1 else lows
+        trough = float(post.min()) if len(post) else float(lows.min())
+        return round(_first_target(highs, float(closes[-1]), trough, peak), 3)
+    except Exception as e:
+        logger.debug(f"canonical_target({ticker}) failed: {e}")
+        return None
+
+
+def targets_for(engine, tickers) -> dict:
+    """Bulk canonical_target for a set of tickers in ONE SQL read.
+
+    Used by the chart-pattern scanner endpoint so its TARGET column matches the
+    chart without N per-ticker queries. Returns {ticker: target|None}.
+    """
+    tickers = list(dict.fromkeys(t for t in tickers if t))
+    if not tickers:
+        return {}
+    try:
+        last = pd.read_sql_query(text("SELECT MAX(date) AS d FROM stock_data"), engine)
+        as_of = str(last['d'].iloc[0])[:10] if not last.empty and last['d'].iloc[0] else None
+    except Exception as e:
+        logger.error(f"targets_for: latest-date lookup failed: {e}")
+        return {}
+    cutoff = None
+    if as_of:
+        try:
+            cutoff = (datetime.strptime(as_of, '%Y-%m-%d')
+                      - timedelta(days=CALENDAR_LOOKBACK_DAYS)).strftime('%Y-%m-%d')
+        except Exception:
+            cutoff = None
+    q = ("SELECT ticker, date, open, high, low, close, volume FROM stock_data "
+         "WHERE ticker IN :tks " + ("AND date >= :cutoff " if cutoff else "")
+         + "ORDER BY ticker, date")
+    stmt = text(q).bindparams(bindparam('tks', expanding=True))
+    params = {'tks': tickers}
+    if cutoff:
+        params['cutoff'] = cutoff
+    try:
+        allrows = pd.read_sql_query(stmt, engine, params=params)
+    except Exception as e:
+        logger.error(f"targets_for: bulk read failed: {e}")
+        return {}
+    if allrows.empty:
+        return {}
+    for col in ('open', 'high', 'low', 'close', 'volume'):
+        allrows[col] = pd.to_numeric(allrows[col], errors='coerce')
+    allrows = allrows.dropna(subset=['close', 'high', 'low'])
+    out: dict = {}
+    for ticker, g in allrows.groupby('ticker'):
+        out[str(ticker)] = canonical_target(str(ticker), g)
+    return out

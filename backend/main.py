@@ -1654,6 +1654,18 @@ def get_chart_pattern_signals():
                     }
         except Exception as _ce:
             logger.debug(f"confluence lookup skipped: {_ce}")
+        # THE canonical upside target per ticker (same function the chart headline
+        # uses) so this list's TARGET column matches the chart when a row is
+        # clicked — the Bulkowski measure-rule target stays inside the pattern
+        # card, attributed to the pattern. Computed here in ONE bulk read while
+        # the engine is still open.
+        rebound_targets = {}
+        try:
+            from src.rebound_scanner import targets_for
+            if not df.empty:
+                rebound_targets = targets_for(db.engine, df['ticker'].tolist())
+        except Exception as _te:
+            logger.debug(f"rebound targets skipped: {_te}")
         db.close()
 
         def _risk_tags(tk, bias):
@@ -1726,6 +1738,11 @@ def get_chart_pattern_signals():
                     confluence = 'breakout'
                 elif tk in reversal_tickers:
                     confluence = 'reversal'
+            # Canonical rebound target (matches the chart headline) + its room.
+            _price = _f(r['price'])
+            rebound_target = _f(rebound_targets.get(tk))
+            rebound_room_pct = (round((rebound_target - _price) / _price * 100.0, 1)
+                                if (rebound_target is not None and _price) else None)
             edge = int(r['edge']) if ('edge' in r and r['edge'] is not None) else 0
             grade = r['grade'] if 'grade' in r else None
             verdict = r['verdict'] if 'verdict' in r else None
@@ -1762,8 +1779,10 @@ def get_chart_pattern_signals():
                 'top_code': r['top_code'],
                 'top_name': r['top_name'],
                 'status': r['status'],
-                'target': _f(r['target']),
+                'target': _f(r['target']),           # Bulkowski measure-rule (pattern card)
                 'target_pct': _f(r['target_pct']),
+                'rebound_target': rebound_target,     # canonical objective — matches the chart
+                'rebound_room_pct': rebound_room_pct,
                 'pattern_count': int(r['pattern_count']),
                 'confirmed_count': int(r['confirmed_count']),
                 'has_dcb': bool(r['has_dcb']),
@@ -1930,23 +1949,9 @@ def get_chart_signal_detail(ticker: str):
         # full history so every chart still gets a consistent objective.
         rebound_target = None
         try:
-            from src.rebound_scanner import _analyze_one as _rb_one, _first_target as _rb_target
+            from src.rebound_scanner import canonical_target
             if hist is not None and not hist.empty:
-                _rrow = _rb_one(ticker_u, hist.copy(), None)
-                if _rrow and _rrow.get('target') is not None:
-                    rebound_target = _rrow['target']
-                else:
-                    _h = hist[hist['close'] > 0].sort_values('date')
-                    _highs = _h['high'].to_numpy(dtype=float)
-                    _lows = _h['low'].to_numpy(dtype=float)
-                    _closes = _h['close'].to_numpy(dtype=float)
-                    if len(_highs) >= 12:
-                        _pk = int(np.argmax(_highs))
-                        _peak = float(_highs[_pk])
-                        _post = _lows[_pk + 1:] if _pk < len(_lows) - 1 else _lows
-                        _trough = float(_post.min()) if len(_post) else float(_lows.min())
-                        _price_now = float(_closes[-1])
-                        rebound_target = round(_rb_target(_highs, _price_now, _trough, _peak), 3)
+                rebound_target = canonical_target(ticker_u, hist)
         except Exception as _rte:
             logger.debug(f"rebound target for {ticker_u} skipped: {_rte}")
 

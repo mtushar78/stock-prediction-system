@@ -527,8 +527,12 @@ export interface ChartPatternScanRow {
   top_code: string;
   top_name: string;
   status: 'confirmed' | 'forming' | string;
-  target: number | null;
+  target: number | null;          // Bulkowski measure-rule target (shown in the pattern card)
   target_pct: number | null;
+  /** THE canonical upside objective — identical to the chart headline + the
+   *  Rebounds list, so the row's TARGET always matches the chart you click into. */
+  rebound_target: number | null;
+  rebound_room_pct: number | null;
   pattern_count: number;
   confirmed_count: number;
   has_dcb: boolean;

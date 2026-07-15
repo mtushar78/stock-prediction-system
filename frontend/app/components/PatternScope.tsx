@@ -127,8 +127,8 @@ export default function PatternScope({ apiUrl, onRowClick, onLearn }: PatternSco
           bv = b.edge;
           break;
         case 'target':
-          av = a.room_pct ?? -999;
-          bv = b.room_pct ?? -999;
+          av = a.rebound_room_pct ?? a.room_pct ?? -999;
+          bv = b.rebound_room_pct ?? b.room_pct ?? -999;
           break;
         case 'ticker':
           av = a.ticker;
@@ -250,9 +250,12 @@ export default function PatternScope({ apiUrl, onRowClick, onLearn }: PatternSco
                 </span>
                 <span className="font-bold text-cyan-300">{r.ticker}</span>
                 <span className="text-gray-400">{r.top_name}</span>
-                {r.room_pct != null && r.room_pct > 0 && (
-                  <span className="text-emerald-400 font-bold">+{r.room_pct}%</span>
-                )}
+                {(() => {
+                  const room = r.rebound_room_pct ?? r.room_pct;
+                  return room != null && room > 0 ? (
+                    <span className="text-emerald-400 font-bold">+{room}%</span>
+                  ) : null;
+                })()}
                 {r.confluence && <Rocket className="w-3 h-3 text-sky-400" />}
               </button>
             ))}
@@ -320,7 +323,7 @@ export default function PatternScope({ apiUrl, onRowClick, onLearn }: PatternSco
               <th onClick={() => toggleSort('ticker')} className="pb-3 pr-3 cursor-pointer hover:text-gray-300">TICKER{arrow('ticker')}</th>
               <th onClick={() => toggleSort('price')} className="pb-3 pr-3 cursor-pointer hover:text-gray-300">PRICE{arrow('price')}</th>
               <th onClick={() => toggleSort('pattern')} className="pb-3 pr-3 cursor-pointer hover:text-gray-300">PATTERN{arrow('pattern')}</th>
-              <th onClick={() => toggleSort('target')} className="pb-3 pr-3 cursor-pointer hover:text-gray-300" title="Room to the measure-rule target">TARGET · ROOM{arrow('target')}</th>
+              <th onClick={() => toggleSort('target')} className="pb-3 pr-3 cursor-pointer hover:text-gray-300" title="Upside objective — the next overhead resistance the price must reclaim. This is the SAME target shown on the chart when you open a row (the pattern's own measure-rule projection lives in the pattern card).">TARGET · ROOM{arrow('target')}</th>
             </tr>
           </thead>
           <tbody>
@@ -401,23 +404,29 @@ export default function PatternScope({ apiUrl, onRowClick, onLearn }: PatternSco
                     </span>
                   </td>
                   <td className="py-2 pr-3 whitespace-nowrap">
-                    {r.target != null ? (
-                      <span className="inline-flex items-center gap-1">
-                        <Target className="w-3 h-3 text-cyan-400" />
-                        <span className="text-gray-300">{r.target}</span>
-                        {r.room_pct != null &&
-                          (r.room_pct <= 0 ? (
-                            <span className="text-gray-500 text-xs">· reached</span>
-                          ) : (
-                            <span className={`text-xs font-bold ${r.bias === 'bearish' ? 'text-orange-300' : 'text-emerald-400'}`}>
-                              · {r.bias === 'bearish' ? '' : '+'}
-                              {r.room_pct}% room
-                            </span>
-                          ))}
-                      </span>
-                    ) : (
-                      <span className="text-gray-600">—</span>
-                    )}
+                    {(() => {
+                      // Canonical rebound objective — the SAME number the chart
+                      // headlines, so the row never disagrees with the chart it
+                      // opens. Falls back to the measure-rule target only if the
+                      // backend supplied no canonical one (rare).
+                      const tgt = r.rebound_target ?? r.target;
+                      const room = r.rebound_room_pct ?? r.room_pct;
+                      if (tgt == null) return <span className="text-gray-600">—</span>;
+                      return (
+                        <span className="inline-flex items-center gap-1">
+                          <Target className="w-3 h-3 text-cyan-400" />
+                          <span className="text-gray-300">{tgt}</span>
+                          {room != null &&
+                            (room <= 0 ? (
+                              <span className="text-gray-500 text-xs">· reached</span>
+                            ) : (
+                              <span className="text-xs font-bold text-emerald-400">
+                                · +{room}% room
+                              </span>
+                            ))}
+                        </span>
+                      );
+                    })()}
                     {r.bias === 'bullish' && (r.dse_stats ? (
                       <div className={`text-[10px] mt-0.5 font-bold ${r.dse_stats.net_20d > 0 ? 'text-emerald-400/80' : 'text-red-400/90'}`}
                         title={`What buying this pattern's confirmation ACTUALLY returned on DSE (point-in-time 2023–26, +20 trading days, net of 0.8% commission, n=${r.dse_stats.n}). The target above is the US book's projection — this is the local reality.`}>
