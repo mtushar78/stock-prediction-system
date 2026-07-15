@@ -938,7 +938,9 @@ function ChartPatternCard({
           </span>
         </div>
         {pattern.target != null && (
-          <div className="flex items-center gap-1 text-xs" style={{ color: LINE_COLORS.target }}>
+          <div className="flex items-center gap-1 text-xs" style={{ color: LINE_COLORS.target }}
+            title="This pattern's OWN Bulkowski measure-rule projection — NOT the chart's headline Target (the rebound objective shown up top and in the list). Two different concepts.">
+            <span className="text-[9px] uppercase tracking-wide opacity-60 not-italic">measure-rule</span>
             <Target className="w-3.5 h-3.5" />
             <span className="font-bold">{pattern.target}</span>
             {pattern.target_pct != null &&

@@ -648,40 +648,34 @@ def targets_for(engine, tickers) -> dict:
 
     Used by the chart-pattern scanner endpoint so its TARGET column matches the
     chart without N per-ticker queries. Returns {ticker: target|None}.
+
+    CRITICAL: this reads the SAME history the chart's get_stock_data(ticker)
+    returns — the FULL series, no date cutoff — and hands each ticker's frame to
+    the SAME canonical_target. Any per-caller difference in the window (an earlier
+    calendar cutoff dropped a stale ticker's bars entirely, or trimmed a gappy
+    ticker's history right at the 252-bar boundary) is exactly what made a row
+    disagree with the chart it opens, so there must be NO such difference here.
+    canonical_target itself bounds the compute to the last LOOKBACK_BARS, so
+    reading the full series is correct, not wasteful of the target math.
     """
     tickers = list(dict.fromkeys(t for t in tickers if t))
     if not tickers:
         return {}
-    try:
-        last = pd.read_sql_query(text("SELECT MAX(date) AS d FROM stock_data"), engine)
-        as_of = str(last['d'].iloc[0])[:10] if not last.empty and last['d'].iloc[0] else None
-    except Exception as e:
-        logger.error(f"targets_for: latest-date lookup failed: {e}")
-        return {}
-    cutoff = None
-    if as_of:
-        try:
-            cutoff = (datetime.strptime(as_of, '%Y-%m-%d')
-                      - timedelta(days=CALENDAR_LOOKBACK_DAYS)).strftime('%Y-%m-%d')
-        except Exception:
-            cutoff = None
+    # No date cutoff: mirror get_stock_data exactly (which the chart uses).
     q = ("SELECT ticker, date, open, high, low, close, volume FROM stock_data "
-         "WHERE ticker IN :tks " + ("AND date >= :cutoff " if cutoff else "")
-         + "ORDER BY ticker, date")
+         "WHERE ticker IN :tks ORDER BY ticker, date")
     stmt = text(q).bindparams(bindparam('tks', expanding=True))
-    params = {'tks': tickers}
-    if cutoff:
-        params['cutoff'] = cutoff
     try:
-        allrows = pd.read_sql_query(stmt, engine, params=params)
+        allrows = pd.read_sql_query(stmt, engine, params={'tks': tickers})
     except Exception as e:
         logger.error(f"targets_for: bulk read failed: {e}")
         return {}
     if allrows.empty:
         return {}
-    for col in ('open', 'high', 'low', 'close', 'volume'):
-        allrows[col] = pd.to_numeric(allrows[col], errors='coerce')
-    allrows = allrows.dropna(subset=['close', 'high', 'low'])
+    # Match get_stock_data's only transform (date -> datetime); leave the OHLCV
+    # untouched so _analyze_one sees the identical frame it would via the chart
+    # path — do NOT dropna/coerce here or the two paths diverge again.
+    allrows['date'] = pd.to_datetime(allrows['date'])
     out: dict = {}
     for ticker, g in allrows.groupby('ticker'):
         out[str(ticker)] = canonical_target(str(ticker), g)
