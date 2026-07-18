@@ -11,12 +11,11 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import axios from 'axios';
-import { Activity, RefreshCw, TrendingUp, Search, Crosshair, CandlestickChart, GraduationCap, Globe, Rocket } from 'lucide-react';
+import { Activity, RefreshCw, Search, Crosshair, CandlestickChart, GraduationCap, Globe } from 'lucide-react';
 import ChartScope from '../components/ChartScope';
 import PatternScope from '../components/PatternScope';
 import UniverseScope from '../components/UniverseScope';
 import ChartDetailModal from '../components/ChartDetailModal';
-import DataFreshnessBadge from '../components/DataFreshnessBadge';
 import TutorialView from '../components/TutorialView';
 import { TUTORIAL_ORDER } from '../tutorials';
 import { SystemStatus } from '../types';
@@ -78,61 +77,22 @@ export default function ChartAnalysisPage() {
 
   return (
     <main className="min-h-screen bg-gray-900 text-white p-4 sm:p-6 lg:p-8">
-      <header className="mb-6 flex flex-col md:flex-row justify-between items-start md:items-center border-b border-gray-700 pb-4 gap-4">
+      <header className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-700 pb-4 gap-3">
         <div>
-          <h1 className="text-3xl font-bold text-purple-300 flex items-center gap-2">
-            <Activity className="w-8 h-8" /> Chart Analyst
+          <h1 className="text-2xl md:text-3xl font-bold text-purple-300 flex items-center gap-2">
+            <Activity className="w-7 h-7" /> Chart Analyst
           </h1>
           <p className="text-gray-500 text-sm">
             Independent second opinion · Bulkowski chart patterns + candlestick context
           </p>
         </div>
-        <div className="flex gap-2 flex-wrap items-center">
-          <nav className="flex gap-1 text-sm">
-            <Link
-              href="/"
-              className="px-3 py-1.5 rounded bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700 hover:text-white transition flex items-center gap-1.5"
-            >
-              <TrendingUp className="w-4 h-4" /> Dashboard
-            </Link>
-            <Link
-              href="/chart-analysis"
-              className="px-3 py-1.5 rounded bg-purple-700 text-white border border-purple-600 flex items-center gap-1.5"
-            >
-              <Activity className="w-4 h-4" /> Chart Analyst
-            </Link>
-            <Link
-              href="/rebounds"
-              className="px-3 py-1.5 rounded bg-gray-800 text-gray-300 border border-gray-700 hover:bg-teal-900/40 hover:text-teal-200 transition flex items-center gap-1.5"
-            >
-              <Rocket className="w-4 h-4" /> Rebounds
-            </Link>
-            <Link
-              href="/analyze"
-              className="px-3 py-1.5 rounded bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700 hover:text-white transition"
-            >
-              Manual Analyze
-            </Link>
-          </nav>
-          <div className="bg-gray-800 px-3 py-1.5 rounded border border-gray-700">
-            <span className="text-gray-400 text-[10px] block">SYSTEM</span>
-            <span
-              className={`font-bold text-sm ${
-                systemStatus?.status === 'ONLINE' ? 'text-green-500' : 'text-red-500'
-              }`}
-            >
-              ● {systemStatus?.status || 'LOADING'}
-            </span>
-          </div>
-          <DataFreshnessBadge systemStatus={systemStatus} />
-          <button
-            onClick={() => setRefreshKey((k) => k + 1)}
-            className="bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded flex items-center gap-2 transition text-sm"
-            title="Force refresh"
-          >
-            <RefreshCw className="w-4 h-4" /> Refresh
-          </button>
-        </div>
+        <button
+          onClick={() => setRefreshKey((k) => k + 1)}
+          className="bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded flex items-center gap-2 transition text-sm"
+          title="Force refresh"
+        >
+          <RefreshCw className="w-4 h-4" /> Refresh
+        </button>
       </header>
 
       {/* Stale-data kill-switch banner: if the newest bar is old, every row,

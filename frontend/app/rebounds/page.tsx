@@ -13,10 +13,9 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import axios from 'axios';
 import {
-  TrendingUp, RefreshCw, Activity, Rocket, ArrowDownWideNarrow, Search,
+  TrendingUp, RefreshCw, ArrowDownWideNarrow, Search,
 } from 'lucide-react';
 import FullAnalysisModal from '../components/FullAnalysisModal';
 import MarketHealthMeter, { MarketHealth } from '../components/MarketHealthMeter';
@@ -165,18 +164,7 @@ export default function ReboundsPage() {
             Fallen from a high · based out · now curving back up — stocks worth tracking
           </p>
         </div>
-        <div className="flex gap-2 flex-wrap items-center">
-          <nav className="flex gap-1 text-sm">
-            <Link href="/" className="px-3 py-1.5 rounded bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700 hover:text-white transition flex items-center gap-1.5">
-              <TrendingUp className="w-4 h-4" /> Dashboard
-            </Link>
-            <Link href="/chart-analysis" className="px-3 py-1.5 rounded bg-gray-800 text-gray-300 border border-gray-700 hover:bg-purple-900/40 hover:text-purple-200 transition flex items-center gap-1.5">
-              <Activity className="w-4 h-4" /> Chart Analyst
-            </Link>
-            <Link href="/rebounds" className="px-3 py-1.5 rounded bg-teal-700 text-white border border-teal-600 flex items-center gap-1.5">
-              <Rocket className="w-4 h-4" /> Rebounds
-            </Link>
-          </nav>
+        <div className="flex gap-3 flex-wrap items-center">
           {data && <span className="text-gray-500 text-sm">as of {data.as_of}</span>}
           <button
             onClick={fetchList}

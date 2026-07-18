@@ -13,7 +13,6 @@
  */
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
 import axios from 'axios';
 import { Landmark, RefreshCw, ChevronDown, ChevronUp, BadgeCheck, ShoppingBasket, ArrowDownWideNarrow } from 'lucide-react';
 
@@ -158,9 +157,6 @@ export default function LongTermPage() {
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
           </button>
-          <Link href="/" className="bg-gray-800 hover:bg-gray-700 border border-gray-700 px-3 py-1.5 rounded">
-            ← Dashboard
-          </Link>
         </div>
       </div>
 

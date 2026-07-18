@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import axios from 'axios';
 import { UserCog, LogOut } from 'lucide-react';
+import NavBar from './NavBar';
 import {
   getToken,
   getStoredUser,
@@ -121,24 +122,32 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
   if (!getToken() && pathname !== '/login') return null;
 
   const isAdmin = !!user?.is_admin;
+  const showChrome = pathname !== '/login';
 
   return (
     <AuthContext.Provider
       value={{ user, isAdmin, isImpersonating: impersonating, adminUser, logout }}
     >
-      {impersonating && pathname !== '/login' && (
-        <div className="sticky top-0 z-[60] bg-amber-500 text-black text-sm font-medium px-4 py-2 flex items-center justify-center gap-3 flex-wrap">
-          <UserCog className="w-4 h-4" />
-          <span>
-            Viewing as <b>{user?.email}</b>
-            {adminUser && <> · impersonated by <b>{adminUser.email}</b></>}
-          </span>
-          <button
-            onClick={returnToAdmin}
-            className="inline-flex items-center gap-1 bg-black/80 hover:bg-black text-white rounded px-2 py-0.5 text-xs font-bold transition"
-          >
-            <LogOut className="w-3 h-3" /> Return to admin
-          </button>
+      {/* Global top chrome — impersonation banner + the one shared NavBar,
+          stacked in a single sticky header so nothing overlaps on scroll. */}
+      {showChrome && (
+        <div className="sticky top-0 z-50">
+          {impersonating && (
+            <div className="bg-amber-500 text-black text-sm font-medium px-4 py-2 flex items-center justify-center gap-3 flex-wrap">
+              <UserCog className="w-4 h-4" />
+              <span>
+                Viewing as <b>{user?.email}</b>
+                {adminUser && <> · impersonated by <b>{adminUser.email}</b></>}
+              </span>
+              <button
+                onClick={returnToAdmin}
+                className="inline-flex items-center gap-1 bg-black/80 hover:bg-black text-white rounded px-2 py-0.5 text-xs font-bold transition"
+              >
+                <LogOut className="w-3 h-3" /> Return to admin
+              </button>
+            </div>
+          )}
+          <NavBar />
         </div>
       )}
       {children}

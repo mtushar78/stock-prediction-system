@@ -10,10 +10,8 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import Link from 'next/link';
 import axios from 'axios';
 import {
-  TrendingUp,
   KeyRound,
   UserPlus,
   Users,
@@ -46,22 +44,14 @@ export default function SettingsPage() {
 
   return (
     <main className="min-h-screen bg-gray-950 text-gray-100 p-4 sm:p-6 lg:p-8">
-      <header className="mb-6 flex items-center justify-between border-b border-gray-800 pb-4">
-        <div>
-          <h1 className="text-2xl font-bold text-green-400 flex items-center gap-2">
-            <UserCog className="w-7 h-7" /> Settings
-          </h1>
-          <p className="text-gray-500 text-sm">
-            Signed in as {user?.email}
-            {isAdmin && <span className="ml-1 text-amber-400 font-semibold">· Admin</span>}
-          </p>
-        </div>
-        <Link
-          href="/"
-          className="px-3 py-1.5 rounded bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700 hover:text-white transition flex items-center gap-1.5 text-sm"
-        >
-          <TrendingUp className="w-4 h-4" /> Dashboard
-        </Link>
+      <header className="mb-6 border-b border-gray-800 pb-4">
+        <h1 className="text-2xl font-bold text-green-400 flex items-center gap-2">
+          <UserCog className="w-7 h-7" /> Settings
+        </h1>
+        <p className="text-gray-500 text-sm">
+          Signed in as {user?.email}
+          {isAdmin && <span className="ml-1 text-amber-400 font-semibold">· Admin</span>}
+        </p>
       </header>
 
       <div className="max-w-3xl mx-auto space-y-6">

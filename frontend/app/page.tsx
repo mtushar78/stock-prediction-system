@@ -1,10 +1,8 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import Link from 'next/link';
 import axios from 'axios';
-import { Clock } from 'lucide-react';
-import Header from './components/Header';
+import { Clock, RefreshCw } from 'lucide-react';
 import AlertsSection from './components/AlertsSection';
 import SignalsTable from './components/SignalsTable';
 import DateReplayBar from './components/DateReplayBar';
@@ -318,22 +316,18 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 p-4 md:p-8 font-mono">
-      <Header systemStatus={systemStatus} loading={loading} onRefresh={fetchData} />
-
-      {/* Quick navigation */}
-      <div className="mb-6 flex flex-wrap gap-3">
-        <Link
-          href="/analyze"
-          className="bg-gray-800 hover:bg-gray-700 border border-gray-700 px-4 py-2 rounded text-sm transition"
+      <div className="mb-6 flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-bold text-emerald-300">Signals Dashboard</h1>
+          <p className="text-gray-500 text-sm">Real-time volume + reversal signals and your portfolio.</p>
+        </div>
+        <button
+          onClick={() => fetchData()}
+          disabled={loading}
+          className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 px-3 py-1.5 rounded flex items-center gap-2 transition text-sm"
         >
-          🧮 Manual Analyze
-        </Link>
-        <Link
-          href="/long-term"
-          className="bg-gray-800 hover:bg-gray-700 border border-emerald-800/60 px-4 py-2 rounded text-sm transition text-emerald-300"
-        >
-          🏛️ Long-Term Investing
-        </Link>
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
+        </button>
       </div>
 
       {/* Last Update Info */}

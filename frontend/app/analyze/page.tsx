@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import axios from 'axios';
 import ManualAnalysisView from '../components/ManualAnalysisView';
 
@@ -47,18 +46,9 @@ export default function AnalyzeTickerPage() {
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 p-4 md:p-8 font-mono">
-      <div className="mb-8 flex items-start justify-between gap-4 flex-wrap border-b border-gray-700 pb-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-green-400">Manual Ticker Analysis</h1>
-          <p className="text-gray-500 text-sm">Pick any stock from DB or type manually. See every step of the calculation.</p>
-        </div>
-
-        <Link
-          href="/"
-          className="bg-gray-800 hover:bg-gray-700 border border-gray-700 px-4 py-2 rounded text-sm transition"
-        >
-          ← Back to Dashboard
-        </Link>
+      <div className="mb-8 border-b border-gray-700 pb-4">
+        <h1 className="text-2xl md:text-3xl font-bold text-green-400">Manual Ticker Analysis</h1>
+        <p className="text-gray-500 text-sm">Pick any stock from DB or type manually. See every step of the calculation.</p>
       </div>
 
       {/* Upper section: select/search */}
