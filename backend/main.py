@@ -1521,6 +1521,123 @@ def get_rebounds():
         db.close()
 
 
+# Momentum scan re-reads ~9 years of bars and rescans the whole universe; the
+# result only changes once a day (new scrape). Cache keyed on the latest trading
+# date so page loads are instant between scrapes (mirrors the rebound cache).
+_MOMENTUM_CACHE: dict = {}
+MOMENTUM_WATCHLIST_SIZE = 15    # the videos' "10-15 focused names" discipline
+
+
+@app.get("/api/momentum")
+def get_momentum():
+    """Stage-2 momentum watchlist (docs/MOMENTUM_STRATEGY.md).
+
+    Filters the universe to fundamentally-clean stocks in an early Stage-2 advance
+    on the MONTHLY chart, then times entries on the DAILY chart (volume breakout /
+    launchpad / pullback). Returns BOTH the live scan (`candidates`) and the
+    monthly-LOCKED watchlist (`locked`) — the anti-churn discipline the videos
+    stress: the list is chosen once per calendar month and committed to, with each
+    name's live entry status updating daily. Structural screen, NOT a validated
+    buy list: the point-in-time backtest found the one real edge is a breakout
+    TRIGGER inside Stage-2 (highlighted per row); the funda gate is hygiene only."""
+    from src.momentum_scanner import scan
+    from sqlalchemy import text
+    from datetime import datetime as _dt
+    import json as _json
+    db = DatabaseManager()
+    try:
+        mx = pd.read_sql_query(text("SELECT MAX(date) d FROM stock_data"), db.engine)
+        as_of = str(mx['d'].iloc[0])[:10] if not mx.empty and mx['d'].iloc[0] else None
+        if as_of and as_of in _MOMENTUM_CACHE:
+            return _MOMENTUM_CACHE[as_of]
+
+        res = scan(db.engine)
+        stocks = res.get('stocks', [])
+        by_ticker = {s['ticker']: s for s in stocks}
+        cohort = (res.get('as_of') or '')[:7] or None
+
+        locked_rows = []
+        if cohort:
+            def _read_cohort():
+                return pd.read_sql_query(
+                    text("SELECT ticker, rank, snapshot, as_of, locked_at "
+                         "FROM momentum_watchlist WHERE cohort_month = :c ORDER BY rank"),
+                    db.engine, params={"c": cohort})
+
+            existing = _read_cohort()
+            if existing.empty:
+                # Lock this month's cohort: the top-N structurally sound names
+                # (Stage 1/2 — never a topping/declining stock), by scanner score.
+                pool = [s for s in stocks
+                        if s['stage'] in ('EARLY_STAGE_2', 'STAGE_2', 'STAGE_1')][:MOMENTUM_WATCHLIST_SIZE]
+                if pool:
+                    try:
+                        cur = db.conn.cursor()
+                        locked_at = _dt.now().isoformat(timespec='seconds')
+                        for i, s in enumerate(pool):
+                            cur.execute(
+                                "INSERT INTO momentum_watchlist "
+                                "(cohort_month, ticker, locked_at, as_of, rank, snapshot) "
+                                "VALUES (%s, %s, %s, %s, %s, %s)",
+                                (cohort, s['ticker'], locked_at, res.get('as_of'),
+                                 i + 1, _json.dumps(s)))
+                        db.conn.commit()
+                    except Exception as _le:
+                        # A concurrent first-load may have locked it already (PK
+                        # collision) — just re-read whatever landed.
+                        logger.debug(f"momentum cohort lock skipped: {_le}")
+                        try:
+                            db.conn.rollback()
+                        except Exception:
+                            pass
+                    existing = _read_cohort()
+
+            for _, r in existing.iterrows():
+                try:
+                    snap = _json.loads(r['snapshot']) if r['snapshot'] else {}
+                except Exception:
+                    snap = {}
+                live = by_ticker.get(r['ticker'])
+                locked_rows.append({
+                    'ticker': r['ticker'], 'rank': int(r['rank']) if r['rank'] is not None else None,
+                    'locked_at': r['locked_at'], 'locked_as_of': r['as_of'],
+                    'locked_snapshot': snap,
+                    'live': live,                 # current row (None if it dropped out of the scan)
+                    'in_scan': live is not None,
+                })
+
+        locked_set = {lr['ticker'] for lr in locked_rows}
+        candidates = [s for s in stocks if s['ticker'] not in locked_set]
+
+        out = {
+            'as_of': res.get('as_of'),
+            'cohort_month': cohort,
+            'universe': res.get('universe'),
+            'count': res.get('count'),
+            'counts': res.get('counts'),
+            'watchlist_size': len(locked_rows),
+            'locked': locked_rows,
+            'candidates': candidates,
+        }
+        try:
+            out['market'] = _compute_market_breadth(res.get('as_of'))
+        except Exception as _me:
+            logger.debug(f"momentum market context skipped: {_me}")
+            out['market'] = None
+
+        if res.get('as_of'):
+            _MOMENTUM_CACHE.clear()      # only ever hold the latest day
+            _MOMENTUM_CACHE[res['as_of']] = out
+        return out
+    except Exception as e:
+        logger.error(f"momentum scan failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
 @app.get("/api/news")
 def get_news(limit: int = 100, category: Optional[str] = None,
              ticker: Optional[str] = None, include_routine: bool = False,

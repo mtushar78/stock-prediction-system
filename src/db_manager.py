@@ -510,6 +510,27 @@ class DatabaseManager:
                 if _c not in _cp_cols:
                     cursor.execute(f"ALTER TABLE chart_pattern_signals ADD COLUMN {_c} {_t}")
 
+            # Momentum Stage-2 watchlist — the monthly-locked cohort (the videos'
+            # anti-churn discipline: pick a list once a month, commit to it). One
+            # row per (cohort_month, ticker); `snapshot` is the full scanner row
+            # as JSON at lock time so the list is reproducible even as live data
+            # moves. See src/momentum_scanner.py + docs/MOMENTUM_STRATEGY.md.
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS momentum_watchlist (
+                    cohort_month TEXT NOT NULL,
+                    ticker TEXT NOT NULL,
+                    locked_at TEXT,
+                    as_of TEXT,
+                    rank INTEGER,
+                    snapshot TEXT,
+                    PRIMARY KEY (cohort_month, ticker)
+                )
+            """)
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_momentum_watchlist_cohort "
+                "ON momentum_watchlist(cohort_month, rank)"
+            )
+
             # Older SQLite DBs created portfolio without total_cost /
             # commission_paid — upgrade in-place.
             cursor.execute("PRAGMA table_info(portfolio)")
