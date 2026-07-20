@@ -24,6 +24,7 @@ import {
   Settings,
   LogOut,
   Sprout,
+  BookOpen,
   type LucideIcon,
 } from 'lucide-react';
 import { SystemStatus } from '../types';
@@ -49,6 +50,7 @@ const NAV: NavItem[] = [
   { href: '/long-term', label: 'Long-Term', icon: Landmark, active: 'bg-emerald-700 text-white border-emerald-600' },
   { href: '/news', label: 'News & Rumors', icon: Radar, active: 'bg-amber-600 text-white border-amber-500' },
   { href: '/analyze', label: 'Manual Analyze', icon: Calculator, active: 'bg-blue-600 text-white border-blue-500' },
+  { href: '/playbook', label: 'Playbook', icon: BookOpen, active: 'bg-sky-600 text-white border-sky-500' },
 ];
 
 function isActive(pathname: string, href: string): boolean {

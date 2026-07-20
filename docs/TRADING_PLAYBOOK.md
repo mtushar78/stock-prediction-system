@@ -3,6 +3,8 @@
 **Your personal operating manual for the DSE Sniper app.**
 Written 2026-07-07, from your own backtests on 14 years of DSE data. Read this once fully, then keep it as a checklist.
 
+> 📖 **Graphical version:** the in-app **Playbook** page (`/playbook`) presents this guide visually — live season banner, decision flowchart, evidence bars, and a position-size calculator — and includes the pages shipped after this doc (Momentum, Coils, Rebounds, News).
+
 ---
 
 ## 0. The one sentence that matters most
