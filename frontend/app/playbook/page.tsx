@@ -112,11 +112,18 @@ const fmtBDT = (n: number) => `৳${Math.round(n).toLocaleString('en-US')}`;
 
 export default function PlaybookPage() {
   const [market, setMarket] = useState<MarketHealth | null>(null);
-  const [capital, setCapital] = useState(500000);
+  const [capital, setCapitalState] = useState(500000);
 
   useEffect(() => {
     axios.get(`${API_URL}/api/market-health`).then((r) => setMarket(r.data)).catch(() => {});
+    // capital persists, shared with the Momentum "What to do today" panel
+    const saved = Number(localStorage.getItem('dse_capital'));
+    if (Number.isFinite(saved) && saved > 0) setCapitalState(saved);
   }, []);
+  const setCapital = (n: number) => {
+    setCapitalState(n);
+    try { localStorage.setItem('dse_capital', String(n)); } catch { /* private mode */ }
+  };
 
   const isReversal = market?.season === 'REVERSAL' || (market?.breadth_pct != null && market.breadth_pct < 45);
 
@@ -212,9 +219,9 @@ export default function PlaybookPage() {
             <div>
               <dt className="text-gray-400">What you buy</dt>
               <dd className="text-gray-100">
-                Momentum page → <b>⚡ Setup</b> filter: a stock breaking its 20-day high on ≥1.5× volume{' '}
-                <b>while inside a monthly Stage-2 advance</b>. Nothing else on that page — a raw trigger without
-                Stage-2 barely beats costs.
+                Momentum page → the <b>&quot;What to do today&quot;</b> panel at the top: every ⚡ Setup with a
+                verdict and your exact order (shares, stop, exit) sized off your saved capital. Nothing else on that
+                page — a raw trigger without Stage-2 barely beats costs.
               </dd>
             </div>
             <div>

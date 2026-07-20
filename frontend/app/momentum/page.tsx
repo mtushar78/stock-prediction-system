@@ -260,6 +260,154 @@ const TH = (
   </thead>
 );
 
+/* ------------------------------------------------------------------ */
+/* "What to do today" — the per-setup verdict + buy plan panel.        */
+/* Verdicts are HONEST: the PIT test (backtest_setup_quality.py) found */
+/* no return-based ranking among setups, so the only SKIP/CAUTION      */
+/* reasons are arithmetic (sizing fit, liquidity) and hygiene.         */
+/* ------------------------------------------------------------------ */
+
+const CAPITAL_KEY = 'dse_capital'; // shared with the Playbook calculator
+
+const money = (n: number) => `৳${Math.round(n).toLocaleString('en-US')}`;
+
+interface Plan {
+  verdict: 'BUY' | 'CAUTION' | 'SKIP';
+  why: string;
+  shares: number;
+  orderValue: number;
+  stop: number;
+  exitLevel: number | null;
+}
+
+function planFor(r: Momo, capital: number): Plan {
+  const slot = capital * 0.1;
+  const shares = Math.floor(slot / r.price);
+  const orderValue = shares * r.price;
+  const avgTurnover = (r.avg_vol20 || 0) * r.price;
+  const stop = r.price * 0.9;
+  const exitLevel = r.sma20;
+  if (shares < 1) {
+    return {
+      verdict: 'SKIP', shares, orderValue, stop, exitLevel,
+      why: `One share (${money(r.price)}) is bigger than your 10% slot (${money(slot)}). Not for your account size.`,
+    };
+  }
+  if (avgTurnover > 0 && orderValue > 0.2 * avgTurnover) {
+    return {
+      verdict: 'CAUTION', shares, orderValue, stop, exitLevel,
+      why: `Your order (~${money(orderValue)}) is large vs its daily trading (~${money(avgTurnover)}) — exiting could be hard. Size down.`,
+    };
+  }
+  if (!r.techno_funda_pass) {
+    return {
+      verdict: 'CAUTION', shares, orderValue, stop, exitLevel,
+      why: 'Fails the quality check (weak fundamentals). A hygiene warning, not a return signal — buy smaller or skip.',
+    };
+  }
+  return {
+    verdict: 'BUY', shares, orderValue, stop, exitLevel,
+    why: `Broke its 20-day high on ${f1(r.rvol)}× volume, inside a Stage-2 advance.`,
+  };
+}
+
+const VERDICT_STYLE: Record<Plan['verdict'], [string, string]> = {
+  BUY: ['✅ BUY', 'bg-emerald-600 text-white'],
+  CAUTION: ['⚠️ CAUTION', 'bg-amber-600 text-black'],
+  SKIP: ['❌ SKIP', 'bg-red-700 text-white'],
+};
+
+function SetupActionPanel({ setups, capital, setCapital, onPick }: {
+  setups: Momo[];
+  capital: number;
+  setCapital: (n: number) => void;
+  onPick: (ticker: string) => void;
+}) {
+  return (
+    <section className="mb-8 border border-emerald-700/60 bg-emerald-950/15 rounded-lg p-4">
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-1">
+        <h2 className="text-lg font-bold text-emerald-200">⚡ What to do today</h2>
+        <label className="text-xs text-gray-400 flex items-center gap-2">
+          My trading capital
+          <input
+            type="number"
+            value={capital}
+            min={0}
+            step={5000}
+            onChange={(e) => setCapital(Math.max(0, Number(e.target.value)))}
+            className="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white w-32 text-sm"
+          />
+        </label>
+      </div>
+      <p className="text-[11px] text-gray-400 mb-3">
+        Every ⚡ BUY SETUP with its verdict and exact order, sized off your capital (10% per position, −10% stop).
+        Set your capital once — it&apos;s remembered.
+      </p>
+
+      {setups.length === 0 ? (
+        <div className="text-sm text-gray-300 bg-gray-900/50 border border-gray-700 rounded p-3">
+          No ⚡ BUY SETUP today — <b>buy nothing</b>. That&apos;s the correct move, not a failure. Check back during
+          your regular market glance; triggers only live 1–2 days.
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-gray-500 text-xs border-b border-gray-700 text-left">
+                <th className="p-2">STOCK</th>
+                <th className="p-2">VERDICT</th>
+                <th className="p-2">WHY (one line)</th>
+                <th className="p-2">YOUR ORDER</th>
+              </tr>
+            </thead>
+            <tbody>
+              {setups.map((r) => {
+                const p = planFor(r, capital);
+                const [label, cls] = VERDICT_STYLE[p.verdict];
+                return (
+                  <tr
+                    key={r.ticker}
+                    onClick={() => onPick(r.ticker)}
+                    className="border-b border-gray-800 hover:bg-emerald-900/10 cursor-pointer"
+                    title="Click for the full analysis"
+                  >
+                    <td className="p-2 whitespace-nowrap">
+                      <span className="font-bold text-indigo-300">{r.ticker}</span>
+                      <div className="text-[11px] text-gray-500">{money(r.price)}</div>
+                    </td>
+                    <td className="p-2 whitespace-nowrap">
+                      <span className={`text-xs font-bold px-2 py-1 rounded ${cls}`}>{label}</span>
+                    </td>
+                    <td className="p-2 text-xs text-gray-300 max-w-[360px]">{p.why}</td>
+                    <td className="p-2 text-xs whitespace-nowrap">
+                      {p.verdict === 'SKIP' ? (
+                        <span className="text-gray-600">—</span>
+                      ) : (
+                        <div className="text-gray-200">
+                          <div><b>{p.shares.toLocaleString('en-US')} shares</b> ≈ {money(p.orderValue)}</div>
+                          <div className="text-red-300">stop {money(p.stop)} (−10%)</div>
+                          <div className="text-sky-300">
+                            exit below 20-day avg{p.exitLevel != null ? ` (${money(p.exitLevel)})` : ''}
+                          </div>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <div className="text-[11px] text-amber-200/80 mt-2">
+            Cap: <b>2–4 swing positions in total</b> (including what you already hold). Cap full → skip all of these;
+            that&apos;s correct. All setups are equally buy-eligible — the backtest found no reliable ranking among
+            them, so verdicts above only flag sizing, liquidity and quality hygiene.
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function MomentumPage() {
   const [data, setData] = useState<MomoResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -270,6 +418,17 @@ export default function MomentumPage() {
   const [stageFilter, setStageFilter] = useState<'ALL' | 'EARLY_STAGE_2' | 'STAGE_2' | 'STAGE_1' | 'SETUP'>('ALL');
   const [tfOnly, setTfOnly] = useState(false);
   const [active, setActive] = useState<string | null>(null);
+  const [capital, setCapitalState] = useState(500000);
+
+  // capital persists (shared with the Playbook calculator via the same key)
+  useEffect(() => {
+    const saved = Number(localStorage.getItem(CAPITAL_KEY));
+    if (Number.isFinite(saved) && saved > 0) setCapitalState(saved);
+  }, []);
+  const setCapital = (n: number) => {
+    setCapitalState(n);
+    try { localStorage.setItem(CAPITAL_KEY, String(n)); } catch { /* private mode */ }
+  };
 
   // `silent` = background poll: refresh without the full "Scanning…" state so an
   // open page keeps up with intraday scrapes. Backend caches on a data-freshness
@@ -377,6 +536,16 @@ export default function MomentumPage() {
       </div>
 
       {error && <div className="mb-4 bg-red-950/40 border border-red-700 rounded p-3 text-sm text-red-300">{error}</div>}
+
+      {/* ============ WHAT TO DO TODAY (per-setup verdicts) ============ */}
+      {!loading && data && (
+        <SetupActionPanel
+          setups={rows.filter(isValidatedSetup)}
+          capital={capital}
+          setCapital={setCapital}
+          onPick={setActive}
+        />
+      )}
 
       {/* ============ THIS MONTH'S LOCKED WATCHLIST ============ */}
       <section className="mb-8">
