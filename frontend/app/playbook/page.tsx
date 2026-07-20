@@ -275,6 +275,59 @@ export default function PlaybookPage() {
         </div>
       </div>
 
+      {/* Momentum badge legend — plain words */}
+      <div className="mt-4 border border-gray-800 rounded-lg p-4 bg-gray-900/40">
+        <div className="text-sm font-bold text-gray-200 mb-3">The Momentum badges, in plain words</div>
+        <div className="space-y-2 text-xs">
+          {[
+            ['⚡ Trigger', 'bg-green-800 text-green-100 border-green-600', 'Broke its 20-day high today on big volume (1.5×+). This is the buy signal — but only inside Stage 2.'],
+            ['🚀 Launchpad', 'bg-fuchsia-900/60 text-fuchsia-200 border-fuchsia-700', 'The 10/20/50-day averages are squeezed into a tight cluster. Loaded, not fired yet. Watch it — often the day before a trigger.'],
+            ['↩ Pullback', 'bg-sky-900/50 text-sky-200 border-sky-700', 'Dipped back to its rising 20-day average. A lower-risk second-chance entry in an uptrend.'],
+            ['📏 Extended', 'bg-orange-900/50 text-orange-200 border-orange-700', 'Already too far above the breakout. Too late — chasing here is where FOMO loses money. Wait for a pullback.'],
+            ['· Waiting', 'bg-gray-800 text-gray-400 border-gray-700', 'Nothing yet. Just on the watchlist.'],
+          ].map(([badge, cls, desc]) => (
+            <div key={badge as string} className="flex items-start gap-3">
+              <span className={`shrink-0 w-28 text-center border rounded px-1.5 py-0.5 font-semibold ${cls}`}>{badge}</span>
+              <span className="text-gray-300 pt-0.5">{desc}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Why only the ⚡ Setup combination is a buy */}
+        <div className="mt-4 border-t border-gray-800 pt-3">
+          <div className="text-xs font-bold text-gray-200 mb-2">Why &quot;trigger + Stage 2&quot; and nothing else? The backtest:</div>
+          <div className="grid grid-cols-3 gap-2 text-center text-xs">
+            <div className="border border-gray-700 rounded p-2">
+              <div className="text-gray-400">Trigger alone</div>
+              <div className="font-bold text-gray-300 text-base">+2.6%</div>
+              <div className="text-[10px] text-gray-500">3 mo — barely beats costs</div>
+            </div>
+            <div className="border border-gray-700 rounded p-2">
+              <div className="text-gray-400">Stage 2 alone</div>
+              <div className="font-bold text-gray-300 text-base">+2.0%</div>
+              <div className="text-[10px] text-gray-500">3 mo — same as any stock</div>
+            </div>
+            <div className="border border-emerald-600 bg-emerald-950/30 rounded p-2">
+              <div className="text-emerald-300">Trigger IN Stage 2</div>
+              <div className="font-bold text-emerald-300 text-base">+8.2%</div>
+              <div className="text-[10px] text-emerald-400/70">3 mo — the ⚡ Setup badge</div>
+            </div>
+          </div>
+          <p className="text-[11px] text-gray-500 mt-2">
+            The trigger is the engine, Stage 2 is the road. Either one alone goes nowhere — together they showed the
+            edge. That&apos;s the whole logic.
+          </p>
+        </div>
+
+        {/* Several setups the same day */}
+        <div className="mt-3 border-t border-gray-800 pt-3 text-xs text-gray-300">
+          <b className="text-gray-100">Several ⚡ Setups on the same day?</b> You may buy more than one — up to your
+          2–4 position cap, ~10% each. Prefer the <b className="text-emerald-300">calm ones</b>: small recent run,
+          RSI under ~70. A setup that already jumped 25–30% this month can still work, but you&apos;re late to it —
+          it&apos;s the riskiest entry of the batch.
+        </div>
+      </div>
+
       {/* Honesty callout: reversals aren't actually rare over history */}
       <div className="mt-4 flex items-start gap-3 border border-amber-700/50 bg-amber-950/20 rounded-lg p-3">
         <CalendarDays className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
