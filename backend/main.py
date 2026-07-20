@@ -362,13 +362,15 @@ async def scheduled_scraper_and_analysis(is_final: int = 0):
         # Heavy analysis + persistence + chart engine — entirely off the event loop.
         await asyncio.to_thread(_analyze_and_save, update_type, is_final, bool(is_final))
 
-        # Bust the full-universe scan caches so the next request rescans with the
-        # prices this scrape just wrote. Both caches are keyed on MAX(date) alone,
-        # which doesn't change during a session (intraday scrapes update today's
-        # row in place), so without this clear the morning's snapshot would be
-        # served all day even as fresh prices land every 8 minutes.
+        # Belt-and-suspenders cache bust in THIS worker. The real freshness
+        # guarantee is that these caches are keyed on a data-freshness fingerprint
+        # (_universe_fingerprint), so EVERY worker rescans on the next request once
+        # this scrape's prices land — the date-keyed caches used to freeze the
+        # morning's snapshot for the whole session. Clearing here just avoids one
+        # extra fingerprint miss in the worker that ran the scrape.
         _REBOUND_CACHE.clear()
         _UNUSUAL_CACHE.clear()
+        _MOMENTUM_CACHE.clear()
 
         logger.info(f"✅ Scraper and analysis completed [{update_type}]")
         logger.info("🔄 Data refresh complete - fresh connections will be used on next API call")
@@ -1479,10 +1481,41 @@ def get_reversal_tracker():
         db.close()
 
 
-# The rebound scan re-reads ~150k rows and rescans the whole universe; the
-# result only changes once a day (new scrape). Cache it keyed on the latest
-# trading date so page loads / refreshes are instant between scrapes.
+# ---------------------------------------------------------------------------
+# Full-universe scan caching.
+#
+# These scans re-read the whole price history and rescan every ticker, so we
+# cache the result. The cache key is a DATA-FRESHNESS FINGERPRINT, not the bare
+# trading date: it folds in the latest day's row-count + cumulative volume +
+# summed close, all of which move on EVERY intraday scrape (the scraper updates
+# today's bar in place every ~8 min). So the moment fresh prices land the key
+# changes and the next request rescans — no matter which uvicorn worker serves
+# it. Keying on the date alone (the old bug) meant a price could sit frozen for
+# a whole session, because the date doesn't change intraday and the scheduler's
+# cache.clear() only ran in the one worker it happened to execute in.
 _REBOUND_CACHE: dict = {}
+
+
+def _universe_fingerprint(engine) -> str:
+    """Cheap signature of the latest trading day that CHANGES on every intraday
+    scrape (cumulative volume grows, closes move). Used as the cache key for the
+    full-universe scans so they auto-refresh when — and only when — the data
+    actually changes, in every worker/process. Falls back to the bare max date if
+    the probe fails, so a hiccup can never wedge a stale value forever."""
+    from sqlalchemy import text as _t
+    try:
+        r = pd.read_sql_query(_t(
+            "SELECT MAX(date) d, COUNT(*) n, COALESCE(SUM(volume), 0) v, "
+            "COALESCE(ROUND(SUM(close), 1), 0) c FROM stock_data "
+            "WHERE date = (SELECT MAX(date) FROM stock_data)"), engine)
+        d = str(r['d'].iloc[0])[:10]
+        return f"{d}|{int(r['n'].iloc[0])}|{int(r['v'].iloc[0])}|{r['c'].iloc[0]}"
+    except Exception:
+        try:
+            r = pd.read_sql_query(_t("SELECT MAX(date) d FROM stock_data"), engine)
+            return str(r['d'].iloc[0])[:10]
+        except Exception:
+            return "unknown"
 
 
 @app.get("/api/rebounds")
@@ -1493,13 +1526,11 @@ def get_rebounds():
     a row for the full manual analysis. Includes the market SEASON so the user
     can tell whether mean-reversion turns are worth acting on right now."""
     from src.rebound_scanner import scan
-    from sqlalchemy import text
     db = DatabaseManager()
     try:
-        mx = pd.read_sql_query(text("SELECT MAX(date) d FROM stock_data"), db.engine)
-        as_of = str(mx['d'].iloc[0])[:10] if not mx.empty and mx['d'].iloc[0] else None
-        if as_of and as_of in _REBOUND_CACHE:
-            return _REBOUND_CACHE[as_of]
+        fp = _universe_fingerprint(db.engine)
+        if fp in _REBOUND_CACHE:
+            return _REBOUND_CACHE[fp]
 
         res = scan(db.engine)
         try:
@@ -1508,9 +1539,8 @@ def get_rebounds():
             logger.debug(f"rebounds market context skipped: {_me}")
             res['market'] = None
 
-        if res.get('as_of'):
-            _REBOUND_CACHE.clear()  # only ever hold the latest day
-            _REBOUND_CACHE[res['as_of']] = res
+        _REBOUND_CACHE.clear()  # only ever hold the current fingerprint
+        _REBOUND_CACHE[fp] = res
         return res
     except Exception as e:
         logger.error(f"rebounds scan failed: {e}")
@@ -1521,9 +1551,9 @@ def get_rebounds():
         db.close()
 
 
-# Momentum scan re-reads ~9 years of bars and rescans the whole universe; the
-# result only changes once a day (new scrape). Cache keyed on the latest trading
-# date so page loads are instant between scrapes (mirrors the rebound cache).
+# Momentum scan re-reads ~9 years of bars and rescans the whole universe. Cached
+# on the data-freshness fingerprint (see _universe_fingerprint) so it refreshes
+# the instant intraday prices move, not once a day — same fix as the rebound cache.
 _MOMENTUM_CACHE: dict = {}
 MOMENTUM_WATCHLIST_SIZE = 15    # the videos' "10-15 focused names" discipline
 
@@ -1546,10 +1576,9 @@ def get_momentum():
     import json as _json
     db = DatabaseManager()
     try:
-        mx = pd.read_sql_query(text("SELECT MAX(date) d FROM stock_data"), db.engine)
-        as_of = str(mx['d'].iloc[0])[:10] if not mx.empty and mx['d'].iloc[0] else None
-        if as_of and as_of in _MOMENTUM_CACHE:
-            return _MOMENTUM_CACHE[as_of]
+        fp = _universe_fingerprint(db.engine)
+        if fp in _MOMENTUM_CACHE:
+            return _MOMENTUM_CACHE[fp]
 
         res = scan(db.engine)
         stocks = res.get('stocks', [])
@@ -1625,9 +1654,8 @@ def get_momentum():
             logger.debug(f"momentum market context skipped: {_me}")
             out['market'] = None
 
-        if res.get('as_of'):
-            _MOMENTUM_CACHE.clear()      # only ever hold the latest day
-            _MOMENTUM_CACHE[res['as_of']] = out
+        _MOMENTUM_CACHE.clear()          # only ever hold the current fingerprint
+        _MOMENTUM_CACHE[fp] = out
         return out
     except Exception as e:
         logger.error(f"momentum scan failed: {e}")
@@ -1690,7 +1718,8 @@ def get_news_ticker(ticker: str, limit: int = 20):
         db.close()
 
 
-# Full-universe scan; result only changes on a new scrape, so cache per as_of.
+# Full-universe scan; cached on the data-freshness fingerprint so it refreshes
+# the instant intraday prices move (see _universe_fingerprint), not once a day.
 _UNUSUAL_CACHE: dict = {}
 
 
@@ -1701,21 +1730,18 @@ def get_unusual_activity():
     volume, no disclosed news) and exchange-flagged names (DSE query/halt) are
     surfaced first — the data-driven proxy for broker-house chatter."""
     from src.unusual_activity import scan
-    from sqlalchemy import text
     db = DatabaseManager()
     try:
-        mx = pd.read_sql_query(text("SELECT MAX(date) d FROM stock_data"), db.engine)
-        as_of = str(mx['d'].iloc[0])[:10] if not mx.empty and mx['d'].iloc[0] else None
-        if as_of and as_of in _UNUSUAL_CACHE:
-            return _UNUSUAL_CACHE[as_of]
+        fp = _universe_fingerprint(db.engine)
+        if fp in _UNUSUAL_CACHE:
+            return _UNUSUAL_CACHE[fp]
         res = scan(db.engine)
         try:
             res['market'] = _compute_market_breadth(res.get('as_of'))
         except Exception:
             res['market'] = None
-        if res.get('as_of'):
-            _UNUSUAL_CACHE.clear()
-            _UNUSUAL_CACHE[res['as_of']] = res
+        _UNUSUAL_CACHE.clear()
+        _UNUSUAL_CACHE[fp] = res
         return res
     except Exception as e:
         logger.error(f"unusual-activity scan failed: {e}")

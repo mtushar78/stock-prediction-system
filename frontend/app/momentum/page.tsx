@@ -271,17 +271,26 @@ export default function MomentumPage() {
   const [tfOnly, setTfOnly] = useState(false);
   const [active, setActive] = useState<string | null>(null);
 
-  const fetchList = () => {
-    setLoading(true);
-    setError(null);
+  // `silent` = background poll: refresh without the full "Scanning…" state so an
+  // open page keeps up with intraday scrapes. Backend caches on a data-freshness
+  // fingerprint, so between scrapes these polls are a cheap cache hit.
+  const fetchList = (silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     axios
       .get<MomoResponse>(`${API_URL}/api/momentum`)
       .then((res) => setData(res.data))
-      .catch(() => setError('Could not load the momentum list.'))
-      .finally(() => setLoading(false));
+      .catch(() => { if (!silent) setError('Could not load the momentum list.'); })
+      .finally(() => { if (!silent) setLoading(false); });
   };
 
-  useEffect(fetchList, []);
+  useEffect(() => {
+    fetchList();
+    const id = setInterval(() => fetchList(true), 60000);
+    return () => clearInterval(id);
+  }, []);
 
   const rows = useMemo(() => data?.candidates ?? [], [data]);
 
@@ -327,7 +336,7 @@ export default function MomentumPage() {
         <div className="flex gap-3 flex-wrap items-center">
           {data && <span className="text-gray-500 text-sm">as of {data.as_of}</span>}
           <button
-            onClick={fetchList}
+            onClick={() => fetchList()}
             className="bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded flex items-center gap-2 transition text-sm"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Refresh

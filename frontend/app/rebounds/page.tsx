@@ -114,17 +114,28 @@ export default function ReboundsPage() {
   const [stageFilter, setStageFilter] = useState<'ALL' | 'FRESH' | 'EARLY' | 'TURNING'>('ALL');
   const [active, setActive] = useState<string | null>(null);
 
-  const fetchList = () => {
-    setLoading(true);
-    setError(null);
+  // `silent` = a background poll: refresh the data without the full-screen
+  // "Scanning…" state or clobbering a visible error, so an open page keeps up
+  // with intraday scrapes on its own. The backend caches on a data-freshness
+  // fingerprint, so between scrapes these polls are a cheap cache hit.
+  const fetchList = (silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     axios
       .get<RebResponse>(`${API_URL}/api/rebounds`)
       .then((res) => setData(res.data))
-      .catch(() => setError('Could not load the rebounds list.'))
-      .finally(() => setLoading(false));
+      .catch(() => { if (!silent) setError('Could not load the rebounds list.'); })
+      .finally(() => { if (!silent) setLoading(false); });
   };
 
-  useEffect(fetchList, []);
+  useEffect(() => {
+    fetchList();
+    // Auto-refresh every 60s so live prices don't sit stale on an open page.
+    const id = setInterval(() => fetchList(true), 60000);
+    return () => clearInterval(id);
+  }, []);
 
   const rows = useMemo(() => data?.stocks ?? [], [data]);
 
@@ -167,7 +178,7 @@ export default function ReboundsPage() {
         <div className="flex gap-3 flex-wrap items-center">
           {data && <span className="text-gray-500 text-sm">as of {data.as_of}</span>}
           <button
-            onClick={fetchList}
+            onClick={() => fetchList()}
             className="bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded flex items-center gap-2 transition text-sm"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
