@@ -405,12 +405,16 @@ export default function PatternScope({ apiUrl, onRowClick, onLearn }: PatternSco
                   </td>
                   <td className="py-2 pr-3 whitespace-nowrap">
                     {(() => {
-                      // Canonical rebound objective — the SAME number the chart
-                      // headlines, so the row never disagrees with the chart it
-                      // opens. Falls back to the measure-rule target only if the
-                      // backend supplied no canonical one (rare).
-                      const tgt = r.rebound_target ?? r.target;
-                      const room = r.rebound_room_pct ?? r.room_pct;
+                      // THE canonical target — the ONE value the chart also
+                      // headlines (backend `rebound_target`, identical across
+                      // every view; verified equal for all tickers). We do NOT
+                      // fall back to the Bulkowski measure-rule target here: that
+                      // is a different number and mixing it in is exactly what made
+                      // the row disagree with the chart. When there's no canonical
+                      // target (thin history) we show "—", never a second guess.
+                      // The measure-rule projection still lives in the pattern card.
+                      const tgt = r.rebound_target ?? null;
+                      const room = r.rebound_room_pct ?? null;
                       if (tgt == null) return <span className="text-gray-600">—</span>;
                       return (
                         <span className="inline-flex items-center gap-1">

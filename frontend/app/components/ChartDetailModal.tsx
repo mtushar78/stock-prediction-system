@@ -459,10 +459,14 @@ export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: 
     }
 
     // ---- THE canonical target + support, drawn on EVERY chart ----
-    // Target = the backend rebound_target (identical to the Rebounds list) with
-    // the local swing-high estimate only as a last-resort fallback. This is the
-    // single source of truth, so the chart line always matches the row.
-    const structTarget = signal?.rebound_target != null ? signal.rebound_target : autoLevels.target;
+    // Target = the backend rebound_target, and ONLY that. It is the single source
+    // of truth, computed by one function on full history and verified identical to
+    // every list's target for all tickers. We deliberately do NOT fall back to the
+    // local swing-high estimate: that is a different algorithm on a different
+    // window (300 bars), and using it whenever rebound_target was null is exactly
+    // what made the chart print a different number than the list (e.g. 72 vs 78).
+    // No canonical target (thin history) → no target line, never a second guess.
+    const structTarget = signal?.rebound_target ?? null;
     if (structTarget != null) {
       candleSeries.createPriceLine({
         price: structTarget,
@@ -524,16 +528,13 @@ export function ChartAnalysisBody({ apiUrl, ticker }: { apiUrl: string; ticker: 
       ? 'text-red-400'
       : 'text-yellow-400';
 
-  // The target/support to headline: a CONFIRMED pattern's own measure-rule
-  // target wins; while it's only forming that target is conditional (and often
-  // a bearish downside projection), so we headline the structural upside
-  // objective instead — keeping the chart in agreement with the Rebounds list.
-  // ONE canonical Target everywhere: the backend rebound_target (same function
-  // + data as the Rebounds list) so the chart headline always matches the row,
-  // regardless of any chart pattern's own measure-rule projection (that stays in
-  // the pattern card). Fall back to the local swing-high estimate only if the
-  // backend supplied none. Support = nearest structural swing low.
-  const dispTarget = signal?.rebound_target != null ? signal.rebound_target : autoLevels.target;
+  // ONE canonical Target everywhere: the backend rebound_target, and ONLY that —
+  // the same function + full-history data every list uses, verified identical for
+  // all tickers. No pattern measure-rule projection and no local swing-high
+  // estimate is ever shown as "Target" (the pattern's own projection stays inside
+  // its card). If the backend has no canonical target (thin history), we show none
+  // rather than inventing a different number than the list. Support = swing low.
+  const dispTarget = signal?.rebound_target ?? null;
   const dispStop = autoLevels.support;
   const targetPct = dispTarget != null && lastClose ? ((dispTarget - lastClose) / lastClose) * 100 : null;
   const stopPct = dispStop != null && lastClose ? ((dispStop - lastClose) / lastClose) * 100 : null;
