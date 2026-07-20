@@ -1660,8 +1660,15 @@ class PatternAnalyzer:
             'has_dead_cat_bounce': dcb,
             'top_pattern': top['name'],
             'top_confidence': top['confidence'],
+            # DELIBERATELY no target in this headline. `top['target']` is the
+            # pattern's own Bulkowski measure-rule projection (e.g. 78.6 / 64.4) —
+            # a DIFFERENT number than the canonical chart Target (rebound_target,
+            # e.g. 72.4) shown in the headline chip and on every list. Printing it
+            # here as "target" read as a contradiction (the exact list-vs-chart
+            # mismatch the user kept hitting). The measure-rule projection still
+            # appears in the pattern card, attributed to the pattern. One canonical
+            # "Target" everywhere — see verify_target_consistency.py.
             'headline': headline if dcb else (
                 f"{top['name']} ({top['status']}) is the dominant formation — "
-                f"{top['confidence']} confidence, "
-                f"{'target ' + str(top['target']) if top.get('target') else 'no target yet'}."),
+                f"{top['confidence']} confidence."),
         }
