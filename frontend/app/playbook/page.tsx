@@ -321,10 +321,12 @@ export default function PlaybookPage() {
 
         {/* Several setups the same day */}
         <div className="mt-3 border-t border-gray-800 pt-3 text-xs text-gray-300">
-          <b className="text-gray-100">Several ⚡ Setups on the same day?</b> You may buy more than one — up to your
-          2–4 position cap, ~10% each. Prefer the <b className="text-emerald-300">calm ones</b>: small recent run,
-          RSI under ~70. A setup that already jumped 25–30% this month can still work, but you&apos;re late to it —
-          it&apos;s the riskiest entry of the batch.
+          <b className="text-gray-100">Several ⚡ Setups on the same day?</b> All of them are buy-eligible — we
+          tested it (341 past setups): &quot;fresh&quot; ones and &quot;already ran 30%&quot; ones performed about the
+          same, so there is <b className="text-gray-100">no reliable way to rank them</b>. Take up to your 2–4
+          position cap, ~10% each. Only two real tie-breakers: <b className="text-emerald-300">can you size it</b>{' '}
+          (one share must not blow past your 10% slot) and <b className="text-emerald-300">is it liquid</b> (skip
+          THIN). Skipping the rest because the cap is full is fine.
         </div>
       </div>
 

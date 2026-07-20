@@ -74,9 +74,32 @@ Momentum wants **healthy** market breadth (the opposite of the reversal edge,
 which pays in weak tape — see `weekly-system-regime-study`). The page shows the
 season so you can tell whether the tape favours new momentum entries at all.
 
+## Setup "freshness" does NOT rank setups (tested 2026-07-20)
+
+When several ⚡ Setups fire the same day, intuition says prefer the "fresh" ones
+(low RSI, small prior run) over "late/chased" ones. `backtest_setup_quality.py`
+tested this point-in-time on 341 Stage-2 trigger observations (monthly
+checkpoints, 2020–2026):
+
+| Bucket | n | +1mo | +3mo (win%) |
+|---|---:|---:|---:|
+| ALL Stage-2 setups | 341 | +5.5% | +9.6% (48%) |
+| FRESH (RSI<70 & 1-mo run<15%) | 123 | +3.1% | +10.9% (53%) |
+| LATE (RSI≥70 or run≥15%) | 218 | +6.9% | +8.9% (46%) |
+| …of which prior run ≥30% | 77 | **+14.3%** | **+15.4%** (69% w1) |
+
+FRESH does not clearly beat LATE (f3 gap is noise-level, f1 is *reversed*, and
+the hottest bucket — already up 30%+ in a month — was the best performer, the
+classic strength-begets-strength result). **Verdict: no quality split ships.**
+Every ⚡ Setup is equally buy-eligible; the only tie-breakers are position-cap,
+liquidity, and whether one share fits the 10% sizing slot. The badge reads
+"⚡ BUY SETUP" and says so. (Same discipline as backtest_coil.py: an intuition
+only becomes product after it survives PIT.)
+
 ## Files
 
 - `src/momentum_scanner.py` — the scanner (monthly stage + daily state + funda).
 - `backtest_momentum.py` — the point-in-time reality check above.
+- `backtest_setup_quality.py` — the fresh-vs-late test (no split validated).
 - `/api/momentum` (`backend/main.py`) — live scan + the locked monthly watchlist.
 - `frontend/app/momentum/page.tsx` — the Momentum page.

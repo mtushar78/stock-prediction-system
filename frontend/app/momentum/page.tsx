@@ -205,8 +205,8 @@ function Row({ r, onClick, rank }: { r: Momo; onClick: () => void; rank?: number
       <td className="p-3 font-bold text-indigo-300 whitespace-nowrap">
         {r.ticker}
         {validated && (
-          <span className="ml-1.5 text-[9px] bg-emerald-600 text-white px-1 py-0.5 rounded align-middle" title="Breakout trigger inside a Stage-2 advance — the one combination that showed a real forward edge in the point-in-time backtest (+8% over 3 months vs +2% baseline). Still not a guarantee.">
-            ⚡ SETUP
+          <span className="ml-1.5 text-[9px] bg-emerald-600 text-white px-1 py-0.5 rounded align-middle" title="Breakout trigger inside a Stage-2 advance — the one combination with a validated forward edge (+8%/3mo vs +2% baseline). ALL setups are equally buy-eligible: the PIT test (backtest_setup_quality.py, 341 samples) found no reliable ranking among them — even ones that already ran 30% did fine. Take up to your 2–4 position cap, ~10% each. Not a guarantee.">
+            ⚡ BUY SETUP
           </span>
         )}
         {r.techno_funda_pass && (
