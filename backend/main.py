@@ -1551,6 +1551,57 @@ def get_rebounds():
         db.close()
 
 
+# Coil scan — the winner-anatomy "quiet coiled spring" watchlist. Cached on the
+# data-freshness fingerprint like every other full-universe scan.
+_COIL_CACHE: dict = {}
+
+
+@app.get("/api/coils")
+def get_coils():
+    """Coiled-spring watchlist (docs/WINNER_ANATOMY.md + backtest_coil.py):
+    stocks matching the point-in-time-validated launch DNA of the big DSE
+    winners — tight quiet base, sitting on the 20-day average, above the
+    200-day, upper 1-yr range with headroom, neutral RSI, NOT already running.
+    The "potential to go high but not high yet" list. Stages: COILED (watch),
+    CREEPING (quiet rise started), IGNITING (volume just arrived — act fast).
+    A watchlist with a measured edge in risk-asymmetry, not a buy signal."""
+    from src.coil_scanner import scan
+    from src.rebound_scanner import targets_for
+    db = DatabaseManager()
+    try:
+        fp = _universe_fingerprint(db.engine)
+        if fp in _COIL_CACHE:
+            return _COIL_CACHE[fp]
+
+        res = scan(db.engine)
+        # Canonical upside target per row — the SAME number the chart shows.
+        try:
+            tmap = targets_for(db.engine, [s['ticker'] for s in res.get('stocks', [])])
+            for s in res.get('stocks', []):
+                t = tmap.get(s['ticker'])
+                s['target'] = t
+                s['target_pct'] = (round((t - s['price']) / s['price'] * 100.0, 1)
+                                   if t and s.get('price') else None)
+        except Exception as _te:
+            logger.debug(f"coils targets skipped: {_te}")
+        try:
+            res['market'] = _compute_market_breadth(res.get('as_of'))
+        except Exception as _me:
+            logger.debug(f"coils market context skipped: {_me}")
+            res['market'] = None
+
+        _COIL_CACHE.clear()  # only ever hold the current fingerprint
+        _COIL_CACHE[fp] = res
+        return res
+    except Exception as e:
+        logger.error(f"coil scan failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
 # Momentum scan re-reads ~9 years of bars and rescans the whole universe. Cached
 # on the data-freshness fingerprint (see _universe_fingerprint) so it refreshes
 # the instant intraday prices move, not once a day — same fix as the rebound cache.

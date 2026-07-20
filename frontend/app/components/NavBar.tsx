@@ -23,6 +23,7 @@ import {
   Calculator,
   Settings,
   LogOut,
+  Sprout,
   type LucideIcon,
 } from 'lucide-react';
 import { SystemStatus } from '../types';
@@ -42,6 +43,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { href: '/', label: 'Dashboard', icon: TrendingUp, active: 'bg-emerald-600 text-white border-emerald-500' },
   { href: '/chart-analysis', label: 'Chart Analyst', icon: Activity, active: 'bg-purple-600 text-white border-purple-500' },
+  { href: '/coils', label: 'Coiled Springs', icon: Sprout, active: 'bg-fuchsia-600 text-white border-fuchsia-500' },
   { href: '/rebounds', label: 'Rebounds', icon: Rocket, active: 'bg-teal-600 text-white border-teal-500' },
   { href: '/momentum', label: 'Momentum', icon: Zap, active: 'bg-indigo-600 text-white border-indigo-500' },
   { href: '/long-term', label: 'Long-Term', icon: Landmark, active: 'bg-emerald-700 text-white border-emerald-600' },
